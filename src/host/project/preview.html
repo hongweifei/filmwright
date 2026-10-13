@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>filmwright 预览</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #05070e; color: #e9f0fa;
+    font: 14px/1.5 "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px; border-bottom: 1px solid #1b2436; flex: none;
+  }
+  header .name { font-weight: 700; }
+  header .meta { color: #8b99b4; font-family: monospace; font-size: 12px; }
+  header .grow { flex: 1; }
+  .status { font-size: 12px; padding: 3px 8px; border-radius: 10px; border: 1px solid #22304a; color: #8b99b4; }
+  .status.ok { border-color: #35d07f; color: #35d07f; }
+  .status.err { border-color: #ff6b6b; color: #ff6b6b; }
+  main { flex: 1; display: flex; min-height: 0; }
+  .stage {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    min-width: 0; padding: 12px; background: #03050a;
+  }
+  .stage canvas { max-width: 100%; max-height: 100%; box-shadow: 0 0 0 1px #1b2436; }
+  aside {
+    width: 300px; flex: none; border-left: 1px solid #1b2436;
+    padding: 12px; overflow: auto;
+  }
+  aside h2 { font-size: 12px; color: #8b99b4; text-transform: uppercase; letter-spacing: 1px; margin: 14px 0 6px; }
+  aside h2:first-child { margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 2px 0; font-family: monospace; }
+  td:last-child { text-align: right; color: #e9f0fa; }
+  .shot { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; font-family: monospace; font-size: 12px; cursor: pointer; }
+  .shot:hover { color: #3fa7ff; }
+  .shot.cur { color: #35d07f; font-weight: 700; }
+  .shot .rng { color: #5a677f; }
+  footer {
+    flex: none; border-top: 1px solid #1b2436; padding: 10px 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  button {
+    background: #101725; color: #e9f0fa; border: 1px solid #22304a;
+    border-radius: 6px; padding: 5px 12px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: #3fa7ff; }
+  input[type=range] { flex: 1; accent-color: #3fa7ff; }
+  .frame { font-family: monospace; color: #8b99b4; min-width: 150px; text-align: right; }
+  .err {
+    padding: 8px 14px; background: #20060a; color: #ff6b6b;
+    font-family: monospace; font-size: 12px; white-space: pre-wrap; flex: none;
+    border-bottom: 1px solid #4a1218; display: none;
+  }
+  .err.on { display: block; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "filmwright": "/kit/index.js",
+    "filmwright/": "/kit/"
+  }
+}
+</script>
+</head>
+<body>
+<header>
+  <span class="name">filmwright 预览</span>
+  <span class="meta" id="meta">加载中…</span>
+  <span class="grow"></span>
+  <span class="status" id="status">连接中</span>
+</header>
+
+<div class="err" id="err"></div>
+
+<main>
+  <div class="stage"><canvas id="c" width="1280" height="720"></canvas></div>
+  <aside>
+    <h2>片子</h2>
+    <table id="info"></table>
+    <h2>镜头（点击跳到首帧）</h2>
+    <div id="shots"></div>
+    <h2>说明</h2>
+    <div style="color:#8b99b4;font-size:12px">
+      改 <code>shots/</code> 或 <code>film.config.mjs</code> 后保存，页面会自己重载。
+      拖动滑杆或按 ← → 逐帧，空格播放/暂停。
+    </div>
+  </aside>
+</main>
+
+<footer>
+  <button id="play">▶ 播放</button>
+  <input type="range" id="scrub" min="1" max="1" value="1">
+  <span class="frame" id="frameLabel">—</span>
+</footer>
+
+<script type="module">
+import {boot, drawFrame, view, timeline, shots} from '/kit/runtime/stage/index.js';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status');
+const errEl = $('err');
+
+let ready = false;
+let playing = false;
+let cur = 1;
+let lastTick = 0;
+let errShown = false;
+
+function setStatus(text, kind = '') {
+  statusEl.textContent = text;
+  statusEl.className = 'status ' + kind;
+}
+
+function showError(msg) {
+  errShown = true;
+  errEl.textContent = msg;
+  errEl.classList.add('on');
+  setStatus('出错', 'err');
+}
+
+function clearError() {
+  if (!errShown) return;
+  errShown = false;
+  errEl.classList.remove('on');
+}
+
+/** 画第 n 帧。出错就把错误画进画面（和渲染页一致），并报出来。 */
+function paint(n) {
+  cur = Math.max(1, Math.min(timeline.totalFrames, n));
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, view.W, view.H);
+  try {
+    drawFrame(ctx, cur);
+    clearError();
+  } catch (e) {
+    showError('第 ' + cur + ' 帧：' + (e && e.message ? e.message : String(e)));
+    ctx.fillStyle = '#20060a';
+    ctx.fillRect(0, 0, view.W, view.H);
+    ctx.fillStyle = '#FF6B6B';
+    ctx.font = '20px monospace';
+    ctx.fillText(('FRAME ' + cur + ': ' + (e && e.message || e)).slice(0, 120), 30, 60);
+  }
+  ctx.restore();
+  $('scrub').value = String(cur);
+  $('frameLabel').textContent = `f${cur} / ${timeline.totalFrames}  (${(cur / timeline.fps).toFixed(2)}s)`;
+  markCurrentShot();
+}
+
+function markCurrentShot() {
+  for (const el of document.querySelectorAll('#shots .shot')) {
+    const [from, to] = el.dataset.range.split('-').map(Number);
+    el.classList.toggle('cur', cur >= from && cur <= to);
+  }
+}
+
+function renderSidebar(info) {
+  $('meta').textContent = `${info.w}×${info.h} @${timeline.fps}fps`;
+  $('info').innerHTML = [
+    ['总帧数', timeline.totalFrames],
+    ['时长', (timeline.totalFrames / timeline.fps).toFixed(1) + 's'],
+    ['句子', timeline.sentences.length],
+    ['章节', timeline.chapters.length],
+    ['镜头', info.shots],
+    ['章节卡', info.cards],
+    ['字体', info.loaded.filter((f) => !f.endsWith(':FAILED')).length + '/' + info.loaded.length],
+  ].map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+
+  const box = $('shots');
+  box.innerHTML = '';
+  for (const r of info.ranges) {
+    const el = document.createElement('div');
+    el.className = 'shot';
+    el.dataset.range = `${r.from}-${r.to}`;
+    el.innerHTML = `<span>${r.id}</span><span class="rng">f${r.from}–${r.to}</span>`;
+    el.onclick = () => { stop(); paint(r.from); };
+    box.appendChild(el);
+  }
+}
+
+// ---------- 装配 ----------
+async function load() {
+  const p = await import('/__filmwright/project.js?v=' + Date.now());
+  const info = await boot({
+    config: p.config,
+    timeline: p.timeline,
+    loadShots: () => import(p.shotsUrl + '?v=' + Date.now()),
+  }, (w, h) => {
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.aspectRatio = `${w} / ${h}`;
+  });
+  renderSidebar(info);
+  $('scrub').max = String(timeline.totalFrames);
+  ready = true;
+  setStatus('就绪', 'ok');
+  paint(1);
+  return info;
+}
+
+load().catch((e) => showError('装载失败：\n' + ((e && e.stack) || e)));
+
+// ---------- 播放 ----------
+function stop() { playing = false; $('play').textContent = '▶ 播放'; }
+function toggle() {
+  if (!ready) return;
+  playing = !playing;
+  $('play').textContent = playing ? '⏸ 暂停' : '▶ 播放';
+  lastTick = 0;
+  if (playing) requestAnimationFrame(tick);
+}
+function tick(ts) {
+  if (!playing) return;
+  // 按真实时间推进（不是每帧一帧），这样预览速度与成片一致
+  if (lastTick) {
+    const advance = Math.max(1, Math.round(((ts - lastTick) / 1000) * timeline.fps));
+    let next = cur + advance;
+    if (next > timeline.totalFrames) next = 1;
+    paint(next);
+  }
+  lastTick = ts;
+  requestAnimationFrame(tick);
+}
+
+$('play').onclick = toggle;
+$('scrub').oninput = (e) => { stop(); paint(Number(e.target.value)); };
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' && e.key !== ' ') return;
+  if (e.key === ' ') { e.preventDefault(); toggle(); }
+  else if (e.key === 'ArrowRight') { stop(); paint(cur + (e.shiftKey ? 30 : 1)); }
+  else if (e.key === 'ArrowLeft') { stop(); paint(cur - (e.shiftKey ? 30 : 1)); }
+  else if (e.key === 'Home') { stop(); paint(1); }
+  else if (e.key === 'End') { stop(); paint(timeline.totalFrames); }
+});
+
+// ---------- 热重载 ----------
+// 服务端在文件变化时通过 SSE 推一条消息；收到就整页重载。
+// 用 SSE 而不是轮询：文件不常改，轮询是白费；而 SSE 是即时反馈。
+let reloadTimer = null;
+function watch() {
+  const es = new EventSource('/__filmwright/watch');
+  es.onmessage = (ev) => {
+    let msg = {};
+    try { msg = JSON.parse(ev.data); } catch { /* 心跳 */ }
+    if (msg.reload) {
+      setStatus('检测到改动，重载…', '');
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(() => location.reload(), 120);
+    }
+  };
+  es.onerror = () => setStatus('热重载断开', '');
+}
+watch();
+
+// 暴露给自动化测试
+window.__preview = {
+  paint,
+  get frame() { return cur; },
+  get ready() { return ready; },
+  get playing() { return playing; },
+  toggle,
+};
+</script>
+</body>
+</html>

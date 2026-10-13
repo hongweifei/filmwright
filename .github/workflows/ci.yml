@@ -1,0 +1,72 @@
+# CI：两层，分开跑，失败信息指向明确。
+#
+#   static  无依赖：单元测试 + 静态自检（不启浏览器）。几十秒内出结果。
+#   browser 要 Chrome + ffmpeg：逐帧 + 画质自检 + 像素回归。
+#
+# 分开的理由：static 挂掉基本就是代码错了（引用、导出、纯函数行为）；
+# browser 挂掉更可能是渲染行为变了。混在一个 job 里看不出是哪一类。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static:
+    name: 静态（无依赖）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # engines 要求 >=22：驱动浏览器用全局 WebSocket，Node 20 上没有。
+          node-version: '22'
+
+      - name: 单元测试（纯函数，零依赖）
+        run: npm test
+
+      - name: 静态自检（不启浏览器）
+        run: node bin/filmwright.mjs check --project examples/minimal --static-only
+
+  browser:
+    name: 渲染（Chrome + ffmpeg）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # ubuntu-latest 自带 google-chrome 与 ffmpeg，这里只做确认：
+      # 缺了就直接失败并说清楚，不要让后面的步骤报出看不懂的错。
+      - name: 确认环境（Chrome / ffmpeg）
+        run: |
+          google-chrome --version || chromium --version
+          ffmpeg -version | head -1
+
+      - name: 逐帧 + 画质自检
+        run: node bin/filmwright.mjs check --project examples/minimal
+
+      - name: 像素回归（与基准逐字节比对）
+        run: node tools/regression.mjs verify --project examples/minimal
+
+      - name: 负面对照（证明画质检查真的会报）
+        run: node tools/quality-negative.mjs
+
+      - name: 素材（加载就绪 / 真画出来 / 引错名字要报）
+        run: node tools/verify-assets.mjs
+
+      - name: 预览页（拖动 / 播放 / 热重载）
+        run: node tools/verify-preview.mjs
+
+      - name: 端到端出片
+        run: node bin/filmwright.mjs render --project examples/minimal --shards 2
+
+      - name: 产物大小（防止渲染出空文件）
+        run: |
+          f=$(ls examples/minimal/.work/*.mp4 | head -1)
+          test -s "$f" || { echo "渲染产物为空"; exit 1; }
+          ls -la "$f"

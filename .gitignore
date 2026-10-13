@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 产物：全部集中在 .work/（工具在 tools/，跟着仓库走）
+.work/
+
+# 历史遗留名（早期产物落在这些目录，别让它们再进来）
+out/
+qc/
+renders/
+
+# 示例项目的产物
+examples/*/out/
+examples/*/renders/
+examples/*/qc/
+examples/*/.work/
+examples/*/audio/cache/
+examples/*/public/assets/*/audio.wav
+
+# 注意：examples/*/regression-baseline.json **不忽略** —— 它是像素回归的夹具，
+# 几 KB，别人 clone 下来要靠它才能跑 tools/regression.mjs verify。
+
+*.log

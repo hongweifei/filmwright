@@ -1,0 +1,10 @@
+# 行尾统一 LF：本机全局 core.autocrlf=true，不加这条，每次 checkout 都会
+# 把整棵树重写成 CRLF，产生与改动无关的全树 diff。
+* text=auto eol=lf
+
+# 二进制文件不参与任何行尾/编码转换。
+*.png binary
+*.ttf binary
+*.mp3 binary
+*.wav binary
+*.mp4 binary

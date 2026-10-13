@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>filmwright 渲染页</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #c { display: block; }
+</style>
+<!-- 项目镜头文件写 `import {text, panel} from 'filmwright'`，由这张 importmap 解析到
+     库的运行时公开面，不需要打包器。 -->
+<script type="importmap">
+{
+  "imports": {
+    "filmwright": "/kit/index.js",
+    "filmwright/": "/kit/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="c" width="1280" height="720"></canvas>
+<script type="module">
+import {boot, drawFrame, view} from '/kit/runtime/stage/index.js';
+import {installAnalysis} from '/kit/runtime/checks/analysis.js';
+import {img, imgSize, assetNames} from '/kit/runtime/assets.js';
+import {BLK, cutBefore, timeline} from '/kit/contract/timeline.js';
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+// 引擎不认识任何具体片子：配置、时间轴、镜头表都由宿主经
+// /__filmwright/project.js 注入（见 src/host/project/server.mjs）。
+async function load() {
+  const p = await import('/__filmwright/project.js');
+  // 镜头模块延迟到 boot 内部、时间轴装好之后才求值：
+  // 镜头文件在顶层就调 cutBefore('S01') 这类查询，而那要求时间轴已装载。
+  return boot({
+    config: p.config,
+    timeline: p.timeline,
+    loadShots: () => import(p.shotsUrl),
+  }, (w, h) => {
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  });
+}
+
+export function renderFrame(n) {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, view.W, view.H);
+  try {
+    drawFrame(ctx, n);
+    window.__lastError = null;
+  } catch (e) {
+    // 出错也要出图（画面留证据 + 记进 __lastError），
+    // 否则 QC 会把一张出错的帧误当成正常帧。
+    //
+    // **连调用栈一起记**：只记 message 的话，`check --frames` 报出来的
+    // 是一行「Cannot read properties of undefined」——知道错了，不知道错在哪。
+    // 栈信息让自检直接指出是哪个文件哪一行。
+    const msg = 'FRAME ' + n + ': ' + (e && e.message ? e.message : String(e));
+    const stack = e && e.stack
+      ? String(e.stack).split('\n').slice(1, 5).map((l) => l.trim()).join('\n    ')
+      : '';
+    window.__lastError = stack ? msg + '\n    ' + stack : msg;
+    ctx.fillStyle = '#20060a';
+    ctx.fillRect(0, 0, view.W, view.H);
+    ctx.fillStyle = '#FF6B6B';
+    ctx.font = '20px monospace';
+    ctx.fillText(msg.slice(0, 120), 30, 60);
+    if (e && e.stack) {
+      String(e.stack).split('\n').slice(1, 6).forEach((l, i) => {
+        ctx.fillText(l.trim().slice(0, 120), 30, 92 + i * 26);
+      });
+    }
+    console.error(window.__lastError);
+  }
+  ctx.restore();
+  return true;
+}
+
+window.__ready = false;
+window.__renderFrame = renderFrame;
+// 诊断面：自检与验证工具要用（不启动画，只是把运行时状态露出来）
+window.__assets = {
+  names: assetNames,
+  size: imgSize,
+  get: img,
+};
+window.__filmwright = {BLK, S: cutBefore, timeline};
+load()
+  .then((info) => {
+    installAnalysis(ctx, renderFrame);
+    window.__info = info;
+    window.__ready = true;
+  })
+  .catch((e) => {
+    window.__bootError = String((e && e.stack) || e);
+    console.error(window.__bootError);
+  });
+</script>
+</body>
+</html>
