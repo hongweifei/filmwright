@@ -134,6 +134,23 @@ export async function openSession(url, size, opts = {}) {
     ws.send(JSON.stringify({id: myId, method, params}));
   });
 
+  /**
+   * 带超时的 CDP 调用。
+   *
+   * 为什么必须有：无超时的 evaluate 在浏览器卡死（CI 的 windows runner 上实测会）
+   * 时永远不返回 —— 整个自检挂住直到 job 超时，报出来的还是「进程被杀」，
+   * 看不出是浏览器的问题。超时后至少能给出可行动的错。
+   */
+  const sendTimeout = (method, params = {}, ms = 30000) => new Promise((res, rej) => {
+    const myId = ++id;
+    const timer = setTimeout(() => {
+      pending.delete(myId);
+      rej(new Error(`filmwright: CDP ${method} 超过 ${ms}ms 没响应（浏览器可能卡死或已退出）`));
+    }, ms);
+    pending.set(myId, (m) => { clearTimeout(timer); res(m); });
+    ws.send(JSON.stringify({id: myId, method, params}));
+  });
+
   await send('Page.enable');
   await send('Runtime.enable');
   await send('Emulation.setDeviceMetricsOverride', {
@@ -191,7 +208,7 @@ export async function openSession(url, size, opts = {}) {
     },
     /** 只跑绘制代码、不截图：用来把每帧都过一遍查错（比截图快得多）。 */
     async drawOnly(n) {
-      const r = await send('Runtime.evaluate', {
+      const r = await sendTimeout('Runtime.evaluate', {
         expression: `(window.__lastError = null, window.__renderFrame(${n}), window.__lastError)`,
         returnByValue: true,
       });

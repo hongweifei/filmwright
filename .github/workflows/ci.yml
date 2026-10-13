@@ -83,6 +83,32 @@ jobs:
       - name: 逐帧 + 画质自检
         run: node bin/filmwright.mjs check --project examples/minimal
 
+      # 画质/逐帧是「阈值型 + 浏览器型」检查：读数贴阈值或 runner 资源紧张时
+      # 会随机翻面（实测 windows runner 上不同步骤轮流挂，代码未变）。
+      # 失败时把**所有失败检查**的完整读数打出来，而不是只猜 quality。
+      - name: 失败现场（仅失败时跑）
+        if: failure()
+        run: |
+          node bin/filmwright.mjs check --project examples/minimal --json > ci-check.json 2>&1 || true
+          node -e "
+          let j;
+          try { j = JSON.parse(require('node:fs').readFileSync('ci-check.json','utf8')); }
+          catch (e) { console.log('拿不到 JSON（check 本身崩了？）:'); console.log(require('node:fs').readFileSync('ci-check.json','utf8').slice(0,2000)); process.exit(0); }
+          console.log('ok:', j.ok, '| errors:', j.errors.length);
+          for (const e of j.errors) console.log('  ERROR', e.code, e.message);
+          for (const c of j.data?.checks ?? []) {
+            console.log((c.ok ? 'OK  ' : 'FAIL') + ' ' + c.name + ' (查了 ' + c.checked + ')');
+            for (const p of c.problems ?? []) console.log('     · ' + p);
+            for (const n of c.notes ?? []) console.log('     · ' + n);
+            for (const s of c.stats ?? []) console.log('     stat ' + s.id + ' f' + s.from + '-' + s.to + ' 静止=' + s.longestStatic + ' 墨迹=' + (s.inkMin*100).toFixed(2) + '% 末拍=' + (s.hold ?? '-') + '(' + s.holdSource + ')');
+          }
+          console.log('阈值：staticFrames 90 / holdFrames 30 / inkMin 0.40%');
+          "
+          echo '--- .work 产物 ---'
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}"
+          echo '--- parts ---'
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(' ',f,statSync(d+'/'+f).size)}catch(e){console.log(' 读不到',e.message)}"
+
       - name: 场景规格示例（纯 scene 项目）
         run: |
           node bin/filmwright.mjs check --project examples/scenecast --static-only

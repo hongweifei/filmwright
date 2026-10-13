@@ -60,6 +60,9 @@ export async function check(ctx) {
       checks: res.results.map((r) => ({
         name: r.name, ok: r.ok, checked: r.checked,
         problems: r.problems ?? [], hints: r.hints ?? [], notes: r.notes ?? [],
+        // 画质那道带上逐镜头读数：判失败时要能看出是哪个指标、离阈值多远
+        // （跨平台栅格化差异会让贴阈值的读数翻面，没有数值就无从判断）
+        ...(r.stats ? {stats: r.stats, detail: r.detail} : {}),
       })),
     },
     warnings,
