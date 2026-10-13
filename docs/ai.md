@@ -44,7 +44,7 @@ filmwright mcp                     # stdio 服务器
 }
 ```
 
-工具一览（返回值与 `--json` 同形状，共 9 个）：
+工具一览（返回值与 `--json` 同形状，共 11 个）：
 
 | 工具 | 用途 |
 |---|---|
@@ -55,7 +55,8 @@ filmwright mcp                     # stdio 服务器
 | `filmwright_tts` | 解说词 → 配音 + 时间轴 |
 | `filmwright_check` | 九道自检（`static_only` 可选） |
 | `filmwright_stills` | 出静帧，**并把 PNG 直接回给模型**（默认 4 张，`max_images` 可到 8）——多模态自查的关键 |
-| `filmwright_review` | **一轮「改 → 验 → 看」**：scene 校验 + 静态自检 + 各镜头代表帧回图。改完 scene.json 就调它 |
+| `filmwright_review` | **一轮「改 → 验 → 看」**：scene 校验 + 静态自检 + 各镜头代表帧（末拍落位后）回图。改完 scene.json 就调它 |
+| `filmwright_srt` | 导出外挂字幕（SRT），可合双语轨 |
 | `filmwright_render` | 渲染无声视频 |
 | `filmwright_all` | check → render → mux 一条龙 |
 

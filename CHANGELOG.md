@@ -9,6 +9,7 @@
 
 - **`examples/promo`：filmwright 自己的介绍片**（狗粮）。全程 `scene.json` 驱动、零镜头代码，制作用的就是自己的工具链（`tts` → `schema` → MCP `review` → `check`）；11 个镜头覆盖 9 类模板，九道自检全过。它同时是模板语料的来源——下面三条修复全是做这条片子时暴露的。
 - **`tools/dogfood-review.mjs`**：通过 MCP 的 `filmwright_review` 跑一轮「改 → 验 → 看」并把回图落盘，狗粮制作的实际回路。
+- 文档：`docs/dogfood.md` 狗粮记录（制作回路、暴露的三个缺陷、以及做真片子时想要的四类模板与「先不做」的判断）。
 
 ### 修复
 
