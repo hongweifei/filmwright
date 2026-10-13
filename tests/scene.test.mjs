@@ -2,7 +2,7 @@
 // 重点是错误路径：每条守卫都必须被故意喂一个坏数据，证明它会红。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {resolveAt, validateScene, SHOT_TYPES, SCENE_SCHEMA} from '../src/contract/scene.js';
+import {resolveAt, validateScene, SHOT_TYPES, SCENE_SCHEMA, SCENE_ERROR_CODES, sceneSchema, SHOT_MAXES} from '../src/contract/scene.js';
 import {setTimeline, cutBefore, BLK} from '../src/contract/timeline.js';
 
 const tl = {
@@ -82,7 +82,7 @@ test('validateScene：最小合法规格通过', () => {
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
-test('validateScene：七类模板的最小实例都合法', () => {
+test('validateScene：13 类模板的最小实例都合法', () => {
   // 每类单独成一个规格：单镜头规格里它就是第一个镜头，必须从第 1 帧起。
   const shots = {
     title: {type: 'title', at: 1, title: 't'},
@@ -92,6 +92,12 @@ test('validateScene：七类模板的最小实例都合法', () => {
     code: {type: 'code', at: 1, lines: ['x', {text: 'y', mark: 'hl'}]},
     image: {type: 'image', at: 1, asset: 'a'},
     compare: {type: 'compare', at: 1, left: {title: 'L', items: ['x']}, right: {title: 'R', items: ['y']}},
+    steps: {type: 'steps', at: 1, steps: [{t: 'a'}, {t: 'b', d: '说明'}]},
+    table: {type: 'table', at: 1, columns: ['A', 'B'], rows: [['1', '2'], ['3', '4']]},
+    quote: {type: 'quote', at: 1, text: '一句值得放大的话', who: '某人'},
+    terminal: {type: 'terminal', at: 1, title: 'demo', lines: ['$ ls', {text: 'out', color: '#fff'}]},
+    chips: {type: 'chips', at: 1, items: ['关键词', {label: '另一个'}]},
+    bars: {type: 'bars', at: 1, unit: 'ms', items: [{v: 81, label: 'a'}, {v: 120, label: 'b'}]},
   };
   assert.deepEqual(Object.keys(shots).sort(), [...SHOT_TYPES].sort(), '测试要覆盖全部类型');
   for (const s of Object.values(shots)) {
@@ -184,4 +190,58 @@ test('对齐解析失败的镜头不炸校验器，转成带 path 的错误', ()
   assert.equal(r.ok, false);
   assert.equal(r.errors[0].path, 'shots[0].at');
   assert.equal(r.errors[0].code, 'SCENE_NO_SENTENCE');
+});
+
+// ---------- 容量上限与表格交叉检查（v0.2 新增守卫，负面对照） ----------
+
+test('负面对照：超出容量上限报 SCENE_TOO_MANY 并给拆镜头的 hint', () => {
+  const many = Array.from({length: SHOT_MAXES.bullets.items + 1}, (_, i) => ({t: '行' + i}));
+  const r = validateScene({shots: [{type: 'bullets', at: 1, items: many}]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_TOO_MANY');
+  assert.ok(e && e.path === 'shots[0].items', 'path 指到超量的数组字段：' + JSON.stringify(r.errors));
+  assert.ok(e.hint.includes('拆成多个镜头'), 'hint 要给可行的出路');
+});
+
+test('负面对照：表格行宽与表头不符要报 SCENE_TABLE_WIDTH', () => {
+  const r = validateScene({shots: [{type: 'table', at: 1, columns: ['A', 'B'], rows: [['1', '2'], ['3']]}]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_TABLE_WIDTH');
+  assert.ok(e && e.path === 'shots[0].rows[1]', 'path 指到出错的那一行：' + JSON.stringify(r.errors));
+});
+
+test('负面对照：bars 的 v 不是数字 / chips 的 label 缺失都要报', () => {
+  const r = validateScene({shots: [
+    {type: 'bars', at: 1, items: [{v: '81', label: 'a'}, {v: 2, label: 'b'}]},
+    {type: 'chips', at: 2, items: [{labelx: '拼错'}]},
+  ]}, {timeline: tl});
+  const c = codes(r);
+  assert.ok(c.includes('SCENE_BAD_FIELD'), 'bars.v：' + JSON.stringify(r.errors));
+  assert.ok(c.includes('SCENE_UNKNOWN_FIELD'), 'chips 条目字段拼错：' + JSON.stringify(r.errors));
+});
+
+// ---------- 机器可读 schema ----------
+
+test('sceneSchema()：13 类齐、每类有 note/fields/max，错误码表完整', () => {
+  const s = sceneSchema();
+  assert.equal(s.schema, SCENE_SCHEMA);
+  assert.deepEqual(Object.keys(s.types).sort(), [...SHOT_TYPES].sort());
+  for (const [name, t] of Object.entries(s.types)) {
+    assert.ok(t.note && t.note.length > 4, name + ' 缺说明');
+    assert.ok(Object.keys(t.fields).length >= 1, name + ' 缺字段表');
+    assert.ok(t.max && typeof t.max === 'object', name + ' max 形状不对');
+  }
+  assert.ok(s.errorCodes.length >= 15);
+});
+
+test('错误码登记表与源码一致：用了没登记、登记了没用，都算错', async () => {
+  const {readFileSync} = await import('node:fs');
+  const src = readFileSync(new URL('../src/contract/scene.js', import.meta.url), 'utf8');
+  // 去掉登记表本身再扫，避免自引用
+  const body = src.replace(/export const SCENE_ERROR_CODES[\s\S]*?\];/, '');
+  // 码名可含数字（SCENE_FIRST_NOT_1）；标识符 SCENE_ERROR_CODES 本身不是码
+  const used = new Set([...body.matchAll(/\bSCENE_[A-Z0-9_]+\b/g)].map((m) => m[0]).filter((c) => c !== 'SCENE_ERROR_CODES'));
+  const declared = new Set(SCENE_ERROR_CODES);
+  const undeclared = [...used].filter((c) => !declared.has(c));
+  const unused = [...declared].filter((c) => !used.has(c));
+  assert.deepEqual(undeclared, [], '源码用了未登记的错误码');
+  assert.deepEqual(unused, [], '登记表里有源码没用到的码');
 });

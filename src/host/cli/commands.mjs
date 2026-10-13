@@ -15,6 +15,7 @@ import {runChecks} from '../checks/index.mjs';
 import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
 import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
+import {sceneSchema} from '../../contract/scene.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
 import {num, str} from './args.mjs';
 import {assertTool} from '../preflight.mjs';
@@ -106,6 +107,27 @@ export async function mcp() {
   }
   const code = await startMcp();
   return {code: code ?? 0};
+}
+
+/**
+ * 输出机器可读的场景规格 schema：类型、字段、容量上限、对齐语法、错误码。
+ * agent 不读文档也能发现规格 —— 框架自描述。
+ */
+export async function schema(ctx) {
+  const s = sceneSchema();
+  if (isJson(ctx.args)) return {code: 0, data: {schema: s}};
+  console.log(`scene 规格 ${s.schema} —— ${Object.keys(s.types).length} 类模板：\n`);
+  for (const [name, t] of Object.entries(s.types)) {
+    const fields = Object.entries(t.fields)
+      .map(([k, f]) => (f.required ? k : k + '?')).join(' / ');
+    const max = Object.keys(t.max).length ? '  上限 ' + JSON.stringify(t.max) : '';
+    console.log(`  ${name.padEnd(9)} ${t.note}`);
+    console.log(`  ${''.padEnd(9)} 字段：${fields}${max}`);
+  }
+  console.log('\n对齐 at：' + JSON.stringify(s.at, null, 2).replace(/\n/g, '\n  '));
+  console.log('\n错误码：' + s.errorCodes.join(' / '));
+  console.log('\n机器可读版：filmwright schema --json');
+  return {code: 0};
 }
 
 /** 新建项目骨架。不需要 --project：目标目录就是位置参数。 */

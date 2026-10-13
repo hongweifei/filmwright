@@ -87,6 +87,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-reuse.mjs` | 验换分辨率（1080p）与换浏览器（两个浏览器渲同一帧要字节相同） |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
+| `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |
 | `compare-original.py` | 迁移验收：迁移后的渲染 vs 原片 mp4 同一帧，算 PSNR |
 | `compare-three-way.py` | 三方对比：原引擎 / 迁移后 / 原片。**先确认原片没过期**，否则拿它当基线是错的 |
 | `compare-timelines.mjs` | 比对两份时间轴（原引擎的 `.js` 与 filmwright 的 `.json`），不同步表现为「动画中的元素差一点」 |

@@ -1,16 +1,15 @@
-# CI：两层，分开跑，失败信息指向明确。
+# CI：两层 × 平台矩阵，失败信息指向明确。
 #
-#   static  无依赖：单元测试 + 静态自检（不启浏览器）。几十秒内出结果。
-#   browser 要 Chrome + ffmpeg：无头渲染的全部验证。
+#   static  无依赖：单元测试 + 静态自检（不启浏览器）。三个 OS 全跑 ——
+#           核心零依赖，这是「跨平台」最便宜也最真的证据。
+#   browser 要 Chrome/Edge + ffmpeg：无头渲染验证。跑 ubuntu 与 windows：
+#           ubuntu 是 CI 主战场；windows 用预装 Edge（findBrowser 认识它）。
+#           macOS 只进 static —— 渲染层在 macOS 上没有本地实测证据，
+#           与其配一条猜出来的 job，不如等真机验证过再进矩阵（见 LIMITATIONS）。
 #
-# 分开的理由：static 挂掉基本就是代码错了（引用、导出、纯函数行为）；
-# browser 挂掉更可能是渲染行为变了。混在一个 job 里看不出是哪一类。
-#
-# 关于像素回归：基准（examples/minimal/regression-baseline.json）是在
-# **抓基准的那台机器**上 capture 的，字体栅格化随操作系统/浏览器版本变，
-# 跨 OS 逐字节比对必然红。所以：
-#   - 本机（抓基准的同一类环境）：capture → 改结构 → verify，逐字节全同才算重构；
-#   - CI（无头 Ubuntu）：同一运行内 capture → verify，自证「两轮渲染逐字节相同」。
+# 像素回归的边界：基准是**本机夹具**（字体栅格化随 OS/版本变），
+# 所以 CI 里做的是「同一次运行内 capture → verify」的确定性自证，
+# 跨 OS 的基准比对不做。
 name: CI
 
 on:
@@ -20,14 +19,18 @@ on:
 
 jobs:
   static:
-    name: 静态（无依赖）
-    runs-on: ubuntu-latest
+    name: 静态（无依赖）· ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          # engines 要求 >=22：驱动浏览器用全局 WebSocket，Node 20 上没有。
+          # engines 要求 >=22：驱动浏览器要用全局 WebSocket，Node 20 上没有。
           node-version: '22'
 
       # 核心命令零依赖；只有 MCP 测试需要 @modelcontextprotocol/sdk。
@@ -42,8 +45,15 @@ jobs:
         run: node bin/filmwright.mjs check --project examples/minimal --static-only
 
   browser:
-    name: 渲染（无头 Chrome + ffmpeg）
-    runs-on: ubuntu-latest
+    name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -51,22 +61,32 @@ jobs:
         with:
           node-version: '22'
 
-      # ubuntu-latest 不自带 ffmpeg（实测 render 一步 spawn ffmpeg ENOENT）；
-      # 且 `ffmpeg -version | head -1` 这种写法在命令缺失时也会绿 —— 管道退出码
-      # 取的是 head 的 0。所以：先显式安装，再用 command -v 硬断言。
+      # ubuntu-latest 不自带 ffmpeg（实测 ENOENT）；windows 用 choco 补。
       - name: 安装 ffmpeg
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
-      - name: 确认环境（Chrome / ffmpeg，缺失即失败）
+      - name: 安装 ffmpeg（choco）
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      # 真断言：findBrowser() 是渲染实际走的那条查找路径，它抛错才算缺；
+      # pipefail 让 `ffmpeg -version | head` 不再假绿（管道退出码取 head 的 0）。
+      - name: 确认环境（浏览器 / ffmpeg，缺失即失败）
         run: |
-          set -e
-          google-chrome --version || chromium --version
+          set -euo pipefail
+          node -e "import('./src/host/browser/find.mjs').then((m) => console.log('浏览器：' + m.findBrowser()))"
           command -v ffmpeg >/dev/null || { echo 'ffmpeg 不在 PATH'; exit 1; }
           command -v ffprobe >/dev/null || { echo 'ffprobe 不在 PATH'; exit 1; }
           ffmpeg -version | head -1
 
       - name: 逐帧 + 画质自检
         run: node bin/filmwright.mjs check --project examples/minimal
+
+      - name: 场景规格示例（纯 scene 项目）
+        run: |
+          node bin/filmwright.mjs check --project examples/scenecast --static-only
+          node bin/filmwright.mjs check --project examples/gallery --static-only
 
       - name: 渲染确定性（同运行内 capture → verify，两轮渲染逐字节相同）
         run: |
@@ -87,6 +107,7 @@ jobs:
 
       - name: 产物大小（防止渲染出空文件）
         run: |
+          set -euo pipefail
           f=$(ls examples/minimal/.work/*.mp4 | head -1)
           test -s "$f" || { echo "渲染产物为空"; exit 1; }
           ls -la "$f"

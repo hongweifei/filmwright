@@ -13,7 +13,7 @@ import {z} from 'zod';
 import {readFileSync} from 'node:fs';
 import * as commands from '../cli/commands.mjs';
 import {loadProject} from '../project/load.mjs';
-import {validateScene} from '../../contract/scene.js';
+import {sceneSchema, validateScene} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
 
 const json = (v) => JSON.stringify(v, null, 2);
@@ -51,6 +51,12 @@ export function buildServer() {
       return fail({ok: false, command: 'new', errors: [{code: e.code ?? 'ERROR', message: e.message, ...(e.hint ? {hint: e.hint} : {})}]});
     }
   });
+
+  server.registerTool('filmwright_schema', {
+    title: '读场景规格 schema',
+    description: '机器可读的 scene.json 规格：全部类型与用途、每类字段与容量上限、at 对齐语法、错误码表。**写 scene 之前先调这个**。',
+    inputSchema: {},
+  }, async () => result({ok: true, command: 'schema', data: {schema: sceneSchema()}}));
 
   server.registerTool('filmwright_timeline', {
     title: '读时间轴',

@@ -1,9 +1,10 @@
-// 场景规格（scene.json）的数据层：校验 + 对齐解析。纯函数——不碰 DOM、不碰 Node，
-// 所以 Node 里的静态自检与浏览器里的模板编译器共用这一份实现（不会漂移）。
+// 场景规格（scene.json）的数据层：校验 + 对齐解析 + 机器可读 schema。
+// 纯函数 —— 不碰 DOM、不碰 Node，所以 Node 里的静态自检与浏览器里的模板编译器
+// 共用这一份实现（不会漂移）。
 //
 // 规格是 AI 的落点：AI 只填内容与节拍，节奏（入场/呼吸/离场/配色）由模板镜头负责。
-// 因此校验必须**可行动**：每条错误带 code / path / hint，模型读完能直接改，
-// 而不是一个「格式不对」。
+// 因此校验必须**可行动**：每条错误带 code / path / hint，模型读完能直接改。
+// 容量上限也在这里钉死 —— AI 该被校验告知边界，而不是靠肉眼发现画面溢出。
 //
 // 对齐 token（at）：
 //   12                      → 第 12 帧
@@ -14,13 +15,37 @@
 //   {s:"S05", block:2, offset:-4} → 锚点后再偏移（负数=更早）
 // 结果下限 1 帧。句 id / 块号不存在 → 报错并说明有几块。
 
-/** 规格结构版本。写错或没写都按 v0 处理；写了别的值直接报。 */
+/** 规格结构版本。写错直接报；没写按 v0 处理。 */
 export const SCENE_SCHEMA = 'filmwright/scene-v0';
 
-/** 模板镜头类型。运行时的注册表必须与这里一致（有测试钉住）。 */
-export const SHOT_TYPES = ['title', 'bullets', 'stat', 'flow', 'code', 'image', 'compare'];
+/** 模板镜头类型。运行时的注册表必须与这里一致（tests/scene-templates.test.mjs 钉住）。 */
+export const SHOT_TYPES = [
+  'title', 'bullets', 'stat', 'flow', 'code', 'image', 'compare',
+  'steps', 'table', 'quote', 'terminal', 'chips', 'bars',
+];
 
-// ---------- 时间轴数据的纯查询（与 contract/timeline.js 的 S/BLK 语义一致，有测试钉住） ----------
+/** 每类的容量上限（版面算出来的，超了会挤/溢出）。 */
+export const SHOT_MAXES = {
+  bullets: {items: 6},
+  steps: {steps: 6},
+  flow: {boxes: 5},
+  code: {lines: 10},
+  table: {columns: 4, rows: 8},
+  chips: {items: 12},
+  bars: {items: 6},
+  compare: {items: 5},   // left.items / right.items 各
+};
+
+/** 全部错误码（schema 输出与源码扫描测试共用；新增码必须登记到这里）。 */
+export const SCENE_ERROR_CODES = [
+  'SCENE_NOT_OBJECT', 'SCENE_SCHEMA', 'SCENE_UNKNOWN_FIELD', 'SCENE_NO_SHOTS', 'SCENE_BAD_SHOT',
+  'SCENE_UNKNOWN_TYPE', 'SCENE_MISSING_FIELD', 'SCENE_MISSING_AT', 'SCENE_BAD_FIELD',
+  'SCENE_TOO_MANY', 'SCENE_TABLE_WIDTH', 'SCENE_NO_ASSET', 'SCENE_FIRST_NOT_1', 'SCENE_NOT_INCREASING',
+  'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
+  'SCENE_NO_SENTENCE', 'SCENE_NO_BLOCK',
+];
+
+// ---------- 时间轴数据的纯查询（与 contract/timeline.js 的 S/BLK/cutBefore 语义一致，有测试钉住） ----------
 
 function sentenceById(tl, id) {
   return (tl?.sentences ?? []).find((x) => x.id === id) ?? null;
@@ -63,9 +88,10 @@ export function resolveAt(at, tl) {
   return Math.max(1, anchor - lead + offset);
 }
 
-// ---------- 每类的字段规格（校验与文档共用这一份声明） ----------
-// 取值：'str' 必填字符串；'str?' 可选字符串；'num' 必填数；'arr' 必填非空数组；
-// 'obj' 必填对象；'assets' 素材名（须在配置声明过）。其余键一律视为未知字段。
+// ---------- 每类的字段规格（校验、schema 输出、文档共用这一份声明） ----------
+// kind：'str' 必填字符串；'str?' 可选；'num' 必填数；'text' 必填长文本；
+// 'assets' 素材名；'arr<shape>' 数组（shape 见 validateArr）。
+
 const FIELDS = {
   title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?'},
   bullets: {heading: 'str?', items: 'arr<{t, d?}>'},
@@ -73,44 +99,122 @@ const FIELDS = {
   flow: {heading: 'str?', boxes: 'arr<{label, sub?}>'},
   code: {heading: 'str?', lines: 'arr<line>'},
   image: {asset: 'assets', heading: 'str?', note: 'str?'},
-  compare: {heading: 'str?', left: 'obj', right: 'obj'},
+  compare: {heading: 'str?', left: 'side', right: 'side'},
+  steps: {heading: 'str?', steps: 'arr<{t, d?}>'},
+  table: {heading: 'str?', columns: 'arr<str>', rows: 'arr<row>'},
+  quote: {text: 'text', who: 'str?', from: 'str?'},
+  terminal: {heading: 'str?', title: 'str?', lines: 'arr<term>'},
+  chips: {heading: 'str?', items: 'arr<chip>'},
+  bars: {heading: 'str?', items: 'arr<bar>', unit: 'str?'},
+};
+
+/** 每类的说明（schema 输出给 agent 看，一句话讲清"什么时候用它"）。 */
+const TYPE_NOTES = {
+  title: '片头/章头：大标题 + 副题 + 英文行 + 眉题',
+  bullets: '要点列表：每行「主文案 + 右侧说明」，跟着字幕块逐行进',
+  stat: '一个大数字：滚动计数 + 单位 + 标签（+ 等宽小字）',
+  flow: '横向流程盒（2–5 步）：输入 → 处理 → 输出',
+  code: '代码块：逐行揭示，行可标 add/hl/err/ok，光标常闪',
+  image: '图片素材居中：asset 必须在配置 assets 里声明',
+  compare: '左右两栏对比：各一个标题 + 条目列表',
+  steps: '编号步骤（2–6 步）：竖排序号 + 标题 + 说明，连接线生长',
+  table: '表格：表头 + 最多 4 列 × 8 行，行跟着字幕块进',
+  quote: '引言/强调：居中大段文字 + 出处署名',
+  terminal: '终端窗口：标题栏 + 逐行输出，光标常闪',
+  chips: '标签胶囊（≤12 个）：关键词平铺，自动折行',
+  bars: '竖向条形图（2–6 根）：数值 + 标签，适合性能/占比对比',
 };
 
 const err = (code, path, message, hint) => ({code, path, message, hint});
 
-function checkStr(v, path, name, errors, required) {
+function checkStr(v, path, name, errors, required, kind = 'str') {
   if (v === undefined) {
     if (required) errors.push(err('SCENE_MISSING_FIELD', path, `${name} 必填`, `补上 ${name}（非空字符串）`));
     return;
   }
   if (typeof v !== 'string' || !v.length) {
     errors.push(err('SCENE_BAD_FIELD', path, `${name} 必须是非空字符串，收到 ${JSON.stringify(v)}`,
-      '文本字段写字符串；没有就整个键删掉'));
+      kind === 'text' ? '文本字段写字符串' : '文本字段写字符串；没有就整个键删掉'));
   }
 }
 
-function validateItems(v, path, errors) {
-  if (!Array.isArray(v) || v.length === 0) {
-    errors.push(err('SCENE_BAD_FIELD', path, 'items 必须是非空数组', '至少一条 {t, d?}'));
-    return;
+/** 数组元素形状逐个校验；返回元素个数（用于容量上限）。 */
+function validateArr(v, path, shape, errors, {min = 1, maxName, shot} = {}) {
+  if (!Array.isArray(v) || v.length < min) {
+    errors.push(err('SCENE_BAD_FIELD', path, `必须是至少 ${min} 项的数组`, ''));
+    return 0;
+  }
+  const max = maxName && shot ? SHOT_MAXES[maxName.owner]?.[maxName.key] : undefined;
+  if (max !== undefined && v.length > max) {
+    errors.push(err('SCENE_TOO_MANY', path, `最多 ${max} 项，收到 ${v.length} 项`,
+      `删减内容，或拆成多个镜头（每个 at 对齐一句）——版面是算出来的，超了会溢出`));
   }
   v.forEach((it, i) => {
     const p = `${path}[${i}]`;
-    if (!it || typeof it !== 'object') {
-      errors.push(err('SCENE_BAD_FIELD', p, '条目必须是 {t, d?}', '例：{"t": "标题", "d": "说明"}'));
+    if (shape === 'str') { checkStr(it, p, `${path.split('.').pop()}[${i}]`, errors, true); return; }
+    if (shape === 'row') {
+      if (!Array.isArray(it) || it.some((c) => typeof c !== 'string' || !c)) {
+        errors.push(err('SCENE_BAD_FIELD', p, '行必须是字符串数组', '例：["列一", "列二"]'));
+      }
       return;
     }
-    const unknown = Object.keys(it).filter((k) => k !== 't' && k !== 'd');
-    if (unknown.length) {
-      errors.push(err('SCENE_UNKNOWN_FIELD', `${p}.${unknown[0]}`, `未知字段 ${unknown.join(', ')}`,
-        '模板没有这个字段；拼错了就改对，想自定义画面上报镜头层（shots/index.js）'));
+    if (!it || typeof it !== 'object') {
+      // chips/terminal/line 允许裸字符串
+      if (['chip', 'term', 'line'].includes(shape) && typeof it === 'string' && it) return;
+      errors.push(err('SCENE_BAD_FIELD', p, `条目形状不对（${shape}）`, SHAPE_HINT[shape] ?? ''));
+      return;
     }
-    checkStr(it.t, `${p}.t`, 't', errors, true);
-    if (it.d !== undefined) checkStr(it.d, `${p}.d`, 'd', errors, false);
+    const keys = Object.keys(it);
+    const allowed = SHAPE_KEYS[shape] ?? [];
+    const unknown = keys.filter((k) => !allowed.includes(k));
+    if (unknown.length) errors.push(err('SCENE_UNKNOWN_FIELD', `${p}.${unknown[0]}`, `未知字段 ${unknown.join(', ')}`, `可用：${allowed.join(' / ')}`));
+    if (shape === '{t, d?}' || shape === 'step') {
+      checkStr(it.t, `${p}.t`, 't', errors, true);
+      if (it.d !== undefined) checkStr(it.d, `${p}.d`, 'd', errors, false);
+    } else if (shape === '{label, sub?}') {
+      checkStr(it.label, `${p}.label`, 'label', errors, true);
+      if (it.sub !== undefined) checkStr(it.sub, `${p}.sub`, 'sub', errors, false);
+    } else if (shape === 'line') {
+      checkStr(it.text, `${p}.text`, 'text', errors, true);
+      if (it.mark !== undefined && !['add', 'hl', 'err', 'ok'].includes(it.mark)) {
+        errors.push(err('SCENE_BAD_FIELD', `${p}.mark`, `不认识的高亮 ${JSON.stringify(it.mark)}`, '可用：add / hl / err / ok'));
+      }
+    } else if (shape === 'term') {
+      checkStr(it.text, `${p}.text`, 'text', errors, true);
+      if (it.color !== undefined) checkStr(it.color, `${p}.color`, 'color', errors, false);
+    } else if (shape === 'chip') {
+      checkStr(it.label, `${p}.label`, 'label', errors, true);
+    } else if (shape === 'bar') {
+      if (typeof it.v !== 'number' || !Number.isFinite(it.v)) {
+        errors.push(err('SCENE_BAD_FIELD', `${p}.v`, 'v 必须是数字', '条形图的数值'));
+      }
+      checkStr(it.label, `${p}.label`, 'label', errors, true);
+      if (it.unit !== undefined) checkStr(it.unit, `${p}.unit`, 'unit', errors, false);
+    }
   });
+  return v.length;
 }
 
-function validateSide(v, path, errors) {
+const SHAPE_KEYS = {
+  '{t, d?}': ['t', 'd'],
+  step: ['t', 'd'],
+  '{label, sub?}': ['label', 'sub'],
+  line: ['text', 'mark'],
+  term: ['text', 'color'],
+  chip: ['label'],
+  bar: ['v', 'label', 'unit'],
+};
+const SHAPE_HINT = {
+  '{t, d?}': '例：{"t": "要点", "d": "说明"}',
+  step: '例：{"t": "步骤名", "d": "说明"}',
+  '{label, sub?}': '例：{"label": "环节"}',
+  line: '字符串或 {"text": "…", "mark": "hl"}',
+  term: '字符串或 {"text": "…", "color": "#…"}',
+  chip: '字符串或 {"label": "关键词"}',
+  bar: '例：{"v": 81, "label": "Chrome", "unit": "ms"}',
+};
+
+function validateSide(v, path, errors, owner) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) {
     errors.push(err('SCENE_BAD_FIELD', path, '必须是 {title, items}', '例：{"title": "旧做法", "items": ["…"]}'));
     return;
@@ -118,18 +222,13 @@ function validateSide(v, path, errors) {
   const unknown = Object.keys(v).filter((k) => k !== 'title' && k !== 'items');
   if (unknown.length) errors.push(err('SCENE_UNKNOWN_FIELD', `${path}.${unknown[0]}`, `未知字段 ${unknown.join(', ')}`, ''));
   checkStr(v.title, `${path}.title`, 'title', errors, true);
-  if (!Array.isArray(v.items) || v.items.length === 0) {
-    errors.push(err('SCENE_BAD_FIELD', `${path}.items`, 'items 必须是非空数组', '字符串数组即可'));
-  } else {
-    v.items.forEach((s, i) => checkStr(s, `${path}.items[${i}]`, 'items[' + i + ']', errors, true));
-  }
+  validateArr(v.items, `${path}.items`, 'str', errors, {min: 1, maxName: {owner: 'compare', key: 'items'}, shot: {}});
 }
 
 /**
  * 校验场景规格。
  * @param {object} raw scene.json 解析结果
- * @param {{timeline: object, assetNames?: string[]}} ctx 时间轴数据（resolveAt 用）；
- *        assetNames 给了才交叉校验 image.asset（没给就只查形状）
+ * @param {{timeline: object, assetNames?: string[]}} ctx
  * @returns {{ok: boolean, errors: Array<{code, path, message, hint}>}}
  */
 export function validateScene(raw, {timeline, assetNames} = {}) {
@@ -144,8 +243,7 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
   }
   const topUnknown = Object.keys(raw).filter((k) => k !== '$schema' && k !== 'shots');
   if (topUnknown.length) {
-    errors.push(err('SCENE_UNKNOWN_FIELD', topUnknown[0], `顶层未知字段 ${topUnknown.join(', ')}`,
-      '顶层只认 $schema 与 shots'));
+    errors.push(err('SCENE_UNKNOWN_FIELD', topUnknown[0], `顶层未知字段 ${topUnknown.join(', ')}`, '顶层只认 $schema 与 shots'));
   }
   if (!Array.isArray(raw.shots) || raw.shots.length === 0) {
     errors.push(err('SCENE_NO_SHOTS', 'shots', 'shots 必须是非空数组', '至少一个镜头'));
@@ -162,8 +260,7 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {
       errors.push(err('SCENE_UNKNOWN_TYPE', `${path}.type`, `不认识的镜头类型 ${JSON.stringify(type)}`,
-        `v0 可用：${SHOT_TYPES.join(' / ')}`));
-      // 类型都不对，字段没法查；继续查下一个镜头
+        `可用：${SHOT_TYPES.join(' / ')}`));
     } else {
       const spec = FIELDS[type];
       const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && !(k in spec));
@@ -174,64 +271,39 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
       for (const [k, kind] of Object.entries(spec)) {
         const v = shot[k];
         const p = `${path}.${k}`;
-        switch (kind) {
-          case 'str': checkStr(v, p, k, errors, true); break;
-          case 'str?': if (v !== undefined) checkStr(v, p, k, errors, false); break;
-          case 'num':
-            if (v === undefined) errors.push(err('SCENE_MISSING_FIELD', p, `${k} 必填`, '数值，例如 81'));
-            else if (typeof v !== 'number' || !Number.isFinite(v)) {
-              errors.push(err('SCENE_BAD_FIELD', p, `${k} 必须是数字，收到 ${JSON.stringify(v)}`, '别写成字符串'));
-            }
-            break;
-          case 'obj':
-            if (type === 'compare') validateSide(v, p, errors);
-            break;
-          case 'assets':
-            if (v === undefined) errors.push(err('SCENE_MISSING_FIELD', p, 'asset 必填', '素材名，见配置的 assets'));
-            else if (typeof v !== 'string' || !v) {
-              errors.push(err('SCENE_BAD_FIELD', p, 'asset 必须是非空字符串', ''));
-            } else if (assetNames && !assetNames.includes(v)) {
-              errors.push(err('SCENE_NO_ASSET', p, `素材 ${JSON.stringify(v)} 没在配置里声明`,
-                `已声明：${assetNames.join(' / ') || '（无）'}`));
-            }
-            break;
-          case 'arr<{t, d?}>': validateItems(v, p, errors); break;
-          case 'arr<{label, sub?}>':
-            if (!Array.isArray(v) || v.length < 2) {
-              errors.push(err('SCENE_BAD_FIELD', p, 'boxes 必须是至少 2 项的数组', '流程至少两步'));
-            } else {
-              v.forEach((b, j) => {
-                const bp = `${p}[${j}]`;
-                if (!b || typeof b !== 'object') errors.push(err('SCENE_BAD_FIELD', bp, '必须是 {label, sub?}', ''));
-                else {
-                  const unk = Object.keys(b).filter((k) => k !== 'label' && k !== 'sub');
-                  if (unk.length) errors.push(err('SCENE_UNKNOWN_FIELD', `${bp}.${unk[0]}`, `未知字段 ${unk.join(', ')}`, ''));
-                  checkStr(b.label, `${bp}.label`, 'label', errors, true);
-                  if (b.sub !== undefined) checkStr(b.sub, `${bp}.sub`, 'sub', errors, false);
-                }
-              });
-            }
-            break;
-          case 'arr<line>':
-            if (!Array.isArray(v) || v.length === 0) {
-              errors.push(err('SCENE_BAD_FIELD', p, 'lines 必须是非空数组', '字符串或 {text, mark?}'));
-            } else {
-              v.forEach((l, j) => {
-                const lp = `${p}[${j}]`;
-                if (typeof l === 'string') return;
-                if (!l || typeof l !== 'object' || typeof l.text !== 'string') {
-                  errors.push(err('SCENE_BAD_FIELD', lp, '行必须是字符串或 {text, mark?}', ''));
-                } else if (l.mark !== undefined && !['add', 'hl', 'err', 'ok'].includes(l.mark)) {
-                  errors.push(err('SCENE_BAD_FIELD', `${lp}.mark`, `不认识的高亮 ${JSON.stringify(l.mark)}`,
-                    '可用：add / hl / err / ok'));
-                }
-              });
-            }
-            break;
+        if (kind === 'str') checkStr(v, p, k, errors, true);
+        else if (kind === 'text') checkStr(v, p, k, errors, true, 'text');
+        else if (kind === 'str?') { if (v !== undefined) checkStr(v, p, k, errors, false); }
+        else if (kind === 'num') {
+          if (v === undefined) errors.push(err('SCENE_MISSING_FIELD', p, `${k} 必填`, '数值，例如 81'));
+          else if (typeof v !== 'number' || !Number.isFinite(v)) {
+            errors.push(err('SCENE_BAD_FIELD', p, `${k} 必须是数字，收到 ${JSON.stringify(v)}`, '别写成字符串'));
+          }
+        } else if (kind === 'side') validateSide(v, p, errors, type);
+        else if (kind === 'assets') {
+          if (v === undefined) errors.push(err('SCENE_MISSING_FIELD', p, 'asset 必填', '素材名，见配置的 assets'));
+          else if (typeof v !== 'string' || !v) errors.push(err('SCENE_BAD_FIELD', p, 'asset 必须是非空字符串', ''));
+          else if (assetNames && !assetNames.includes(v)) {
+            errors.push(err('SCENE_NO_ASSET', p, `素材 ${JSON.stringify(v)} 没在配置里声明`,
+              `已声明：${assetNames.join(' / ') || '（无）'}`));
+          }
+        } else if (kind.startsWith('arr<')) {
+          const shape = kind.slice(4, -1);
+          const min = shape === '{label, sub?}' ? 2 : 1;   // flow 至少两步
+          validateArr(v, p, shape, errors, {min, maxName: {owner: type, key: k}, shot});
         }
       }
+      // 表格的行列交叉检查（需要同时看到 columns 与 rows）
+      if (type === 'table' && Array.isArray(shot.columns) && Array.isArray(shot.rows)) {
+        const n = shot.columns.length;
+        shot.rows.forEach((r, j) => {
+          if (Array.isArray(r) && r.length !== n) {
+            errors.push(err('SCENE_TABLE_WIDTH', `${path}.rows[${j}]`,
+              `这一行有 ${r.length} 列，表头是 ${n} 列`, '每行的单元格数必须等于 columns 数'));
+          }
+        });
+      }
     }
-    // 对齐
     if (shot.at === undefined) {
       errors.push(err('SCENE_MISSING_AT', `${path}.at`, 'at 必填', '帧号、句 id（"S02"）或 {s, block?, lead?, offset?}'));
     } else {
@@ -259,4 +331,30 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
     }
   }
   return {ok: errors.length === 0, errors};
+}
+
+/**
+ * 机器可读的规格 schema —— `filmwright schema --json` 与 MCP 的 filmwright_schema
+ * 都从这里出：agent 不读文档也能发现「有哪些类型、每个字段什么形状、上限多少、
+ * 对齐怎么写、错误码什么含义」。
+ */
+export function sceneSchema() {
+  return {
+    schema: SCENE_SCHEMA,
+    top: {shots: '镜头数组，按播放顺序；第一个必须 at:1；区间由引擎串接'},
+    at: {
+      number: '帧号（≥1 的整数）',
+      string: '句 id，如 "S05" → cutBefore 语义（开口前 8 帧）',
+      object: '{s, block?, lead?=8, offset?=0}：锚到句或字幕块起点，提前 lead 帧，再加 offset',
+    },
+    types: Object.fromEntries(SHOT_TYPES.map((t) => [t, {
+      note: TYPE_NOTES[t],
+      fields: Object.fromEntries(Object.entries(FIELDS[t]).map(([k, kind]) => [k, {
+        kind,
+        required: !kind.endsWith('?'),
+      }])),
+      max: SHOT_MAXES[t] ?? {},
+    }])),
+    errorCodes: SCENE_ERROR_CODES,
+  };
 }

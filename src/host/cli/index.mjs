@@ -9,6 +9,7 @@ import * as commands from './commands.mjs';
 
 const COMMANDS = [
   ['new', '新建项目骨架    <目录> [--template scene|shots]', 'new'],
+  ['schema', '输出 scene 规格的机器可读 schema（类型/字段/上限/错误码）', 'schema'],
   ['mcp', 'MCP 服务器（stdio），把工具链暴露给 agent', 'mcp'],
   ['check', '自检：公开面重名导出、模块路径、时间轴引用、场景规格、全帧绘制、画质', 'check'],
   ['preview', '预览页（拖动时间轴 / 播放 / 改文件热重载）[--no-open] [--seconds N]', 'preview'],
@@ -77,7 +78,12 @@ export async function main(argv) {
       if (!json) console.log(usage());
       return fail(e);
     }
-    // new / mcp 不需要 --project：一个的目标目录是位置参数，一个是常驻服务
+    // new / schema / mcp 不需要 --project：位置参数或无参命令
+    if (entry[2] === 'schema') {
+      const r = await commands.schema({args});
+      const out = typeof r === 'number' ? {code: r} : (r ?? {code: 0});
+      return finish(out.code ?? 0, out.data ?? {}, out.warnings ?? [], out.errors ?? []);
+    }
     if (entry[2] === 'mcp') {
       const r = await commands.mcp({args});
       const out = typeof r === 'number' ? {code: r} : (r ?? {code: 0});

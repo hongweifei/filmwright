@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **模板镜头扩到 13 类**：`steps`（编号步骤 + 生长连接线 + 当前步点亮）、`table`（表头 + 斑马纹 + 行扫描）、`quote`（居中大字折行 + 引号脉动）、`terminal`（终端窗口逐行输出 + 光标）、`chips`（关键词胶囊自动折行）、`bars`（条形图 + 循环描边）。每类内建入场错峰与落位后的持续动作——验收件 `examples/gallery`（13 镜各一，纯规格）九道自检全过、画质零违规。
+- **容量上限进校验**：bullets/steps ≤6、flow ≤5、code/terminal ≤10、table 4 列 × 8 行、chips ≤12、bars ≤6、compare 各 ≤5，超了报 `SCENE_TOO_MANY`（hint 教拆镜头）。AI 该被校验告知边界，而不是靠肉眼发现溢出。
+- **`filmwright schema`**：机器可读的规格说明书（13 类模板 / 字段 / 上限 / 对齐语法 / 错误码），`--json` 输出；MCP 加 `filmwright_schema` 工具——agent 写 scene 前先拿 schema，不必先读文档。
+- **CI 平台矩阵**：静态 job 跑 ubuntu / macOS / windows 三个 OS（核心零依赖，这是跨平台最真的证据）；渲染 job 跑 ubuntu + windows（Edge + 无头）；环境确认改用 `findBrowser()` 真断言 + `set -o pipefail`，杜绝假绿。macOS 渲染暂不进矩阵——没有本地实测证据，不猜。
+- **`tools/make-timeline-fixture.mjs`**：edge-tts 端点不可达时，按同一套解析规则合成 `timeline.json` 夹具（明确标注非配音；真实项目跑 `tts` 覆盖）。
+- `verify-readme` 扩面：除 minimal 快速开始外，覆盖两个纯 scene 示例的静态自检、`schema --json`（13 类齐）、`new` 冒烟（含「新项目 check 必须报 `NO_TIMELINE` 而不是崩」的错误契约）。
+
 - **场景规格 `scene.json`（AI 自动化的入口）**：声明式镜头，v0 含 7 类模板（title / bullets / stat / flow / code / image / compare）。AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。校验与 boot 共用一份实现（`src/contract/scene.js`），错误带 code/path/hint；静态自检加第 9 道 `scene`（`--static-only` 七道不启浏览器）。示例 `examples/scenecast` 整个项目没有 `shots/`，画面全部来自规格（其 `timeline.json` 是合成夹具；跑 `tts` 会生成真实配音）。
 - **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致；错误带结构化 `code` 与 `where` 路径，给 agent 直接消费（见 docs/cli.md）。
 - **`filmwright new <目录>`**：项目脚手架，`--template scene`（默认）/ `shots` 两种骨架；目录非空直接拒绝（`DIR_NOT_EMPTY`），从不覆盖已有文件。

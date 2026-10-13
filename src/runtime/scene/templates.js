@@ -12,8 +12,8 @@ import {resolveAt} from '../../contract/scene.js';
 import {theme as C, fonts as F, accentFor} from '../../contract/config.js';
 import {inv, easeOut3} from '../motion/ease.js';
 import {applyDesignScale, DESIGN_SAFE} from '../layout/design.js';
-import {text, panel, rule, codeBlock, caret, measure, font} from '../draw/primitives.js';
-import {bigStat, flow, section} from '../draw/widgets.js';
+import {text, panel, rule, codeBlock, caret, measure, font, terminal as terminalDraw, bars as barsDraw} from '../draw/primitives.js';
+import {bigStat, flow, section, chips as chipsW} from '../draw/widgets.js';
 import {picture} from '../draw/picture.js';
 import {hexA} from '../draw/color.js';
 
@@ -237,8 +237,214 @@ const compare = {
   },
 };
 
+// ---------- v0.2 扩充：steps / table / quote / terminal / chips / bars ----------
+
+const steps = {
+  draw(ctx, n, shot, accent) {
+    const rows = shot.steps;
+    const frames = staggerFrames(shot.sid, rows.length, this.from);
+    if (shot.heading) {
+      section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
+    }
+    const top = 220;
+    const rowH = Math.min(96, Math.max(64, Math.floor(360 / rows.length)));
+    const lineBottom = top + (rows.length - 1) * rowH + 28;
+    // 连接线跟着最后一进的步骤生长
+    const grown = frames.filter((f) => n >= f).length;
+    const lp = easeOut3(inv(n, frames[0], frames[Math.max(0, grown - 1)] + 16));
+    ctx.save();
+    ctx.strokeStyle = hexA(accent, 0.35);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(250, top + 28);
+    ctx.lineTo(250, top + 28 + (lineBottom - top - 28) * (rows.length > 1 ? lp : 0));
+    ctx.stroke();
+    ctx.restore();
+    rows.forEach((st, i) => {
+      const p = enterAt(n, frames[i]);
+      if (p <= 0.01) return;
+      const y = top + i * rowH;
+      ctx.save();
+      ctx.globalAlpha = p;
+      // 循环点亮当前步骤：落位后仍有持续动作
+      const active = p >= 1 && Math.floor((n - this.from) / 60) % rows.length === i;
+      const pulse = active ? 0.5 + 0.5 * Math.sin((n - this.from) / 12) : 0;
+      ctx.fillStyle = active ? hexA(accent, 0.9) : hexA(accent, 0.18);
+      ctx.shadowColor = hexA(accent, 0.8);
+      ctx.shadowBlur = active ? 10 + 14 * pulse : 0;
+      ctx.beginPath();
+      ctx.arc(250, y + 28, 26, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      text(ctx, String(i + 1), 250, y + 29, {
+        size: 26, family: F.num, weight: 900, color: active ? C.bgDeep : accent,
+        align: 'center', baseline: 'middle',
+      });
+      text(ctx, st.t, 310, st.d ? y + 18 : y + 28, {size: 27, weight: 800, color: C.text, baseline: 'middle', maxW: 780});
+      if (st.d) {
+        text(ctx, st.d, 310, y + 46, {size: 20, weight: 500, color: C.dim, baseline: 'middle', maxW: 780});
+      }
+      ctx.restore();
+    });
+  },
+};
+
+const table = {
+  draw(ctx, n, shot, accent) {
+    const cols = shot.columns;
+    const rows = shot.rows;
+    const frames = staggerFrames(shot.sid, rows.length + 1, this.from);
+    if (shot.heading) {
+      section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
+    }
+    const x0 = 190, w = 900, rowH = 56, top = 220;
+    const cw = w / cols.length;
+    // 表头
+    const hp = enterAt(n, frames[0]);
+    if (hp > 0.01) {
+      ctx.save();
+      ctx.globalAlpha = hp;
+      panel(ctx, x0, top, w, rowH, {r: 10, fill: hexA(accent, 0.16), stroke: hexA(accent, 0.5), lw: 1.6});
+      cols.forEach((c, j) => {
+        text(ctx, c, x0 + cw * j + 20, top + rowH / 2, {size: 23, weight: 800, color: accent, baseline: 'middle', maxW: cw - 30});
+      });
+      ctx.restore();
+    }
+    rows.forEach((r, i) => {
+      const p = enterAt(n, frames[i + 1]);
+      if (p <= 0.01) return;
+      const y = top + rowH + 8 + i * (rowH - 6);
+      ctx.save();
+      ctx.globalAlpha = p;
+      panel(ctx, x0, y, w, rowH - 6, {r: 8, fill: i % 2 ? hexA(C.panel, 0.55) : null, stroke: null});
+      r.forEach((cell, j) => {
+        text(ctx, cell ?? '', x0 + cw * j + 20, y + (rowH - 6) / 2, {
+          size: 21, weight: j === 0 ? 700 : 500, color: j === 0 ? C.text : C.dim, baseline: 'middle', maxW: cw - 30,
+        });
+      });
+      ctx.restore();
+    });
+    // 行扫描高亮：整表落位后的持续动作
+    if (hp >= 1 && rows.every((_, i) => n >= frames[i + 1] + 20)) {
+      const idx = Math.floor((n - this.from) / 50) % rows.length;
+      const pulse = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin((n - this.from) / 12));
+      const y = top + rowH + 8 + idx * (rowH - 6);
+      panel(ctx, x0, y, w, rowH - 6, {r: 8, fill: null, stroke: hexA(accent, pulse), lw: 1.8});
+    }
+  },
+};
+
+const quote = {
+  draw(ctx, n, shot, accent) {
+    const frames = staggerFrames(shot.sid, 1, this.from);
+    const p = easeOut3(inv(n, frames[0], frames[0] + 22));
+    const lines = (function () {
+      // 手动折行：quote 的字号大，超宽必须换行而不是缩没
+      const f = font(44, F.sans, 800);
+      const out = [];
+      let line = '';
+      for (const ch of shot.text) {
+        if (measure(line + ch, f) > 900 && line) { out.push(line); line = ch; }
+        else line += ch;
+      }
+      if (line) out.push(line);
+      return out.slice(0, 4);
+    })();
+    ctx.save();
+    ctx.globalAlpha = p;
+    ctx.translate(0, (1 - p) * 24);
+    // 引号光晕脉动 = 落位后的持续动作
+    const pulse = 0.5 + 0.5 * Math.sin(n / 18);
+    text(ctx, '「', 640, 220, {
+      size: 64, weight: 900, color: hexA(accent, 0.5 + 0.5 * pulse), align: 'center', baseline: 'middle',
+      glow: hexA(accent, 0.7 * pulse), glowBlur: 26,
+    });
+    const startY = 320 - (lines.length - 1) * 30;
+    lines.forEach((l, i) => {
+      text(ctx, l, 640, startY + i * 60, {size: 44, weight: 800, color: C.text, align: 'center', baseline: 'middle'});
+    });
+    if (shot.who || shot.from) {
+      const who = [shot.who, shot.from].filter(Boolean).join(' · ');
+      text(ctx, '—— ' + who, 640, startY + lines.length * 60 + 20, {
+        size: 22, weight: 500, color: C.faint, align: 'center', baseline: 'middle',
+      });
+    }
+    ctx.restore();
+  },
+};
+
+const terminalT = {
+  draw(ctx, n, shot, accent) {
+    const lines = shot.lines.map((l) => (typeof l === 'string' ? {text: l} : l));
+    const frames = staggerFrames(shot.sid, lines.length, this.from);
+    if (shot.heading) {
+      section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
+    }
+    const size = 23, lh = 36, padding = 18, barH = 40;
+    const height = barH + padding * 2 + lines.length * lh;   // 高度先定死，逐行揭示不跳窗
+    const k = Math.max(1, lines.filter((_, i) => n >= frames[i]).length);
+    terminalDraw(ctx, 190, 210, 900, lines.slice(0, k), {
+      size, lh, padding, barH, height, title: shot.title ?? 'filmwright',
+    });
+    const lastText = lines[k - 1].text;
+    const caretX = 190 + padding + Math.min(860, measure(lastText, font(size, F.mono, 400))) + 4;
+    const caretY = 210 + barH + padding + (k - 1) * lh + 4;
+    caret(ctx, caretX, caretY, lh - 10, n, {color: accent, period: 30});
+  },
+};
+
+const chips = {
+  draw(ctx, n, shot, accent) {
+    const frames = staggerFrames(shot.sid, 1, this.from);
+    if (shot.heading) {
+      section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
+    }
+    // 揭示进度铺满整句的字幕块跨度；chips() 内部按 p 逐颗点亮
+    const p = easeOut3(inv(n, frames[0], frames[0] + 8 + shot.items.length * 10));
+    if (p <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, p * 2);
+    // 整块轻微呼吸 = 落位后的持续动作（chips 自己会摆位，不逐颗叠加）
+    const b = p >= 1 ? breathe(n, 0.014, 44) : 1;
+    ctx.translate(640, 340);
+    ctx.scale(b, b);
+    ctx.translate(-640, -340);
+    chipsW(ctx, 190, 260, 900, shot.items, {p, size: 25, hgt: 54, color: accent});
+    ctx.restore();
+  },
+};
+
+const barsT = {
+  draw(ctx, n, shot, accent) {
+    const items = shot.items;
+    const frames = staggerFrames(shot.sid, 1, this.from);
+    if (shot.heading) {
+      section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
+    }
+    const p = easeOut3(inv(n, frames[0], frames[0] + 30));
+    const x0 = 240, w = 800, h = 340, y0 = 200;
+    barsDraw(ctx, x0, y0, w, h, shot.unit ? items.map((it) => ({...it, unit: it.unit ?? shot.unit})) : items,
+      {p, baseColor: accent});
+    // 循环描一根柱子的边：数值图落位后的持续动作
+    if (p >= 1) {
+      const gap = 10;
+      const bw = (w - gap * (items.length - 1)) / items.length;
+      const mx = Math.max(...items.map((it) => it.v));
+      const idx = Math.floor((n - this.from) / 60) % items.length;
+      const bh = (items[idx].v / mx) * h;
+      const pulse = 0.3 + 0.35 * (0.5 + 0.5 * Math.sin((n - this.from) / 13));
+      panel(ctx, x0 + idx * (bw + gap), y0 + h - bh, bw, bh, {
+        r: 6, fill: null, stroke: hexA(accent, pulse), lw: 2, glow: hexA(accent, pulse * 0.7), glowBlur: 14,
+      });
+    }
+  },
+};
+
 /** 模板注册表。键必须与 contract/scene.js 的 SHOT_TYPES 一致。 */
-export const TEMPLATES = {title, bullets, stat, flow: flowT, code, image, compare};
+export const TEMPLATES = {
+  title, bullets, stat, flow: flowT, code, image, compare,
+  steps, table, quote, terminal: terminalT, chips, bars: barsT,
+};
 
 /**
  * 把校验过的 scene 编译成镜头数组（boot 的 SHOTS）。

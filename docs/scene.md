@@ -2,7 +2,7 @@
 
 **这是 AI 自动化的入口。** 项目里放一份 `scene.json`，声明「每句解说词配什么画面」，引擎的模板镜头负责其余一切——入场错峰、停留呼吸、章节配色、设计缩放。AI 生成的是**可校验的数据**，不是难保证质量的绘制代码；手写镜头（`shots/index.js`）仍然保留，两条路可以混用。
 
-可运行的完整例子见 `examples/scenecast`——**整个项目没有 `shots/` 目录**，画面全部来自这一份规格。
+可运行的完整例子有两个：`examples/scenecast`（46 秒解说片，验证规格能撑起一整条片子）与 `examples/gallery`（**13 类模板各一镜的画廊**，验证每类模板本身）。两个项目都**没有 `shots/` 目录**，画面全部来自这一份声明。
 
 ## 形状
 
@@ -33,9 +33,20 @@
 
 句 id 与字幕块来自 `script/timeline.json`（`filmwright tts` 生成，人读版在 `script/timeline.md`）。**改解说词不用改规格**：句 id 稳定，帧号自动跟着变。
 
-## 模板一览（v0 共 7 类）
+## 模板一览（共 13 类）
 
-元素进场跟着对齐句的字幕块错峰；块不够用时从最后一块按 18 帧铺。
+元素进场跟着对齐句的字幕块错峰；块不够用时从最后一块按 18 帧铺。**每类都有容量上限**（版面算出来的，超了会挤/溢出）——`filmwright schema` 能输出这份表，不用背。
+
+### 机器可读 schema（给 agent 的发现机制）
+
+```bash
+filmwright schema            # 人读：类型、用途、字段、上限、错误码
+filmwright schema --json     # 机读：同一份数据的 JSON
+```
+
+MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 schema**，不必先读文档。
+
+### 文字类
 
 ### `title` 片头
 | 字段 | 必填 | 说明 |
@@ -64,16 +75,50 @@
 ### `compare` 两栏对比
 `left / right: {title, items: [字符串]}`（都必填）、`heading?`。中间 `VS` 持续脉冲。
 
+### `steps` 编号步骤
+`steps: [{t, d?}]`（必填，≤6）、`heading?`。序号圆点 + 连接线跟着步骤生长；当前步骤循环点亮。
+
+### `table` 表格
+`columns: [字符串]`（2–4 列）、`rows: [[字符串]]`（≤8 行，每行单元格数必须等于列数，否则报 `SCENE_TABLE_WIDTH`）、`heading?`。表头强调色、斑马纹、行扫描高亮。
+
+### `quote` 引言
+`text`（必填）、`who?`、`from?`。居中大字自动折行（最多 4 行），引号光晕脉动。长文案请拆成多个 `bullets`，别堆进一句 `quote`。
+
+### `terminal` 终端窗口
+`lines: [字符串 | {text, color?}]`（必填，≤10）、`title?`（窗口标题）、`heading?`。高度按全量行定死，逐行揭示不跳窗，光标常闪在最新行。
+
+### `chips` 关键词胶囊
+`items: [字符串 | {label}]`（必填，≤12）、`heading?`。自动折行，整块轻呼吸。
+
+### `bars` 条形图
+`items: [{v, label, unit?}]`（必填，2–6 根）、`unit?`（全局单位，条目没写时用）、`heading?`。数值滚动生长，落位后循环描一根柱子的边。适合性能/占比对比。
+
+## 容量上限
+
+超了报 `SCENE_TOO_MANY`（hint 会建议拆成多个镜头，每个 `at` 对齐一句）：
+
+| 类型 | 上限 |
+|---|---|
+| bullets.items / steps.steps | 6 |
+| flow.boxes | 5 |
+| code.lines / terminal.lines | 10 |
+| table | 4 列 × 8 行 |
+| chips.items | 12 |
+| bars.items | 6 |
+| compare.left/right.items | 各 5 |
+
 ## 校验与错误码
 
 `filmwright check` 的 `scene` 一道（不启浏览器）跑校验；boot 在浏览器里查的是**同一份实现**（`src/contract/scene.js`）。每条错误带 `code / path / message / hint`——错误信息是给模型读的，读完能直接改。
 
 | code | 含义 |
 |---|---|
-| `SCENE_UNKNOWN_TYPE` | 类型不认识（hint 列出全部可用） |
+| `SCENE_UNKNOWN_TYPE` | 类型不认识（hint 列出全部 13 类） |
 | `SCENE_UNKNOWN_FIELD` | 未知字段（拼错当场响） |
 | `SCENE_MISSING_FIELD` / `SCENE_MISSING_AT` | 缺必填字段 / 缺 `at` |
-| `SCENE_BAD_FIELD` | 字段类型/形状/取值不对 |
+| `SCENE_BAD_FIELD` / `SCENE_BAD_SHOT` | 字段类型/形状/取值不对 / 镜头不是对象 |
+| `SCENE_TOO_MANY` | 超出容量上限（见上表） |
+| `SCENE_TABLE_WIDTH` | 表格某行的单元格数与表头不符 |
 | `SCENE_NO_SENTENCE` / `SCENE_NO_BLOCK` | 对齐到不存在的句 / 块（说共几块） |
 | `SCENE_NO_ASSET` | `image.asset` 没在配置里声明（列出已声明的） |
 | `SCENE_FIRST_NOT_1` | 第一个镜头不从第 1 帧起 |

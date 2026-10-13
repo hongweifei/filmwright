@@ -56,7 +56,7 @@ test('MCP：握手 → 8 个工具齐 → 只读工具真能跑', {skip: sdkMiss
 
     const tools = await s.call('tools/list', {});
     const names = tools.result.tools.map((t) => t.name);
-    for (const want of ['filmwright_new', 'filmwright_timeline', 'filmwright_scene_validate',
+    for (const want of ['filmwright_new', 'filmwright_schema', 'filmwright_timeline', 'filmwright_scene_validate',
       'filmwright_tts', 'filmwright_check', 'filmwright_stills', 'filmwright_render', 'filmwright_all']) {
       assert.ok(names.includes(want), '缺工具 ' + want);
     }

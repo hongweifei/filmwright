@@ -44,12 +44,13 @@ filmwright mcp                     # stdio 服务器
 }
 ```
 
-工具一览（返回值与 `--json` 同形状）：
+工具一览（返回值与 `--json` 同形状，共 9 个）：
 
 | 工具 | 用途 |
 |---|---|
 | `filmwright_new` | 建项目骨架（scene / shots 模板） |
-| `filmwright_timeline` | 读句 id / 帧区间 / 字幕块数——**写 `at` 之前先看这个** |
+| `filmwright_schema` | **写 scene 前先拿它**：13 类模板、字段、容量上限、错误码 |
+| `filmwright_timeline` | 读句 id / 帧区间 / 字幕块数——写 `at` 之前看这个 |
 | `filmwright_scene_validate` | 只查 scene.json，秒级，不启浏览器 |
 | `filmwright_tts` | 解说词 → 配音 + 时间轴 |
 | `filmwright_check` | 九道自检（`static_only` 可选） |
@@ -60,8 +61,9 @@ filmwright mcp                     # stdio 服务器
 ## 推荐的 agent 工作回路
 
 ```
-filmwright_new → 写 narration.txt → filmwright_tts → filmwright_timeline（拿准句 id 与块数）
-  → 写 scene.json → filmwright_scene_validate（秒级快改）
+filmwright_schema（拿 13 类模板与上限）→ filmwright_new → 写 narration.txt → filmwright_tts
+  → filmwright_timeline（拿准句 id 与块数）→ 写 scene.json
+  → filmwright_scene_validate（秒级快改）
   → filmwright_check static_only=true → filmwright_stills（目视！多模态看自己做的帧）
   → 满意后 filmwright_all
 ```
@@ -73,9 +75,10 @@ filmwright_new → 写 narration.txt → filmwright_tts → filmwright_timeline�
 
 ## 写 scene.json 的要点
 
-完整字段表在[场景规格](scene.md)；给模型的最小约束：
+完整字段表在[场景规格](scene.md)；机器可读版用 `filmwright_schema` 拿。给模型的最小约束：
 
 - 只填**内容**（文本、数字、条目、句 id 对齐），不要试图控制坐标、字号、颜色——模板负责，自定义画面请走逃生舱；
+- **容量上限是校验的一部分**（bullets/steps ≤6、table 4×8、chips ≤12、code/terminal ≤10、bars ≤6）——超了 `SCENE_TOO_MANY` 当场报，hint 会教你拆成多个镜头；
 - `at` 用句 id（`"S05"`）或 `{s, block}`，**永远不要写硬编码帧号**——改解说词后帧号会变；
 - `shots` 按播放顺序排，第一个必须是 `{"type": "title", "at": 1}`；
 - 每个镜头的内容量：bullets 建议 2–4 条、每条 `t` ≤ 16 字——超了模板会缩字号，画面会挤。

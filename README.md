@@ -24,9 +24,9 @@
 
 ## 你写什么、引擎给你什么
 
-你只写三样：**配置**（`film.config.mjs`）、**解说词**（`script/narration.txt`）、**镜头**（`shots/index.js`，每帧调用一个绘制函数）。
+你只写三样：**配置**（`film.config.mjs`）、**解说词**（`script/narration.txt`）、**画面**——要么填声明式的 `scene.json`（13 类模板镜头，AI 的主干道），要么写 `shots/index.js`（手写镜头的逃生舱）。
 
-引擎给你：字幕、章节卡、HUD、进度条、片尾、分片并行渲染、逐帧自检与画质自检、像素回归守卫、可拖动可热重载的预览页。
+引擎给你：字幕、章节卡、HUD、进度条、片尾、模板的节奏（入场错峰、停留呼吸、配色、缩放）、分片并行渲染、逐帧自检与画质自检、像素回归守卫、可拖动可热重载的预览页。
 
 ## 快速开始
 
@@ -52,7 +52,9 @@ node bin/filmwright.mjs preview --project examples/minimal
 
 | 命令 | 作用 |
 |---|---|
-| `new` | 新建项目骨架（`--template scene` 默认 / `shots`），目录非空直接拒绝 |
+| `new` | 新建项目骨架（scene / shots 模板），目录非空直接拒绝 |
+| `schema` | 输出 scene 规格的机器可读 schema（13 类模板 / 字段 / 上限 / 错误码） |
+| `mcp` | MCP 服务器（stdio），把整条工具链暴露给 agent |
 | `check` | 九道自检：导出、模块路径、时间轴引用、场景规格、素材、主题键、全帧绘制、画质（明细见[质量保障](docs/qc.md)） |
 | `preview` | 预览页：拖动时间轴 / 播放 / 热重载（SSE 推送，不是轮询） |
 | `tts` | 解说词 → `audio.wav` + `timeline.json`（逐句缓存） |
