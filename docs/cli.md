@@ -61,6 +61,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | `sheet` | 抽帧联络表（人工 QC 用） |
 | `render` | 逐帧渲染成无声视频 |
 | `mux` | 画面与配音合流 |
+| `srt` | 导出外挂字幕（SRT），可合成双语轨 |
 | `all` | 一条龙：check → render → mux |
 
 ## `new`
@@ -165,6 +166,24 @@ filmwright mux --project <项目目录> --video <视频> [--out y.mp4]
 ```
 
 画面与配音合流，默认输出 `renders/<slug>.mp4`。`--video` 必填（通常传 `render` 的产物）；找不到 `public/assets/<slug>/audio.wav` 会提示先跑 `tts`。
+
+## `srt`
+
+```bash
+filmwright srt --project my-film                        # -> script/<slug>.srt
+filmwright srt --project my-film --translation tr.json  # 双语轨
+```
+
+字幕**已经烧进画面**，这份 SRT 是给 B 站 / YouTube 投稿用的外挂字幕。时间戳按 `fps` 从帧号换算；块与块之间的空隙**用下一块的开始补齐**，避免字幕在空隙里闪断。
+
+**框架不翻译**（AI 在框架外的边界不破）：译文由外部产出后传进来，两种格式都认——
+
+```json
+[{"from": 106, "to": 197, "text": "Translated line"}]   // 按 from 帧对齐
+{"1": "Translated line", "2": "…"}                      // 按字幕块序号对齐（1 起）
+```
+
+两种都允许缺项：没给译文的块只出原文，**不编内容**。
 
 ## `all`
 

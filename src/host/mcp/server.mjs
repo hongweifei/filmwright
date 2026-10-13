@@ -222,6 +222,12 @@ export function buildServer() {
     }
   });
 
+  server.registerTool('filmwright_srt', {
+    title: '导出字幕（SRT）',
+    description: '从 timeline.json 的 subs 导出 SRT。字幕已烧进画面，这份是给 B 站/YouTube 投稿用的外挂字幕；译文由框架外产出后合成双语轨。',
+    inputSchema: {project: projectArg, out: z.string().optional().describe('输出路径（默认 script/<slug>.srt）')},
+  }, async ({project, out}) => run('srt', project, out ? {out} : {}));
+
   server.registerTool('filmwright_render', {
     title: '渲染（无声视频）',
     description: '逐帧渲染成 mp4；shards 分片并行。返回产物路径、帧数与耗时。',

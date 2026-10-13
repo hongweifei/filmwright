@@ -18,6 +18,7 @@ const COMMANDS = [
   ['sheet', '抽帧联络表    --from 1 --to 900 --step 150 --out <png>', 'sheet'],
   ['render', '渲染          [--out <mp4>] [--shards 5] [--from N --to M]', 'render'],
   ['mux', '画面配音合流  --video <mp4> [--out <mp4>]', 'mux'],
+  ['srt', '导出字幕      [--out <srt>] [--translation <json>]（双语轨）', 'srt'],
   ['all', '一条龙：check → render → mux', 'all'],
 ];
 

@@ -15,6 +15,7 @@ import {runChecks} from '../checks/index.mjs';
 import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
 import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
+import {exportSrt, readTranslation} from '../media/srt.mjs';
 import {sceneSchema} from '../../contract/scene.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
 import {num, str} from './args.mjs';
@@ -128,6 +129,22 @@ export async function schema(ctx) {
   console.log('\n错误码：' + s.errorCodes.join(' / '));
   console.log('\n机器可读版：filmwright schema --json');
   return {code: 0};
+}
+
+/**
+ * 导出 SRT 字幕。框架不翻译（AI 在框架外的边界不破）——外部产出译文后
+ * 用 --translation 合成双语轨。
+ */
+export async function srt(ctx) {
+  const say = makeSay(ctx.args);
+  requireTimeline(ctx.proj);
+  const translation = readTranslation(str(ctx.args, 'translation', null));
+  const r = exportSrt(ctx.proj, {
+    out: ctx.args.out ? resolve(String(ctx.args.out)) : undefined,
+    translation,
+  });
+  say(`${r.out}  ${r.blocks} 块${r.bilingual ? '（双语）' : ''}`);
+  return {code: 0, data: r};
 }
 
 /** 新建项目骨架。不需要 --project：目标目录就是位置参数。 */

@@ -62,6 +62,7 @@ node bin/filmwright.mjs preview --project examples/minimal
 | `sheet` | 抽帧联络表（人工 QC） |
 | `render` | `[--shards N]` 逐帧渲染，分片并行 |
 | `mux` | 画面与配音合流 |
+| `srt` | 导出外挂字幕（SRT），可合成双语轨 |
 | `all` | 一条龙：check → render → mux |
 
 全部选项与产物落点见[命令参考](docs/cli.md)。
