@@ -158,8 +158,11 @@ jobs:
       - name: 预览页（拖动 / 播放 / 热重载）
         run: node tools/verify-preview.mjs
 
+      # `--shards auto` 按核数定分片：windows runner 只有 2 核，硬写 2 片会超订
+      # （2 个无头 Chrome + 2 个 ffmpeg 抢 2 核，实测端到端出片跑 109s 后失败）。
+      # ubuntu runner 核多，自动会开更多片 —— 这正是 --shards auto 的用途。
       - name: 端到端出片
-        run: node bin/filmwright.mjs render --project examples/minimal --shards 2
+        run: node bin/filmwright.mjs render --project examples/minimal --shards auto
 
       # 用 node 取产物、判非空，不用 `ls | head -1`：
       # Git Bash 的 ls 是多列输出，`head -1` 会截出多个文件名的片段，

@@ -198,11 +198,14 @@ export async function openSession(url, size, opts = {}) {
     /** 原始 CDP 调用（Input / Emulation 等高级用法）；普通取值用 evaluate。 */
     send,
     async frame(n) {
-      const r = await send('Runtime.evaluate', {expression: `window.__renderFrame(${n})`, returnByValue: true});
+      // 用带超时的调用：浏览器在长渲染里卡死时，`send` 会**永远不返回**，
+      // 整个渲染挂到 job 超时，报出来还是「进程被杀」，看不出是浏览器的问题。
+      // 给足 60s（单帧正常 ~80ms，60s 只可能是真卡住），让失败可诊断。
+      const r = await sendTimeout('Runtime.evaluate', {expression: `window.__renderFrame(${n})`, returnByValue: true}, 60000);
       if (r.result?.exceptionDetails) {
         throw new Error('filmwright: 第 ' + n + ' 帧抛错：' + JSON.stringify(r.result.exceptionDetails).slice(0, 400));
       }
-      const shot = await send('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false});
+      const shot = await sendTimeout('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false}, 60000);
       if (!shot.result?.data) throw new Error('filmwright: 第 ' + n + ' 帧截图失败');
       return Buffer.from(shot.result.data, 'base64');
     },
