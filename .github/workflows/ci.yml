@@ -102,12 +102,39 @@ jobs:
       - name: 预览页（拖动 / 播放 / 热重载）
         run: node tools/verify-preview.mjs
 
+      # 失败时要看到现场：分片是否都生成、拼接与 ffmpeg 的真实报错。
+      # （windows job 曾在这一步失败，但公开日志拿不到正文，所以让 CI 自己打印。）
       - name: 端到端出片
         run: node bin/filmwright.mjs render --project examples/minimal --shards 2
 
-      - name: 产物大小（防止渲染出空文件）
+      - name: 失败现场（仅失败时跑）
+        if: failure()
         run: |
-          set -euo pipefail
-          f=$(ls examples/minimal/.work/*.mp4 | head -1)
-          test -s "$f" || { echo "渲染产物为空"; exit 1; }
-          ls -la "$f"
+          echo '--- .work 下的产物 ---'
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log('读不到',e.message)}"
+          echo '--- parts 下的分片 ---'
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(f,statSync(d+'/'+f).size)}catch(e){console.log('读不到',e.message)}"
+          echo '--- ffmpeg 能否读分片 ---'
+          node -e "const {readdirSync}=require('node:fs');const {execFileSync}=require('node:child_process');const d='examples/minimal/.work/parts';try{const p=readdirSync(d).filter(f=>f.endsWith('.mp4')).map(f=>d+'/'+f);console.log('分片:',p.join(', '));if(p[0])console.log(execFileSync('ffprobe',['-v','error','-show_entries','stream=nb_frames','-of','csv=p=0',p[0]],{encoding:'utf8'}).trim()||'(ffprobe 无输出)')}catch(e){console.log('ffprobe 失败:',String(e.message).slice(0,300))}}"
+
+      # 用 node 取产物、判非空，不用 `ls | head -1`：
+      # Git Bash 的 ls 是多列输出，`head -1` 会截出多个文件名的片段，
+      # test -s 拿到一个不存在的路径就失败（windows job 实测挂在这一步）。
+      # 顺带用 ffprobe 验帧数，比「文件非空」更硬。
+      - name: 产物检查（非空 + 帧数对得上）
+        run: |
+          node -e "
+          const {readdirSync, statSync} = require('node:fs');
+          const {execFileSync} = require('node:child_process');
+          const dir = 'examples/minimal/.work';
+          const mp4 = readdirSync(dir).filter((f) => f.endsWith('.mp4'));
+          if (mp4.length === 0) { console.error('渲染产物为空：' + dir + ' 下没有 mp4'); process.exit(1); }
+          const f = dir + '/' + mp4[0];
+          const size = statSync(f).size;
+          if (size <= 0) { console.error('产物是空文件：' + f); process.exit(1); }
+          const want = JSON.parse(require('node:fs').readFileSync('examples/minimal/script/timeline.json','utf8')).total_frames;
+          const got = Number(execFileSync('ffprobe', ['-v','error','-count_frames','-select_streams','v:0',
+            '-show_entries','stream=nb_read_frames','-of','csv=p=0', f], {encoding:'utf8'}).trim());
+          console.log(f, size, 'bytes,', got, 'frames');
+          if (got !== want) { console.error('帧数不对：产物 ' + got + '，时间轴 ' + want); process.exit(1); }
+          "

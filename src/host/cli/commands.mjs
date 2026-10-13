@@ -6,7 +6,7 @@
 // 人模式的进度一律走 say()，json 模式自动静默。
 import {existsSync, mkdirSync, rmSync, writeFileSync, statSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
-import {dirname, join, resolve} from 'node:path';
+import {dirname, join, resolve, basename} from 'node:path';
 import {requireTimeline} from '../project/load.mjs';
 import {renderRange, renderStills, renderSequence} from '../media/renderRange.mjs';
 import {muxVideo} from '../media/mux.mjs';
@@ -362,7 +362,10 @@ async function renderSharded(ctx, {from, to, shards, out, crf, say}) {
   if (failed) throw new Error(`filmwright: ${failed} 个分片失败`);
 
   const listFile = join(tmp, 'list.txt');
-  writeFileSync(listFile, results.map((r) => `file '${r.part.replace(/\\/g, '/')}'`).join('\n'), 'utf8');
+  // concat demuxer 的官方建议是**相对 list.txt 的路径**（配 -safe 0）。
+  // 绝对路径在 Windows 上也能work（本机探针验过），但相对写法不依赖盘符语义，
+  // 更稳；分片与 list.txt 同目录，用 basename 即可。
+  writeFileSync(listFile, results.map((r) => `file '${basename(r.part).replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
   mkdirSync(dirname(out), {recursive: true});
   const ff = spawnTool(ffmpegPath(), ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out],
     {stdio: ['ignore', 'ignore', 'inherit']});
