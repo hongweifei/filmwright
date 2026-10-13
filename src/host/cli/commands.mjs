@@ -317,8 +317,9 @@ export async function render(ctx) {
     data: {
       out, frames: written, shards, seconds: Math.round((Date.now() - t0) / 1000),
       msPerFrame: +(((Date.now() - t0) / written) || 0).toFixed(1),
-      parts: sh.parts,      // [{i, from, to, seconds, reused}]
+      parts: sh.parts,      // [{i, from, to, seconds, reused, attempts}]
       reused: sh.reused,
+      retried: sh.retried,  // 有分片首次失败、重试后成功的个数
     },
   };
 }
@@ -370,8 +371,15 @@ export async function all(ctx) {
   return {code: 0, data: {video, final: m.data.out, checks: c.data.checks}};
 }
 
-/** 分片并行：每片一个独立浏览器实例，各渲一段，最后 concat 无损拼接。 */
-async function renderSharded(ctx, {from, to, shards, out, crf, say, resume = false}) {
+/**
+ * 分片并行：每片一个独立浏览器实例，各渲一段，最后 concat 无损拼接。
+ *
+ * `deps.render` / `deps.concat` 可注入（默认 renderRange / ffmpeg）——
+ * 为了能**直接单测重试语义**：用「首次抛错、之后成功」的假渲染函数验证
+ * 「重试救回 + 如实记录」，不必伪造 ffmpeg 可执行文件（Windows 上那条路很脏）。
+ */
+export async function renderSharded(ctx, {from, to, shards, out, crf, say, resume = false, deps = {}}) {
+  const render = deps.render ?? renderRange;
   const tmp = join(ctx.proj.paths.workDir, 'parts');
   if (!resume) rmSync(tmp, {recursive: true, force: true});
   mkdirSync(tmp, {recursive: true});
@@ -388,30 +396,40 @@ async function renderSharded(ctx, {from, to, shards, out, crf, say, resume = fal
 
   const t0 = Date.now();
   let reused = 0;
+  let retried = 0;
   const results = await Promise.all(bounds.map(async ([a, b], i) => {
     const part = join(tmp, `part_${String(i).padStart(2, '0')}.mp4`);
     // 续跑：分片文件在、且非空，就当它已完成（**不做内容校验** ——
     // 时间轴改过之后旧分片就不再对应，那种情况别加 --resume）
     if (resume && existsSync(part) && statSync(part).size > 0) {
       reused++;
-      return {i, a, b, part, ok: true, reused: true, seconds: 0};
+      return {i, a, b, part, ok: true, reused: true, seconds: 0, attempts: 1};
     }
     const p0 = Date.now();
-    try {
-      await renderRange(ctx.projectDir, ctx.proj, {from: a, to: b, out: part, crf, opts: ctx.opts});
-      return {i, a, b, part, ok: true, reused: false, seconds: Math.round((Date.now() - p0) / 1000)};
-    } catch (e) {
-      return {i, a, b, part, ok: false, err: e.message, seconds: Math.round((Date.now() - p0) / 1000)};
+    // **分片失败自动重试一次**：长片里最常见的失败是浏览器抖动（无头实例偶发退出），
+    // 不是内容问题 —— 重试一次能把「渲到 90% 全废」变成「多花一片的时间」。
+    // 只重试一次且如实记录，不掩盖真错（两次都失败仍然报出来）。
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await render(ctx.projectDir, ctx.proj, {from: a, to: b, out: part, crf, opts: ctx.opts});
+        return {i, a, b, part, ok: true, reused: false, seconds: Math.round((Date.now() - p0) / 1000), attempts: attempt};
+      } catch (e) {
+        lastErr = e;
+        if (attempt === 1) retried++;
+      }
     }
+    return {i, a, b, part, ok: false, err: lastErr?.message, seconds: Math.round((Date.now() - p0) / 1000), attempts: 2};
   }));
 
   let failed = 0;
   for (const r of results) {
-    say(`  片 ${r.i} 帧 ${r.a}-${r.b}: ${r.ok ? (r.reused ? '复用' : `ok ${r.seconds}s`) : '失败'}`);
+    const how = r.ok ? (r.reused ? '复用' : `ok ${r.seconds}s${r.attempts > 1 ? '（重试后成功）' : ''}`) : '失败';
+    say(`  片 ${r.i} 帧 ${r.a}-${r.b}: ${how}`);
     if (!r.ok) { failed++; console.error('    ' + r.err); }
   }
   if (failed) {
-    const e = new Error(`filmwright: ${failed} 个分片失败`);
+    const e = new Error(`filmwright: ${failed} 个分片失败（已各自重试 1 次）`);
     e.hint = '修好后用 --resume 续跑：已完成的分片会直接复用，不从头渲';
     throw e;
   }
@@ -422,15 +440,20 @@ async function renderSharded(ctx, {from, to, shards, out, crf, say, resume = fal
   // 更稳；分片与 list.txt 同目录，用 basename 即可。
   writeFileSync(listFile, results.map((r) => `file '${basename(r.part).replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
   mkdirSync(dirname(out), {recursive: true});
-  const ff = spawnTool(ffmpegPath(), ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out],
-    {stdio: ['ignore', 'ignore', 'inherit']});
-  const code = await new Promise((res) => ff.on('close', res));
-  checkSpawned(ff, '分片无损拼接');
-  if (code !== 0) throw new Error('filmwright: 拼接失败');
+  if (deps.concat) {
+    await deps.concat({listFile, out, parts: results.map((r) => r.part)});
+  } else {
+    const ff = spawnTool(ffmpegPath(), ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out],
+      {stdio: ['ignore', 'ignore', 'inherit']});
+    const code = await new Promise((res) => ff.on('close', res));
+    checkSpawned(ff, '分片无损拼接');
+    if (code !== 0) throw new Error('filmwright: 拼接失败');
+  }
   say(`${out}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   return {
     frames: total,
     reused,
-    parts: results.map((r) => ({i: r.i, from: r.a, to: r.b, seconds: r.seconds, reused: !!r.reused})),
+    retried,
+    parts: results.map((r) => ({i: r.i, from: r.a, to: r.b, seconds: r.seconds, reused: !!r.reused, attempts: r.attempts})),
   };
 }
