@@ -8,6 +8,7 @@ import {isJson, emitJson, toJsonError} from './output.mjs';
 import * as commands from './commands.mjs';
 
 const COMMANDS = [
+  ['new', '新建项目骨架    <目录> [--template scene|shots]', 'new'],
   ['check', '自检：公开面重名导出、模块路径、时间轴引用、场景规格、全帧绘制、画质', 'check'],
   ['preview', '预览页（拖动时间轴 / 播放 / 改文件热重载）[--no-open] [--seconds N]', 'preview'],
   ['tts', '解说词 → 配音 + 时间轴', 'tts'],
@@ -74,6 +75,19 @@ export async function main(argv) {
       e.hint = '可用：' + COMMANDS.map(([n]) => n).join(' / ') + '；完整说明见 filmwright help';
       if (!json) console.log(usage());
       return fail(e);
+    }
+    // new 不需要 --project：目标目录就是位置参数，也不碰浏览器
+    if (entry[2] === 'new') {
+      const target = args._[1];
+      if (!target) {
+        const e = new Error('filmwright: new 要一个目标目录：filmwright new <目录>');
+        e.code = 'MISSING_DIR';
+        e.hint = '目录必须不存在或为空；模板可选 --template scene（默认）/ shots';
+        throw e;
+      }
+      const r = await commands.newProject({dir: resolve(target), args});
+      const out = typeof r === 'number' ? {code: r} : (r ?? {code: 0});
+      return finish(out.code ?? 0, out.data ?? {}, out.warnings ?? [], out.errors ?? []);
     }
     if (!args.project) {
       const e = new Error('filmwright: 缺 --project <项目目录>');

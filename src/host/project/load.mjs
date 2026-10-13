@@ -74,10 +74,13 @@ export function shotsRelOrNull(proj) {
 /** 需要时间轴的命令（render/check）用它，缺了就给出下一步该跑什么。 */
 export function requireTimeline(proj) {
   if (!proj.timeline) {
-    throw new Error(
+    const e = new Error(
       'filmwright: 还没有 ' + proj.paths.timeline + '\n' +
       '  先跑：filmwright tts --project <项目目录>'
     );
+    e.code = 'NO_TIMELINE';
+    e.hint = '改完 narration.txt 后跑 filmwright tts，时间轴由解说词唯一生成';
+    throw e;
   }
   return proj.timeline;
 }

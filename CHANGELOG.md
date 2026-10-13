@@ -8,9 +8,14 @@
 ### 新增
 
 - **场景规格 `scene.json`（AI 自动化的入口）**：声明式镜头，v0 含 7 类模板（title / bullets / stat / flow / code / image / compare）。AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。校验与 boot 共用一份实现（`src/contract/scene.js`），错误带 code/path/hint；静态自检加第 9 道 `scene`（`--static-only` 七道不启浏览器）。示例 `examples/scenecast` 整个项目没有 `shots/`，画面全部来自规格（其 `timeline.json` 是合成夹具；跑 `tts` 会生成真实配音）。
+- **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致；错误带结构化 `code` 与 `where` 路径，给 agent 直接消费（见 docs/cli.md）。
+- **`filmwright new <目录>`**：项目脚手架，`--template scene`（默认）/ `shots` 两种骨架；目录非空直接拒绝（`DIR_NOT_EMPTY`），从不覆盖已有文件。
 - 文档：docs/scene.md 场景规格参考。
 
 ### 修复
+
+- `check` 在项目还没有时间轴时，不再深处崩在 `Cannot read properties of null`，而是报 `NO_TIMELINE` 并提示先跑 `tts`。
+- `runChecks` 的 `quiet` 泄漏：失败明细的打印在 quiet 守卫之外，`--json` 时人类文本混在 JSON 前面，stdout 不再是单个文档。
 
 - 渲染会话以无头模式（`--headless=new`）启动浏览器。此前注释写的是无头、参数里却从未传过这个旗标，在有显示器的机器上碰巧能跑；CI 的 Ubuntu 没有 X server，浏览器直接退出（`Missing X server or $DISPLAY`）。本机已验证无头渲染与既有像素基准逐字节一致（6/6 帧），基准无需重抓。
 - `tools/verify-assets.mjs`、`tools/verify-preview.mjs` 改为走 `openSession`：此前各自复制了一份浏览器启动逻辑，既漏掉 headless，又在浏览器提前退出时一直空等 30 秒，最后报出 `Failed to parse URL from http://127.0.0.1:null/json/list` —— 一个掩盖真实原因的错。现在启动失败当场报出浏览器 stderr。`tools/boot-error.mjs` 是抓 boot 失败的诊断工具，保留自己的事件流，同样补了无头与快速失败。

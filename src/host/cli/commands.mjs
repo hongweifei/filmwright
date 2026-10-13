@@ -14,6 +14,7 @@ import {spawnTool, ffmpegPath, checkSpawned} from '../media/ffmpegBin.mjs';
 import {runChecks} from '../checks/index.mjs';
 import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
 import {preview as previewCmd} from './preview.mjs';
+import {scaffoldProject} from '../project/scaffold.mjs';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
 import {num, str} from './args.mjs';
 import {assertTool} from '../preflight.mjs';
@@ -24,7 +25,7 @@ const API_FILE = join(RUNTIME_ROOT, 'index.js');
 /** 自检。 */
 export async function check(ctx) {
   const json = isJson(ctx.args);
-  const say = makeSay(ctx.args);
+  requireTimeline(ctx.proj);   // 没有时间轴就给出「先跑 tts」，而不是深处读 null 崩掉
   // --static-only：只跑读文件的那几道（api / imports / timeline / scene），不启浏览器。
   // 用途：CI 上不想装浏览器时、以及改完镜头想秒级验证引用关系时。
   const staticOnly = ctx.args['static-only'] === true;
@@ -84,6 +85,24 @@ function qualityThresholds(args) {
 /** 预览：本地起服务 + 打开预览页（拖动时间轴、播放、改文件热重载）。 */
 export async function preview(ctx) {
   return previewCmd(ctx);
+}
+
+/** 新建项目骨架。不需要 --project：目标目录就是位置参数。 */
+export async function newProject(ctx) {
+  const say = makeSay(ctx.args);
+  const r = scaffoldProject(ctx.dir, {template: String(ctx.args.template ?? 'scene')});
+  say(`已建 ${r.template} 模板项目：${r.dir}`);
+  for (const f of r.files) say('  ' + f);
+  const steps = [
+    `把 ${r.dir}/script/narration.txt 改成你的解说词`,
+    r.template === 'scene' ? `改 ${r.dir}/scene.json 配画面（docs/scene.md）` : `写 ${r.dir}/shots/index.js 配画面`,
+    'filmwright tts    --project ' + r.dir,
+    'filmwright check  --project ' + r.dir + ' --static-only',
+    'filmwright all    --project ' + r.dir,
+  ];
+  say('下一步：');
+  for (const s of steps) say('  ' + s);
+  return {code: 0, data: {...r, nextSteps: steps}};
 }
 
 /** 解说词 → 配音 + 时间轴（交给 python，它管 TTS）。 */

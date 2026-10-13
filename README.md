@@ -52,6 +52,7 @@ node bin/filmwright.mjs preview --project examples/minimal
 
 | 命令 | 作用 |
 |---|---|
+| `new` | 新建项目骨架（`--template scene` 默认 / `shots`），目录非空直接拒绝 |
 | `check` | 九道自检：导出、模块路径、时间轴引用、场景规格、素材、主题键、全帧绘制、画质（明细见[质量保障](docs/qc.md)） |
 | `preview` | 预览页：拖动时间轴 / 播放 / 热重载（SSE 推送，不是轮询） |
 | `tts` | 解说词 → `audio.wav` + `timeline.json`（逐句缓存） |

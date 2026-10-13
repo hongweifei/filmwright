@@ -51,6 +51,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 
 | 命令 | 作用 |
 |---|---|
+| `new` | 新建项目骨架（scene / shots 两种模板） |
 | `check` | 九道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
 | `tts` | 解说词 → 配音 + 时间轴 |
@@ -59,6 +60,14 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | `render` | 逐帧渲染成无声视频 |
 | `mux` | 画面与配音合流 |
 | `all` | 一条龙：check → render → mux |
+
+## `new`
+
+```bash
+filmwright new <目录> [--template scene|shots]
+```
+
+建一个能直接跑通的最小项目：`film.config.mjs`、`script/narration.txt`、`scene.json`（默认模板）、`.gitignore`、`public/` 占位说明；`--template shots` 改产手写镜头骨架。目标目录**已存在且非空会直接拒绝**（`DIR_NOT_EMPTY`），脚手架从不覆盖已有文件。`slug` 取目录名并净化。
 
 ## `check`
 
