@@ -12,7 +12,7 @@
 
 ![promo 片头](docs/images/promo-title.png)
 
-*`examples/promo`——filmwright 自己的介绍片，全程 `scene.json` 驱动、零镜头代码，制作用的就是它自己的工具链（[狗粮](docs/scene.md)）。*
+*`examples/promo`——filmwright 自己的介绍片（71 秒，[狗粮](docs/dogfood.md)）：全程 `scene.json` 驱动、零镜头代码，制作用的就是它自己的工具链。*
 
 ## 核心约定
 

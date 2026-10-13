@@ -86,28 +86,44 @@ jobs:
       # 画质/逐帧是「阈值型 + 浏览器型」检查：读数贴阈值或 runner 资源紧张时
       # 会随机翻面（实测 windows runner 上不同步骤轮流挂，代码未变）。
       # 失败时把**所有失败检查**的完整读数打出来，而不是只猜 quality。
+      #
+      # 这一步**必须永不失败**（continue-on-error + 处处 || true）：诊断脚本自己挂掉
+      # 会把真正的失败信息一起埋掉（实测发生过一次）。
+      #
+      # 同时用 `::error::` 输出关键读数 —— 它会变成 **annotation**，而 annotation
+      # 在未登录时也能通过 API 读到（job 日志正文不行：公开仓库的 logs API 会
+      # 重定向到登录页）。这是把 CI 内部信息取出来的唯一通道。
       - name: 失败现场（仅失败时跑）
         if: failure()
+        continue-on-error: true
         run: |
           node bin/filmwright.mjs check --project examples/minimal --json > ci-check.json 2>&1 || true
           node -e "
-          let j;
-          try { j = JSON.parse(require('node:fs').readFileSync('ci-check.json','utf8')); }
-          catch (e) { console.log('拿不到 JSON（check 本身崩了？）:'); console.log(require('node:fs').readFileSync('ci-check.json','utf8').slice(0,2000)); process.exit(0); }
-          console.log('ok:', j.ok, '| errors:', j.errors.length);
-          for (const e of j.errors) console.log('  ERROR', e.code, e.message);
-          for (const c of j.data?.checks ?? []) {
-            console.log((c.ok ? 'OK  ' : 'FAIL') + ' ' + c.name + ' (查了 ' + c.checked + ')');
-            for (const p of c.problems ?? []) console.log('     · ' + p);
-            for (const n of c.notes ?? []) console.log('     · ' + n);
-            for (const s of c.stats ?? []) console.log('     stat ' + s.id + ' f' + s.from + '-' + s.to + ' 静止=' + s.longestStatic + ' 墨迹=' + (s.inkMin*100).toFixed(2) + '% 末拍=' + (s.hold ?? '-') + '(' + s.holdSource + ')');
+          const fs = require('node:fs');
+          const emit = (s) => console.log('::error::' + String(s).replace(/\r?\n/g, ' ⏎ ').slice(0, 800));
+          let j = null;
+          try { j = JSON.parse(fs.readFileSync('ci-check.json','utf8')); } catch (e) {
+            emit('拿不到 JSON（check 可能本身崩了）。原始输出：' + fs.readFileSync('ci-check.json','utf8').slice(0, 600));
           }
-          console.log('阈值：staticFrames 90 / holdFrames 30 / inkMin 0.40%');
-          "
+          if (j) {
+            emit('summary: ok=' + j.ok + ' errors=' + (j.errors||[]).length);
+            for (const e of j.errors||[]) emit('ERROR ' + e.code + ' ' + e.message);
+            for (const c of (j.data && j.data.checks) || []) {
+              const head = (c.ok ? 'OK ' : 'FAIL ') + c.name + ' checked=' + c.checked;
+              const probs = (c.problems||[]).join(' | ');
+              const stats = (c.stats||[]).map((s) => s.id + ':静止' + s.longestStatic + ',墨迹' + (s.inkMin*100).toFixed(2) + '%,末拍' + (s.hold===null?'-':s.hold) + '/' + s.holdSource).join(' | ');
+              emit(head + (probs ? ' >> ' + probs : '') + (stats ? ' >> ' + stats : ''));
+            }
+            emit('阈值: staticFrames 90 / holdFrames 30 / inkMin 0.40%');
+          }
+          " || true
           echo '--- .work 产物 ---'
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}"
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}" || true
           echo '--- parts ---'
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(' ',f,statSync(d+'/'+f).size)}catch(e){console.log(' 读不到',e.message)}"
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(' ',f,statSync(d+'/'+f).size)}catch(e){console.log(' 读不到',e.message)}" || true
+          echo '--- node/ffmpeg ---'
+          node --version || true
+          ffmpeg -version 2>&1 | head -1 || true
 
       - name: 场景规格示例（纯 scene 项目）
         run: |
@@ -128,20 +144,8 @@ jobs:
       - name: 预览页（拖动 / 播放 / 热重载）
         run: node tools/verify-preview.mjs
 
-      # 失败时要看到现场：分片是否都生成、拼接与 ffmpeg 的真实报错。
-      # （windows job 曾在这一步失败，但公开日志拿不到正文，所以让 CI 自己打印。）
       - name: 端到端出片
         run: node bin/filmwright.mjs render --project examples/minimal --shards 2
-
-      - name: 失败现场（仅失败时跑）
-        if: failure()
-        run: |
-          echo '--- .work 下的产物 ---'
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log('读不到',e.message)}"
-          echo '--- parts 下的分片 ---'
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(f,statSync(d+'/'+f).size)}catch(e){console.log('读不到',e.message)}"
-          echo '--- ffmpeg 能否读分片 ---'
-          node -e "const {readdirSync}=require('node:fs');const {execFileSync}=require('node:child_process');const d='examples/minimal/.work/parts';try{const p=readdirSync(d).filter(f=>f.endsWith('.mp4')).map(f=>d+'/'+f);console.log('分片:',p.join(', '));if(p[0])console.log(execFileSync('ffprobe',['-v','error','-show_entries','stream=nb_frames','-of','csv=p=0',p[0]],{encoding:'utf8'}).trim()||'(ffprobe 无输出)')}catch(e){console.log('ffprobe 失败:',String(e.message).slice(0,300))}}"
 
       # 用 node 取产物、判非空，不用 `ls | head -1`：
       # Git Bash 的 ls 是多列输出，`head -1` 会截出多个文件名的片段，

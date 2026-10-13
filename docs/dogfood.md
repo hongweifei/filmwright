@@ -43,10 +43,20 @@ filmwright check          → 九道全过（2141 帧）
 
 结论：**先不做**。1 和 2 有替代路径；3 只在特定题材需要；4 要引资源体系，与「零运行时依赖」冲突。等第二条真片子再遇到同样需求时再说——那时就是真需求，不是想象。
 
+## 成片
+
+```
+examples/promo/.work/promo.mp4   2141 帧 / 71.3s / 4.1 MB（render --shards 4，263 秒）
+examples/promo/script/promo.srt  20 块外挂字幕（filmwright srt）
+```
+
+分片并行实测：4 片、每片约 535 帧，2141 帧总耗时 263 秒（≈ 123 ms/帧，含拼接与合流）。
+
 ## 复查这条片子的方法
 
 ```bash
 node bin/filmwright.mjs check --project examples/promo            # 九道自检
 node tools/dogfood-review.mjs . examples/promo 8                  # MCP 回路 + 回图落盘
-node bin/filmwright.mjs stills --project examples/promo --frames 67,254,437 --dir .work/promo
+node bin/filmwright.mjs render --project examples/promo --shards auto
+node bin/filmwright.mjs srt --project examples/promo
 ```
