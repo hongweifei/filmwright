@@ -24,6 +24,29 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | `FFPROBE_BIN` | `ffprobe` | ffprobe 可执行文件路径 |
 | `FILMWRIGHT_NO_OPEN` | — | 设了就等价于 `preview --no-open` |
 
+## `--json`：给 agent 的输出
+
+除 `preview` 外的命令都接受 `--json`：stdout **恰好一个 JSON 文档**（人类进度全部静默；ffmpeg/Chrome 的日志走 stderr，不污染 stdout），退出码与 `ok` 一致。
+
+```json
+{
+  "ok": false,
+  "command": "check",
+  "errors": [
+    {"code": "SCENE_UNKNOWN_TYPE", "message": "不认识的镜头类型 \"pie\"",
+     "where": "shots[1].type", "hint": "v0 可用：title / bullets / …"}
+  ],
+  "warnings": ["assets：素材「x」声明了但镜头里没人用"],
+  "data": {"failed": 1, "checks": [{"name": "scene", "ok": false, "checked": 8, "problems": ["…"]}]}
+}
+```
+
+要点：
+
+- **每条错误带 `code` 与 `where`**（`scene` 的校验错误直接给 `shots[i].field` 路径）——错误信息是给模型读的 prompt，读完能直接改；
+- `data` 按命令给产物路径与统计：`render` 给 `{out, frames, seconds, shards}`，`stills` 给 `{files}`，`all` 给 `{video, final, checks}`，`tts` 给 `{audio, timeline, …}`；
+- 没配音时 `all` 返回 `ok: true` 且 `data.muted: true`（跳过合流不是失败，但要让调用方知道）。
+
 ## 命令一览
 
 | 命令 | 作用 |

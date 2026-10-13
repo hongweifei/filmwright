@@ -22,7 +22,6 @@ export async function muxVideo(video, audio, out, durationSec) {
   const code = await new Promise((res) => ff.on('close', res));
   checkSpawned(ff, '合流');
   if (code !== 0) throw new Error('filmwright: 合流失败（ffmpeg 退出码 ' + code + '）');
-  const mb = (statSync(out).size / 1048576).toFixed(1);
-  console.log(`${out}  ${mb} MB  ${durationSec.toFixed(2)}s`);
-  return out;
+  // 返回统计，打印交给命令层（--json 时命令层要静默，工具不该自己往 stdout 写）
+  return {out, sizeMB: +(statSync(out).size / 1048576).toFixed(1), durationSec};
 }

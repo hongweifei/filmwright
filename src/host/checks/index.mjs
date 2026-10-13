@@ -43,12 +43,12 @@ export async function runChecks(projectDir, proj, opts = {}, cfg = {}) {
       // 只报告、不判失败的读数（末拍稳定期、声明了没用的素材），照实打出来
       for (const n of r.notes ?? []) console.log('        · ' + n);
       for (const h of r.hints ?? []) console.log('        · ' + h);
+      if (!r.ok) {
+        for (const p of r.problems.slice(0, 12)) console.log('        ' + p);
+        if (r.problems.length > 12) console.log(`        …还有 ${r.problems.length - 12} 条`);
+      }
     }
-    if (!r.ok) {
-      failed++;
-      for (const p of r.problems.slice(0, 12)) console.log('        ' + p);
-      if (r.problems.length > 12) console.log(`        …还有 ${r.problems.length - 12} 条`);
-    }
+    if (!r.ok) failed++;
   }
   if (!quiet) {
     console.log(failed === 0

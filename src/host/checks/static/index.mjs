@@ -246,6 +246,8 @@ export function checkScene(projectDir, proj) {
     name: 'scene',
     ok: r.ok,
     checked: Array.isArray(proj.scene.shots) ? proj.scene.shots.length : 0,
+    // 人看的字符串 + 机器读的结构化错误（--json / MCP 直接用后者，不必再解析文本）
     problems: r.errors.map((e) => `[${e.code}] ${e.path}：${e.message}${e.hint ? '（' + e.hint + '）' : ''}`),
+    errors: r.errors,
   };
 }

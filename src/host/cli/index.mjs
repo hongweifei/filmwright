@@ -4,6 +4,7 @@ import {resolve} from 'node:path';
 import {loadProject} from '../project/load.mjs';
 import {assertRuntime} from '../preflight.mjs';
 import {parseArgs, str} from './args.mjs';
+import {isJson, emitJson, toJsonError} from './output.mjs';
 import * as commands from './commands.mjs';
 
 const COMMANDS = [
@@ -30,6 +31,7 @@ function usage() {
     '通用选项：',
     '  --project <目录>   项目目录（含 film.config.mjs）',
     '  --browser <路径>   指定浏览器（默认自动找；也可用环境变量 CHROME_BIN）',
+    '  --json             机器可读输出：stdout 恰好一个 JSON 文档（给 agent / 脚本用）',
     '',
     '项目形状：',
     '  film.config.mjs        配置（default 导出）',
@@ -43,27 +45,55 @@ function usage() {
 
 export async function main(argv) {
   const args = parseArgs(argv);
+  const json = isJson(args);
   const name = args._[0];
 
-  if (!name || name === 'help' || args.help) {
-    console.log(usage());
-    return 0;
+  // 命令可以返回退出码（number），或 {code, data, warnings, errors}（--json 的料）。
+  const finish = (code, data = {}, warnings = [], errors = []) => {
+    if (json) emitJson({ok: code === 0, command: name, errors, warnings, data});
+    return code;
+  };
+  const fail = (e) => {
+    if (json) {
+      emitJson({ok: false, command: name ?? 'unknown', errors: [toJsonError(e)], warnings: []});
+      return 1;
+    }
+    throw e;   // 人模式交回 bin：一句话 + 退出码
+  };
+
+  try {
+    if (!name || name === 'help' || args.help) {
+      if (json) return finish(0, {usage: usage()});
+      console.log(usage());
+      return 0;
+    }
+    const entry = COMMANDS.find(([n]) => n === name);
+    if (!entry) {
+      const e = new Error('filmwright: 不认识的命令 ' + name);
+      e.code = 'UNKNOWN_COMMAND';
+      e.hint = '可用：' + COMMANDS.map(([n]) => n).join(' / ') + '；完整说明见 filmwright help';
+      if (!json) console.log(usage());
+      return fail(e);
+    }
+    if (!args.project) {
+      const e = new Error('filmwright: 缺 --project <项目目录>');
+      e.code = 'MISSING_PROJECT';
+      e.hint = '项目目录里要有 film.config.mjs；新项目用 filmwright new <目录>';
+      return fail(e);
+    }
+
+    // 环境不满足就在这里说清楚，别等到深处报 "WebSocket is not defined"
+    assertRuntime();
+
+    const projectDir = resolve(str(args, 'project'));
+    const opts = {browser: args.browser ? String(args.browser) : undefined};
+
+    // tts 只跟解说词打交道，不要求时间轴已存在
+    const proj = await loadProject(projectDir);
+    const r = await commands[entry[2]]({projectDir, proj, args, opts});
+    const out = typeof r === 'number' ? {code: r} : (r ?? {code: 0});
+    return finish(out.code ?? 0, out.data ?? {}, out.warnings ?? [], out.errors ?? []);
+  } catch (e) {
+    return fail(e);
   }
-  const entry = COMMANDS.find(([n]) => n === name);
-  if (!entry) {
-    console.error(`filmwright: 不认识的命令 ${name}\n`);
-    console.log(usage());
-    return 2;
-  }
-  if (!args.project) throw new Error('filmwright: 缺 --project <项目目录>\n\n' + usage());
-
-  // 环境不满足就在这里说清楚，别等到深处报 "WebSocket is not defined"
-  assertRuntime();
-
-  const projectDir = resolve(str(args, 'project'));
-  const opts = {browser: args.browser ? String(args.browser) : undefined};
-
-  // tts 只跟解说词打交道，不要求时间轴已存在
-  const proj = await loadProject(projectDir);
-  return commands[entry[2]]({projectDir, proj, args, opts});
 }
