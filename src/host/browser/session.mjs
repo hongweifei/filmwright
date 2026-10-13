@@ -69,7 +69,10 @@ export function serveProject(projectDir, mounts = []) {
  * 打开一个渲染会话。
  * @param {string} url 渲染页地址
  * @param {{width:number,height:number}} size 画布尺寸
- * @param {object} opts {colorProfile, extraArgs, browser}
+ * @param {object} opts {colorProfile, extraArgs, browser, readyExpr}
+ *   readyExpr：覆盖就绪信号（默认等渲染页的 window.__ready，预览页传
+ *   'window.__preview && window.__preview.ready === true'）。只判布尔，
+ *   不读 info / __bootError —— 那两个是渲染页 boot 的语义。
  */
 export async function openSession(url, size, opts = {}) {
   const browser = findBrowser(opts.browser);
@@ -140,22 +143,30 @@ export async function openSession(url, size, opts = {}) {
 
   let info = null;
   let bootError = null;
+  let ready = false;
   for (let i = 0; i < 400; i++) {
-    const r = await send('Runtime.evaluate', {
-      expression: '({ready: window.__ready === true, info: window.__info || null, err: window.__bootError || null})',
-      returnByValue: true,
-    });
+    const expr = opts.readyExpr
+      ? `Boolean(${opts.readyExpr})`
+      : '({ready: window.__ready === true, info: window.__info || null, err: window.__bootError || null})';
+    const r = await send('Runtime.evaluate', {expression: expr, returnByValue: true});
     const v = r.result?.result?.value;
-    if (v?.err) { bootError = v.err; break; }
-    if (v?.ready) { info = v.info; break; }
+    if (opts.readyExpr) {
+      if (v === true) { ready = true; break; }
+    } else {
+      if (v?.err) { bootError = v.err; break; }
+      if (v?.ready) { ready = true; info = v.info; break; }
+    }
     await sleep(100);
   }
-  if (bootError) {
+  if (!ready) {
     try { ws.close(); } catch {}
     try { chrome.kill(); } catch {}
-    throw new Error('filmwright: 渲染页启动失败\n' + bootError);
+    try { rmSync(profile, {recursive: true, force: true}); } catch {}
+    if (bootError) throw new Error('filmwright: 渲染页启动失败\n' + bootError);
+    throw new Error(opts.readyExpr
+      ? 'filmwright: 页面一直没就绪（' + opts.readyExpr + ' 没变 true）'
+      : 'filmwright: 渲染页一直没就绪（检查字体路径与模块 import）');
   }
-  if (!info) throw new Error('filmwright: 渲染页一直没就绪（检查字体路径与模块 import）');
 
   let lastErr = null;
   ws.addEventListener('message', (ev) => {
@@ -167,6 +178,8 @@ export async function openSession(url, size, opts = {}) {
 
   return {
     info,
+    /** 原始 CDP 调用（Input / Emulation 等高级用法）；普通取值用 evaluate。 */
+    send,
     async frame(n) {
       const r = await send('Runtime.evaluate', {expression: `window.__renderFrame(${n})`, returnByValue: true});
       if (r.result?.exceptionDetails) {

@@ -81,6 +81,8 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-readme.mjs` | 照 README 的快速开始跑一遍（文档与代码脱节时它会红） |
 | `verify-preview.mjs` | 真开浏览器验证预览页：拖动、边界、播放、画面有内容、热重载 |
 | `verify-assets.mjs` | 真开浏览器验证素材：加载就绪、原始尺寸、**真画出来了**、引错名字要报 |
+
+两个 `verify-*` 夹具的浏览器会话统一走 `src/host/browser/session.mjs` 的 `openSession`（无头启动、启动失败当场报，不静默等到超时）。**工具里不要再各写一份启动逻辑**——那份拷贝漏掉过 `--headless`，CI 无显示器时挂在一个与真实原因无关的报错上。
 | `verify-reuse.mjs` | 验换分辨率（1080p）与换浏览器（两个浏览器渲同一帧要字节相同） |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |

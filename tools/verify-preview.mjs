@@ -4,14 +4,15 @@
 // 只测 CLI 起没起来，等于没测。
 //
 //   node tools/verify-preview.mjs
-import {spawn} from 'node:child_process';
-import {existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+//
+// 浏览器会话走 src/host/browser/session.mjs 的 openSession（无头、快速失败）；
+// 预览页有自己的就绪信号，用 readyExpr 覆盖。
+import {readFileSync, writeFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {serveProject} from '../src/host/project/server.mjs';
 import {loadProject} from '../src/host/project/load.mjs';
-import {findBrowser} from '../src/host/browser/find.mjs';
+import {openSession} from '../src/host/browser/session.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJ = join(ROOT, 'examples', 'minimal');
@@ -37,99 +38,61 @@ for (const p of ['/preview', '/kit/runtime/stage/index.js', '/proj/shots/index.j
 }
 
 // ---------- 2. 真开浏览器操作 ----------
-const profile = mkdtempSync(join(tmpdir(), 'preview-'));
-const chrome = spawn(findBrowser(), [
-  '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-  '--window-size=1400,900', '--disable-gpu', '--no-first-run',
-  '--force-color-profile=srgb', 'about:blank',
-], {stdio: ['ignore', 'pipe', 'pipe']});
-
-const portFile = join(profile, 'DevToolsActivePort');
-let devPort = null;
-for (let i = 0; i < 300; i++) {
-  if (existsSync(portFile)) { devPort = readFileSync(portFile, 'utf8').split('\n')[0].trim(); break; }
-  await sleep(100);
+// openSession 在这里就保证了就绪：失败（含超时）会抛错并退出，后面不用再判。
+let session = null;
+try {
+  session = await openSession(base + '/preview', {width: 1400, height: 900}, {
+    readyExpr: 'window.__preview && window.__preview.ready === true',
+  });
+} catch (e) {
+  ok(false, '预览页装载就绪（window.__preview.ready）');
+  console.log('  ' + e.message);
+  server.closeProject();
+  process.exit(1);
 }
-const list = await (await fetch(`http://127.0.0.1:${devPort}/json/list`)).json();
-const ws = new WebSocket(list.find((t) => t.type === 'page').webSocketDebuggerUrl);
-await new Promise((r) => (ws.onopen = r));
-
-let id = 0;
-const pending = new Map();
-ws.onmessage = (ev) => {
-  const m = JSON.parse(ev.data);
-  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-};
-const send = (method, params = {}) => new Promise((res) => {
-  const myId = ++id; pending.set(myId, res);
-  ws.send(JSON.stringify({id: myId, method, params}));
-});
-const evalJs = async (expr) => {
-  const r = await send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true});
-  return r.result?.result?.value;
-};
-
-await send('Page.enable');
-await send('Runtime.enable');
-await send('Emulation.setDeviceMetricsOverride', {width: 1400, height: 900, deviceScaleFactor: 1, mobile: false});
-await send('Page.navigate', {url: base + '/preview'});
-
-// 等预览页就绪
-let ready = false;
-for (let i = 0; i < 200; i++) {
-  ready = await evalJs('window.__preview && window.__preview.ready === true');
-  if (ready) break;
-  await sleep(100);
-}
-ok(ready, '预览页装载就绪（window.__preview.ready）');
-if (!ready) {
-  const err = await evalJs('document.getElementById("err").textContent');
-  console.log('  页面报错：' + err);
-}
+const evalJs = session.evaluate;
+ok(true, '预览页装载就绪（window.__preview.ready）');
 
 // ---------- 3. 拖动时间轴 ----------
-if (ready) {
-  await evalJs('window.__preview.paint(700)');
-  await sleep(200);
-  const f1 = await evalJs('window.__preview.frame');
-  ok(f1 === 700, `paint(700) 后当前帧 = ${f1}`);
+await evalJs('window.__preview.paint(700)');
+await sleep(200);
+const f1 = await evalJs('window.__preview.frame');
+ok(f1 === 700, `paint(700) 后当前帧 = ${f1}`);
 
-  // 边界：不能超出总帧数
-  const total = await evalJs('window.__filmwrightTotal || 0');
-  await evalJs('window.__preview.paint(99999)');
-  const f2 = await evalJs('window.__preview.frame');
-  const totalFrames = proj.timeline.total_frames;
-  ok(f2 === totalFrames, `paint(99999) 被夹到末帧 ${f2}（总 ${totalFrames}）`);
-  await evalJs('window.__preview.paint(-5)');
-  ok(await evalJs('window.__preview.frame') === 1, 'paint(-5) 被夹到第 1 帧');
+// 边界：不能超出总帧数
+await evalJs('window.__preview.paint(99999)');
+const f2 = await evalJs('window.__preview.frame');
+const totalFrames = proj.timeline.total_frames;
+ok(f2 === totalFrames, `paint(99999) 被夹到末帧 ${f2}（总 ${totalFrames}）`);
+await evalJs('window.__preview.paint(-5)');
+ok(await evalJs('window.__preview.frame') === 1, 'paint(-5) 被夹到第 1 帧');
 
-  // 滑杆与读数跟着走
-  const slider = await evalJs('document.getElementById("scrub").value');
-  ok(Number(slider) === 1, `滑杆同步到 ${slider}`);
+// 滑杆与读数跟着走
+const slider = await evalJs('document.getElementById("scrub").value');
+ok(Number(slider) === 1, `滑杆同步到 ${slider}`);
 
-  // ---------- 4. 播放 ----------
-  await evalJs('window.__preview.paint(1)');
-  await evalJs('window.__preview.toggle()');
-  ok(await evalJs('window.__preview.playing') === true, '播放已开始');
-  await sleep(700);
-  const during = await evalJs('window.__preview.frame');
-  ok(during > 1, `播放 0.7 秒后推进到第 ${during} 帧`);
-  await evalJs('window.__preview.toggle()');
-  ok(await evalJs('window.__preview.playing') === false, '播放已停止');
+// ---------- 4. 播放 ----------
+await evalJs('window.__preview.paint(1)');
+await evalJs('window.__preview.toggle()');
+ok(await evalJs('window.__preview.playing') === true, '播放已开始');
+await sleep(700);
+const during = await evalJs('window.__preview.frame');
+ok(during > 1, `播放 0.7 秒后推进到第 ${during} 帧`);
+await evalJs('window.__preview.toggle()');
+ok(await evalJs('window.__preview.playing') === false, '播放已停止');
 
-  // ---------- 5. 画面真的画出来了（不是空白 canvas） ----------
-  await evalJs('window.__preview.paint(700)');
-  await sleep(200);
-  const ink = await evalJs(`(() => {
-    const c = document.getElementById('c');
-    const g = c.getContext('2d');
-    const d = g.getImageData(60, 110, c.width - 120, c.height - 230).data;
-    let lit = 0;
-    for (let i = 0; i < d.length; i += 40) if (d[i] + d[i+1] + d[i+2] > 90) lit++;
-    return lit;
-  })()`);
-  ok(ink > 20, `画面有内容（内容区亮点采样 ${ink}）`);
-}
+// ---------- 5. 画面真的画出来了（不是空白 canvas） ----------
+await evalJs('window.__preview.paint(700)');
+await sleep(200);
+const ink = await evalJs(`(() => {
+  const c = document.getElementById('c');
+  const g = c.getContext('2d');
+  const d = g.getImageData(60, 110, c.width - 120, c.height - 230).data;
+  let lit = 0;
+  for (let i = 0; i < d.length; i += 40) if (d[i] + d[i+1] + d[i+2] > 90) lit++;
+  return lit;
+})()`);
+ok(ink > 20, `画面有内容（内容区亮点采样 ${ink}）`);
 
 // ---------- 6. 热重载：改文件应触发 SSE ----------
 // 步骤要清楚：① 页面里开始订阅 ② 等订阅建立 ③ 从 Node 侧碰文件 ④ 看页面是否收到。
@@ -169,11 +132,9 @@ writeFileSync(shotsFile, orig, 'utf8'); // 立刻还原
 ok(reloadSeen, '改镜头文件后预览页收到 reload（热重载生效）');
 ok(readFileSync(shotsFile, 'utf8') === orig, '探针文件已还原（没留下痕迹）');
 
-ws.close();
-chrome.kill();
+await session.close();
 server.closeProject();
-await sleep(500);
-try { rmSync(profile, {recursive: true, force: true}); } catch {}
+await sleep(400);
 
 console.log(bad === 0 ? '\n预览页验证全部通过。' : `\n${bad} 项失败。`);
 process.exit(bad ? 1 : 0);

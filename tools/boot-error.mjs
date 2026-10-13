@@ -22,14 +22,25 @@ const url = `http://127.0.0.1:${server.address().port}/`;
 
 const profile = mkdtempSync(join(tmpdir(), 'dbg2-'));
 const chrome = spawn(findBrowser(), ['--remote-debugging-port=0', `--user-data-dir=${profile}`,
-  '--window-size=1280,720', '--disable-gpu', '--no-first-run', '--force-color-profile=srgb',
-  'about:blank'], {stdio: ['ignore', 'pipe', 'pipe']});
+  '--headless=new', '--window-size=1280,720', '--disable-gpu', '--no-first-run',
+  '--force-color-profile=srgb', 'about:blank'], {stdio: ['ignore', 'pipe', 'pipe']});
+let chromeErr = '';
+chrome.stderr.on('data', (d) => (chromeErr += d.toString().slice(0, 2000)));
+chrome.on('error', (e) => (chromeErr += ' spawn error: ' + e.message));
 
 const portFile = join(profile, 'DevToolsActivePort');
 let devPort = null;
 for (let i = 0; i < 300; i++) {
   if (existsSync(portFile)) { devPort = readFileSync(portFile, 'utf8').split('\n')[0].trim(); break; }
+  if (chrome.exitCode !== null) {
+    console.error('浏览器提前退出：' + chromeErr);
+    process.exit(1);
+  }
   await sleep(100);
+}
+if (!devPort) {
+  console.error('等不到 DevToolsActivePort；stderr=' + chromeErr);
+  process.exit(1);
 }
 const list = await (await fetch(`http://127.0.0.1:${devPort}/json/list`)).json();
 const ws = new WebSocket(list.find((t) => t.type === 'page').webSocketDebuggerUrl);
