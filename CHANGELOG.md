@@ -7,6 +7,15 @@
 
 ### 新增
 
+- **长片可靠性**：`--shards auto`（按 CPU 核数自动定分片，留一核给主进程）、`--resume`（复用已完成分片，渲到一半挂掉不用从头来）、`--json` 报性能读数（`msPerFrame` / 每片耗时 `parts[]` / `reused`）——换机器换浏览器后可对比。
+- `examples/promo` 渲出成片（2141 帧 / 71.3s / 4.1 MB，4 分片 263 秒），README 用其片头帧作演示。
+
+### 修复
+
+- **TTS 失败提示不可读**：Windows 上 Python 默认按 CP936 写 stderr，而 Node 按 UTF-8 解码，中文提示整段变乱码（实测「微软侧 TTS 服务不可用」的出路说明全成 `????`）。tts 现在以 `PYTHONIOENCODING=utf-8` 起 Python，并去掉外层重复前缀。
+- **TTS 失败提示不可行动**：`tts` 失败时区分「服务不可用」（403 / 握手失败）与「限流超时」，前者明确说这是微软侧故障并给出三条出路（等 / 自产时间轴 / 先用合成夹具继续做画面）。已核对：edge-tts 7.2.8 为最新、系统时钟与服务器同步（差 <1s）、网络可达，`voices` 端点直接返回 `Our services aren't available right now` —— **不是本机配置问题**。
+- CI 产物检查改用 node 取文件名 + ffprobe 验帧数，不再用 `ls | head -1`（Git Bash 多列输出会截出片段）；新增 `if: failure()` 现场诊断步骤（公开仓库未登录拿不到 job 日志正文）。
+
 - **`examples/promo`：filmwright 自己的介绍片**（狗粮）。全程 `scene.json` 驱动、零镜头代码，制作用的就是自己的工具链（`tts` → `schema` → MCP `review` → `check`）；11 个镜头覆盖 9 类模板，九道自检全过。它同时是模板语料的来源——下面三条修复全是做这条片子时暴露的。
 - **`tools/dogfood-review.mjs`**：通过 MCP 的 `filmwright_review` 跑一轮「改 → 验 → 看」并把回图落盘，狗粮制作的实际回路。
 - 文档：`docs/dogfood.md` 狗粮记录（制作回路、暴露的三个缺陷、以及做真片子时想要的四类模板与「先不做」的判断）。

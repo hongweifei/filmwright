@@ -6,6 +6,7 @@
 // 人模式的进度一律走 say()，json 模式自动静默。
 import {existsSync, mkdirSync, rmSync, writeFileSync, statSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
+import os from 'node:os';
 import {dirname, join, resolve, basename} from 'node:path';
 import {requireTimeline} from '../project/load.mjs';
 import {renderRange, renderStills, renderSequence} from '../media/renderRange.mjs';
@@ -170,8 +171,14 @@ export function tts(ctx) {
   const say = makeSay(ctx.args);
   const json = isJson(ctx.args);
   const py = join(KIT_ROOT, 'src', 'host', 'tts', 'build.py');
-  const r = spawnSync('python', [py, '--project', ctx.projectDir],
-    {stdio: json ? ['ignore', 'pipe', 'pipe'] : 'inherit', encoding: 'utf8'});
+  // PYTHONIOENCODING：Windows 上 Python 默认按 CP936 写 stderr，而 Node 按 UTF-8
+  // 解码 —— 中文提示会全成乱码（实测「微软侧 TTS 服务不可用」整段变成 ????）。
+  // 强制 UTF-8，两边编码才对齐。
+  const r = spawnSync('python', [py, '--project', ctx.projectDir], {
+    stdio: json ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    encoding: 'utf8',
+    env: {...process.env, PYTHONIOENCODING: 'utf-8'},
+  });
   if (r.error) {
     const e = new Error('filmwright: 起不了 python —— ' + r.error.message);
     e.code = 'NO_PYTHON';
@@ -179,8 +186,10 @@ export function tts(ctx) {
     throw e;
   }
   if ((r.status ?? 1) !== 0) {
-    const tail = String(r.stderr || '').trim().split('\n').slice(-3).join('\n');
-    const e = new Error('filmwright: tts 失败' + (tail ? '：\n' + tail : ''));
+    // python 已经把可行动的提示打在 stderr 上了（见 build.py 的 _tts_failure_hint）；
+    // 别再加一层前缀，免得「filmwright: tts 失败」把它埋掉。
+    const tail = String(r.stderr || '').trim().split('\n').slice(-12).join('\n');
+    const e = new Error(tail && tail.includes('filmwright:') ? tail : 'filmwright: tts 失败' + (tail ? '：\n' + tail : ''));
     e.code = 'TTS_FAILED';
     throw e;
   }
@@ -249,6 +258,23 @@ export async function sheet(ctx) {
   return {code: 0, data: {out, frames: frames.length}};
 }
 
+/** 分片数解析：数字，或 auto（按 CPU 核数，留一核给主进程）。 */
+function resolveShards(raw, total) {
+  if (raw === undefined || raw === null || raw === '' || raw === 'auto') {
+    if (raw === undefined || raw === null || raw === '') return 1;   // 默认不分片
+    const cores = Math.max(1, (os.cpus?.() ?? []).length - 1);
+    return Math.max(1, Math.min(cores, Math.ceil(total / 60)));      // 每片至少 ~60 帧
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) {
+    const e = new Error(`filmwright: --shards 要是正整数或 auto，收到 ${raw}`);
+    e.code = 'BAD_SHARDS';
+    e.hint = 'auto = 按 CPU 核数自动定（每片至少约 60 帧）';
+    throw e;
+  }
+  return Math.floor(n);
+}
+
 /** 渲染。 */
 export async function render(ctx) {
   const say = makeSay(ctx.args);
@@ -257,11 +283,13 @@ export async function render(ctx) {
   const total = ctx.proj.timeline.total_frames;
   const from = num(ctx.args, 'from', 1);
   const to = num(ctx.args, 'to', total);
-  const shards = num(ctx.args, 'shards', 1);
+  const shards = resolveShards(ctx.args.shards, to - from + 1);
   // 中间产物落在 .work/ 下
   const out = resolve(str(ctx.args, 'out',
     join(ctx.proj.paths.workDir, `${ctx.proj.raw.slug ?? 'film'}.mp4`)));
   const crf = str(ctx.args, 'crf', '16');
+  // --resume：已渲好的分片直接复用（长片渲到 90% 挂掉时不用从头来）
+  const resume = ctx.args.resume === true || ctx.args.resume === 'true';
 
   const t0 = Date.now();
   let written;
@@ -271,12 +299,24 @@ export async function render(ctx) {
       onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
     }));
     say(`${out}  ${written} 帧  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  } else {
-    written = await renderSharded(ctx, {from, to, shards, out, crf, say});
+    return {
+      code: 0,
+      data: {
+        out, frames: written, shards, seconds: Math.round((Date.now() - t0) / 1000),
+        msPerFrame: +(((Date.now() - t0) / written) || 0).toFixed(1),
+      },
+    };
   }
+  const sh = await renderSharded(ctx, {from, to, shards, out, crf, say, resume});
+  written = sh.frames;
   return {
     code: 0,
-    data: {out, frames: written, shards, seconds: Math.round((Date.now() - t0) / 1000)},
+    data: {
+      out, frames: written, shards, seconds: Math.round((Date.now() - t0) / 1000),
+      msPerFrame: +(((Date.now() - t0) / written) || 0).toFixed(1),
+      parts: sh.parts,      // [{i, from, to, seconds, reused}]
+      reused: sh.reused,
+    },
   };
 }
 
@@ -328,9 +368,9 @@ export async function all(ctx) {
 }
 
 /** 分片并行：每片一个独立浏览器实例，各渲一段，最后 concat 无损拼接。 */
-async function renderSharded(ctx, {from, to, shards, out, crf, say}) {
+async function renderSharded(ctx, {from, to, shards, out, crf, say, resume = false}) {
   const tmp = join(ctx.proj.paths.workDir, 'parts');
-  rmSync(tmp, {recursive: true, force: true});
+  if (!resume) rmSync(tmp, {recursive: true, force: true});
   mkdirSync(tmp, {recursive: true});
 
   const total = to - from + 1;
@@ -341,25 +381,37 @@ async function renderSharded(ctx, {from, to, shards, out, crf, say}) {
     const b = Math.min(to, from + (i + 1) * per - 1);
     if (a <= b) bounds.push([a, b]);
   }
-  say(`${total} 帧 -> ${bounds.length} 片，每片约 ${per} 帧`);
+  say(`${total} 帧 -> ${bounds.length} 片，每片约 ${per} 帧${resume ? '（续跑：已有分片直接复用）' : ''}`);
 
   const t0 = Date.now();
+  let reused = 0;
   const results = await Promise.all(bounds.map(async ([a, b], i) => {
     const part = join(tmp, `part_${String(i).padStart(2, '0')}.mp4`);
+    // 续跑：分片文件在、且非空，就当它已完成（**不做内容校验** ——
+    // 时间轴改过之后旧分片就不再对应，那种情况别加 --resume）
+    if (resume && existsSync(part) && statSync(part).size > 0) {
+      reused++;
+      return {i, a, b, part, ok: true, reused: true, seconds: 0};
+    }
+    const p0 = Date.now();
     try {
       await renderRange(ctx.projectDir, ctx.proj, {from: a, to: b, out: part, crf, opts: ctx.opts});
-      return {i, a, b, part, ok: true};
+      return {i, a, b, part, ok: true, reused: false, seconds: Math.round((Date.now() - p0) / 1000)};
     } catch (e) {
-      return {i, a, b, part, ok: false, err: e.message};
+      return {i, a, b, part, ok: false, err: e.message, seconds: Math.round((Date.now() - p0) / 1000)};
     }
   }));
 
   let failed = 0;
   for (const r of results) {
-    say(`  片 ${r.i} 帧 ${r.a}-${r.b}: ${r.ok ? 'ok' : '失败'}`);
+    say(`  片 ${r.i} 帧 ${r.a}-${r.b}: ${r.ok ? (r.reused ? '复用' : `ok ${r.seconds}s`) : '失败'}`);
     if (!r.ok) { failed++; console.error('    ' + r.err); }
   }
-  if (failed) throw new Error(`filmwright: ${failed} 个分片失败`);
+  if (failed) {
+    const e = new Error(`filmwright: ${failed} 个分片失败`);
+    e.hint = '修好后用 --resume 续跑：已完成的分片会直接复用，不从头渲';
+    throw e;
+  }
 
   const listFile = join(tmp, 'list.txt');
   // concat demuxer 的官方建议是**相对 list.txt 的路径**（配 -safe 0）。
@@ -373,5 +425,9 @@ async function renderSharded(ctx, {from, to, shards, out, crf, say}) {
   checkSpawned(ff, '分片无损拼接');
   if (code !== 0) throw new Error('filmwright: 拼接失败');
   say(`${out}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  return total;
+  return {
+    frames: total,
+    reused,
+    parts: results.map((r) => ({i: r.i, from: r.a, to: r.b, seconds: r.seconds, reused: !!r.reused})),
+  };
 }

@@ -93,6 +93,16 @@ draw(ctx, n, t, accent) {
 
 **句 id 是镜头对齐节拍用的**（`S('S01').from`、`BLK('S01', 2)`），所以 id 必须稳定。
 
+**edge-tts 端点会整段时间不可用**（实测 2026-10-13：`WSServerHandshakeError: 403`，
+`voices` 端点直接返回 `Our services aren't available right now`）。已排除本机原因：
+edge-tts 7.2.8（最新）、系统时钟与服务器同步（差 <1s）、网络可达 —— 是微软侧的服务
+故障/区域不可用，**不是配置问题，重试也没用**。`tts` 失败时会打印可行动的出路
+（等一会儿 / 自产时间轴 / 先用合成夹具继续做画面）。
+
+这种时候开发流程不该停：时间轴是**数据契约**，`tools/make-timeline-fixture.mjs`
+按 `narration.txt` 合成一份形状与节拍正确的 `timeline.json`（明确标注非配音），
+足够跑 `check`、出静帧、验收画面；真实配音等端点恢复后跑 `tts` 覆盖即可。
+
 ## 6. 渲染速度取决于浏览器与机器
 
 实测 1280×720 约 81 ms/帧（单实例，Chrome-for-Testing，本机）。7465 帧分 5 片约 8 分钟。

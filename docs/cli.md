@@ -149,15 +149,18 @@ filmwright sheet --project <项目目录> [--from 1] [--to <总帧>] [--step 150
 ## `render`
 
 ```bash
-filmwright render --project <项目目录> [--shards N] [--from N] [--to M] [--out x.mp4] [--crf 16]
+filmwright render --project <项目目录> [--shards N|auto] [--resume] [--from N] [--to M] [--out x.mp4] [--crf 16]
 ```
 
 - 默认渲整条时间轴，输出 `.work/<slug>.mp4`。
 - `--shards N` 分片并行：每片一个独立浏览器实例，各渲一段，最后 ffmpeg concat 无损拼接。片数开太多会吃内存（每实例约几百 MB），超过 CPU 核数收益递减。
+- **`--shards auto`**：按 CPU 核数自动定（留一核给主进程，每片至少约 60 帧）。
+- **`--resume`**：复用 `.work/parts/` 里已完成的分片，不从头渲 —— 长片渲到一半挂掉时用。**注意**：它只判文件存在且非空，**不校验内容**；改过时间轴或镜头之后旧分片已不对应，那种情况别加 `--resume`。
 - `--from` / `--to` 只渲一个区间（调试某一段时用）。
 - `--crf` 传给 ffmpeg 的质量参数，默认 16。
+- `--json` 里带性能读数：`seconds` / `msPerFrame` / `parts[{i,from,to,seconds,reused}]` / `reused` —— 换机器、换浏览器后可以直接对比。
 
-实测参考：1280×720 约 81 ms/帧（单实例，Chrome-for-Testing）。
+实测参考：1280×720 约 81 ms/帧（单实例，Chrome-for-Testing，本机）。
 
 ## `mux`
 

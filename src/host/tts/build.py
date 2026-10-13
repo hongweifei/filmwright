@@ -92,6 +92,33 @@ def parse(path):
     return items, para_break
 
 
+def _tts_failure_hint(tries, why, text):
+    """把 TTS 失败说成人能照做的事。
+
+    分两类，因为出路完全不同（实测踩过）：
+      - 403 / 服务不可用：微软侧的服务故障或区域不可用，**不是本机的问题**
+        （时钟、版本、令牌都验过正常：voices 端点直接返回
+        "Our services aren't available right now"）。重试没用，要换引擎或等。
+      - 其余（限流 / 超时 / 空音频）：等一会儿再跑，或放慢 pace。
+    """
+    unavailable = ('403' in why) or ('WSServerHandshake' in why) or ('Handshake' in why)
+    head = 'filmwright: edge-tts 试了 %d 次仍拿不到音频（%s）：%s' % (tries, why, text[:30])
+    if unavailable:
+        return (
+            head + '\n'
+            '  这是 **微软侧 TTS 服务不可用**（403 / 服务故障），不是本机配置问题：\n'
+            '    · 已核对：edge-tts 7.2.8（最新）、系统时钟与服务器同步、网络可达\n'
+            '    · voices 端点直接返回 "Our services aren\'t available right now"\n'
+            '  出路（按推荐顺序）：\n'
+            '    1) 过一段时间再试（服务恢复即好，脚本不用改）\n'
+            '    2) 自己按同样格式产出 script/timeline.json —— 时间轴是数据契约，\n'
+            '       任何 TTS 都能接入，格式见 LIMITATIONS.md 第 5 节\n'
+            '    3) 先用手写时间轴继续做画面：本仓库 tools/make-timeline-fixture.mjs\n'
+            '       能按 narration.txt 合成一份（仅供开发验收，不是配音）')
+    return (head + '\n'
+            '  多为端点限流：等一会儿再跑，或用 GAP / EDGE_PACE 放慢（见 docs/config.md 的 tts 段）')
+
+
 class Tts:
     def __init__(self, root, cfg):
         self.root = root
@@ -147,8 +174,7 @@ class Tts:
             except Exception as e:
                 why = '%s: %s' % (type(e).__name__, e)
             if attempt == self.tries:
-                raise SystemExit('filmwright: edge-tts 试了 %d 次仍拿不到音频（%s）：%s'
-                                 % (self.tries, why, text[:30]))
+                raise SystemExit(_tts_failure_hint(self.tries, why, text))
             back = min(8.0, 1.2 * attempt)
             print('  edge-tts 第 %d/%d 次失败（%s），等 %.1fs' % (attempt, self.tries, why, back))
             await asyncio.sleep(back)
