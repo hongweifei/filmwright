@@ -10,6 +10,10 @@
 
 *`examples/minimal` 第 470 帧：HUD、章节主色、字幕与画面都由引擎内建件与镜头协同画出。*
 
+![promo 片头](docs/images/promo-title.png)
+
+*`examples/promo`——filmwright 自己的介绍片，全程 `scene.json` 驱动、零镜头代码，制作用的就是它自己的工具链（[狗粮](docs/scene.md)）。*
+
 ## 核心约定
 
 **第 N 帧只是 N 的函数** —— 不读上一帧、不累积状态。这一条买来三件事：

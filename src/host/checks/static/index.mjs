@@ -80,6 +80,19 @@ export function checkTimeline(projectDir, proj) {
   const shotsDir = dirname(proj.paths.shots);
   const bad = [];
   let checked = 0;
+
+  // 配置的 hud 也按句 id 引用时间轴，而且 drawHud 是**每帧**都查 —— 写错一个 id
+  // 会让整片每一帧都抛错（实测：promo 的 hud 写到 S11，标题帧整帧红屏）。
+  // 镜头目录扫不到它，这里单独查。
+  for (const h of proj.raw?.hud ?? []) {
+    for (const key of ['fromS', 'toS']) {
+      checked++;
+      if (h?.[key] && !byId.has(h[key])) {
+        bad.push(`film.config.mjs 的 hud「${h.label ?? ''}」: ${key} 指向不存在的句 ${h[key]}`);
+      }
+    }
+  }
+
   if (existsSync(shotsDir)) {
     for (const file of readdirSync(shotsDir).filter((f) => f.endsWith('.js'))) {
       const lines = readFileSync(join(shotsDir, file), 'utf8').split('\n');

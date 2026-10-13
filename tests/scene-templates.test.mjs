@@ -72,6 +72,52 @@ test('compileScene：每个模板都产出整数节拍，且与元素数一致',
   }
 });
 
+test('结构守卫：任何模板的节拍都必须落在镜头窗口内（末拍留够停留）', () => {
+  // 用**短句**构造最容易越界的情形：句子区间只有 120 帧，而模板内容取满上限。
+  const tl = {
+    fps: 30, total_frames: 2000,
+    sentences: Array.from({length: 12}, (_, i) => ({
+      id: 'S' + String(i + 1).padStart(2, '0'), chapter: 1,
+      from: 100 + i * 130, to: 220 + i * 130, text: 'x',
+    })),
+    subs: [],
+  };
+  setTimeline(tl);
+  const many = (n, f) => Array.from({length: n}, (_, i) => f(i));
+  const scene = {
+    shots: [
+      {type: 'title', at: 1, title: 't'},
+      {type: 'bullets', at: 'S01', items: many(6, (i) => ({t: 'x' + i}))},
+      {type: 'steps', at: 'S02', steps: many(6, (i) => ({t: 'x' + i}))},
+      {type: 'flow', at: 'S03', boxes: many(5, (i) => ({label: 'x' + i}))},
+      {type: 'code', at: 'S04', lines: many(10, (i) => 'line' + i)},
+      {type: 'terminal', at: 'S05', lines: many(10, (i) => 'line' + i)},
+      {type: 'chips', at: 'S06', items: many(12, (i) => 'chip' + i)},
+      {type: 'bars', at: 'S07', items: many(6, (i) => ({v: i + 1, label: 'b' + i}))},
+      {type: 'quote', at: 'S08', text: '一句' + '很长'.repeat(30)},
+      {type: 'table', at: 'S09', columns: ['A', 'B'], rows: many(8, (i) => ['a', 'b'])},
+      {type: 'image', at: 'S10', asset: 'a'},
+      {type: 'stat', at: 'S11', value: 1, label: 'l'},
+      {type: 'compare', at: 'S12', left: {title: 'L', items: many(5, (i) => 'x' + i)},
+        right: {title: 'R', items: many(5, (i) => 'x' + i)}},
+    ],
+  };
+  const shots = compileScene(scene, tl);
+  const problems = [];
+  for (const s of shots) {
+    const type = s.scene.type;
+    // 镜头末帧 = 下一个镜头的 start - 1（最后一个用总帧数）
+    const idx = shots.indexOf(s);
+    const end = idx + 1 < shots.length ? shots[idx + 1].start - 1 : tl.total_frames;
+    const last = Math.max(...s.beats);
+    if (last > end) problems.push(`${type}: 末拍 f${last} 超出镜头末 f${end}`);
+    if (s.beats.some((b) => !Number.isInteger(b) || b < s.start)) {
+      problems.push(`${type}: 节拍不在镜头内（${JSON.stringify(s.beats)}）`);
+    }
+  }
+  assert.deepEqual(problems, [], '模板节拍越界：' + problems.join('；'));
+});
+
 test('compileScene：没有模板的类型当场抛错', () => {
   assert.throws(() => compileScene({shots: [{type: 'nope', at: 1}]}, {sentences: [], subs: []}),
     /没有模板的类型/);

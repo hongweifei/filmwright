@@ -1,0 +1,68 @@
+{
+  "$schema": "filmwright/scene-v0",
+  "shots": [
+    {"type": "title", "at": 1, "kicker": "FILMWRIGHT", "title": "把内容变成帧",
+     "sub": "AI 写内容，引擎保证确定性", "en": "content in, frames out"},
+
+    {"type": "compare", "at": "S01", "heading": "说明片的成本在哪",
+     "left": {"title": "写文案", "items": ["想清楚要说什么", "改一句成本很低"]},
+     "right": {"title": "做画面", "items": ["动画要重排", "改一句牵动全片"]}},
+
+    {"type": "bullets", "at": "S02", "heading": "让模型写绘制代码",
+     "items": [
+       {"t": "看起来很快", "d": "一次生成一大段"},
+       {"t": "质量全凭运气", "d": "同样的话两次结果不同"},
+       {"t": "错了很难定位", "d": "崩在绘制深处"}
+     ]},
+
+    {"type": "steps", "at": "S03", "heading": "filmwright 反过来做",
+     "steps": [
+       {"t": "你写内容", "d": "文案与要点，就是文字"},
+       {"t": "你写节拍", "d": "对齐到哪一句，不写帧号"},
+       {"t": "模板管节奏", "d": "入场、呼吸、配色、缩放"}
+     ]},
+
+    {"type": "quote", "at": "S04",
+     "text": "第 N 帧只是 N 的函数。", "who": "核心不变量"},
+
+    {"type": "flow", "at": "S05", "heading": "于是画面可以复现",
+     "boxes": [
+       {"label": "同一份内容", "sub": "scene.json"},
+       {"label": "确定性引擎", "sub": "sRGB 钉死"},
+       {"label": "逐像素相同", "sub": "任何机器"}
+     ]},
+
+    {"type": "chips", "at": "S06", "heading": "十三类模板镜头",
+     "items": ["title", "bullets", "stat", "flow", "code", "image",
+               "compare", "steps", "table", "quote", "terminal", "chips"]},
+
+    {"type": "table", "at": "S07", "heading": "九道自检 + 像素回归",
+     "columns": ["检查", "抓什么"],
+     "rows": [
+       ["scene", "规格不合法、超容量、对齐错"],
+       ["frames", "哪一帧绘制抛错"],
+       ["quality", "静止过久、空白帧、末拍太赶"],
+       ["regression", "结构改动偷改了像素"]
+     ]},
+
+    {"type": "terminal", "at": "S08", "heading": "整条链交给 agent", "title": "MCP",
+     "lines": [
+       {"text": "→ filmwright_schema", "color": "#E9F0FA"},
+       {"text": "  13 templates, max items 6…", "color": "#8B99B4"},
+       {"text": "→ filmwright_review", "color": "#E9F0FA"},
+       {"text": "  ok: true · 11 shots · 4 frames inline", "color": "#35D07F"}
+     ]},
+
+    {"type": "code", "at": "S09", "heading": "开始只要两步",
+     "lines": [
+       {"text": "# 1. 建项目、写解说词、生成时间轴"},
+       "filmwright new my-film && filmwright tts --project my-film",
+       {"text": "# 2. 写一份 scene.json，然后出片", "mark": "hl"},
+       "filmwright all --project my-film --shards 3"
+     ]},
+
+    {"type": "compare", "at": "S10", "heading": "分工",
+     "left": {"title": "模型负责", "items": ["说什么", "要点与数据", "对齐到哪一句"]},
+     "right": {"title": "引擎负责", "items": ["怎么动", "配色与缩放", "确定性"]}}
+  ]
+}

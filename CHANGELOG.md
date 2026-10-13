@@ -7,6 +7,15 @@
 
 ### 新增
 
+- **`examples/promo`：filmwright 自己的介绍片**（狗粮）。全程 `scene.json` 驱动、零镜头代码，制作用的就是自己的工具链（`tts` → `schema` → MCP `review` → `check`）；11 个镜头覆盖 9 类模板，九道自检全过。它同时是模板语料的来源——下面三条修复全是做这条片子时暴露的。
+- **`tools/dogfood-review.mjs`**：通过 MCP 的 `filmwright_review` 跑一轮「改 → 验 → 看」并把回图落盘，狗粮制作的实际回路。
+
+### 修复
+
+- **`timeline` 静态自检漏查配置的 `hud`**：`drawHud` 每帧都 `S(fromS)`，句 id 写错会让**整片每一帧**都抛错（做 promo 时把 hud 写到 `S11`，标题帧整帧红屏）；此前自检只扫 `shots/`，扫不到配置。现在一并查。
+- **模板节拍可能排到镜头之外**：chips / bars / quote 的动画终点按固定时长算，元素多、句子短时会越界（实测 promo 的 12 颗 chips 排到镜头末之后 12 帧）。统一走 `beatEnd()` 夹进「镜头末 − 停留预留」窗口，并加**结构守卫测试**（断言任何模板的节拍都落在镜头窗口内）——该守卫已做负面对照：去掉夹取立刻变红。
+- **MCP `review` 的代表帧取错**：原来按区间 60% 取，元素是错峰进场的，60% 处可能末拍还没落位（promo 的 compare：右栏 228 帧进场，60% 落在 227 帧，图上只有左栏）。现在按**末拍落位后 8 帧**取，才是内容齐全的帧。
+
 - **`filmwright srt`：外挂字幕导出**。从 `timeline.json` 的 `subs` 出 SRT（字幕本就烧进画面，这份给 B 站/YouTube 投稿用）；块间空隙用下一块开始补齐，避免闪断；`--translation` 合双语轨，译文由框架外产出（框架不翻译，边界不破），两种格式（按 `from` 帧对齐的数组 / 按块序号的映射）都认，缺项只出原文不编内容。MCP 加 `filmwright_srt` 工具。
 
 - **MCP 回图 + `filmwright_review`**：`filmwright_stills` 把 PNG 作为 MCP image content 直接回给多模态模型（默认内联 4 张、`max_images` 可到 8，其余给路径）；新增 `filmwright_review` 一轮完成「改 → 验 → 看」——scene 校验（规格有错就不渲染，直接交回可行动的错）→ 七道静态自检 → 各镜头代表帧（区间 60% 处）回图。此前 agent 只能拿到图片路径，看不到自己做的画面。

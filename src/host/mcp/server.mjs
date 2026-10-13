@@ -189,16 +189,34 @@ export function buildServer() {
       if ((c.code ?? 0) !== 0) {
         return fail({ok: false, command: 'review', errors, warnings, data: {stage: 'check', note: '静态自检没过，这一步没渲染'}});
       }
-      // 3) 代表帧：scene 项目按镜头取（起始 + 区间 60%）；纯手写镜头退化为全片均匀采样
+      // 3) 代表帧：**取「末拍落位之后」**，不是区间百分比。
+      //
+      // 为什么不能按百分比取：元素是错峰进场的，区间 60% 处可能最后一拍还没落位
+      // （实测 promo 的 compare：右栏在 228 帧进场，60% 落在 227 帧，图上只有左栏）。
+      // 节拍表是模板自己算出来的，用它取帧才是「内容齐全」的帧。
       const total = proj.timeline?.total_frames ?? 0;
       let marks = [];
       if (proj.scene?.shots?.length) {
         const starts = proj.scene.shots.map((s) => resolveAt(s.at, proj.timeline));
+        let beats = null;
+        try {
+          // 模板的 beats 需要时间轴已装载（staggerFrames 查 S/BLK）
+          const {setTimeline} = await import('../../contract/timeline.js');
+          setTimeline(proj.timeline);
+          const {compileScene} = await import('../../runtime/scene/templates.js');
+          beats = compileScene(proj.scene, proj.timeline).map((s) => s.beats ?? null);
+        } catch {
+          beats = null;   // 拿不到节拍就退回区间百分比（下面用 0.75，比 0.6 稳）
+        }
         marks = proj.scene.shots.map((s, i) => {
           const a = starts[i];
           const b = i + 1 < starts.length ? starts[i + 1] : total;
+          const last = beats?.[i]?.length ? Math.max(...beats[i]) : null;
+          const frame = last !== null
+            ? Math.min(b - 1, last + 8)                                  // 末拍后 8 帧：元素全在位
+            : Math.min(b - 1, a + Math.round((b - a) * 0.75));
           return {label: `${s.type}@${typeof s.at === 'string' ? s.at : s.at ?? ''}`,
-            frame: Math.max(1, Math.min(total, a + Math.round((b - a) * 0.6)))};
+            frame: Math.max(1, Math.min(total, frame))};
         });
       } else {
         const n = 4;

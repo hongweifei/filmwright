@@ -29,6 +29,16 @@ const breathe = (n, amp = 0.035, period = 34) => 1 + Math.sin(n / period) * amp;
  */
 const HOLD_RESERVE = 30;
 
+/**
+ * 把「入场起点 + 动画时长」夹进镜头可用的节拍窗口内（末拍必须留出 HOLD_RESERVE）。
+ * 模板里凡是「某个动画走 N 帧才结束」的地方都用它，别各写一份。
+ */
+function beatEnd(sid, start, dur) {
+  const s = sid ? S(sid) : null;
+  const horizon = s ? s.to - HOLD_RESERVE : start + dur;
+  return Math.min(start + dur, Math.max(start + 4, horizon));
+}
+
 /** 单元素入场进度（提前 4 帧起、20 帧走完，与示例片同一口径）。 */
 const enterAt = (n, f) => easeOut3(inv(n, f, f + 20));
 
@@ -372,10 +382,13 @@ const table = {
 };
 
 const quote = {
-  beats: (shot, start, sid) => [staggerFrames(sid, 1, start)[0] + 22],
+  beats: (shot, start, sid) => {
+    const f0 = staggerFrames(sid, 1, start)[0];
+    return [beatEnd(sid, f0, 22)];
+  },
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, 1, this.from);
-    const p = easeOut3(inv(n, frames[0], frames[0] + 22));
+    const p = easeOut3(inv(n, frames[0], beatEnd(shot.sid, frames[0], 22)));
     const lines = (function () {
       // 手动折行：quote 的字号大，超宽必须换行而不是缩没
       const f = font(44, F.sans, 800);
@@ -435,15 +448,17 @@ const terminalT = {
 const chips = {
   beats: (shot, start, sid) => {
     const f0 = staggerFrames(sid, 1, start)[0];
-    return [f0, f0 + 8 + shot.items.length * 10];   // 逐颗点亮的终点也是拍
+    return [f0, beatEnd(sid, f0, 8 + shot.items.length * 10)];   // 逐颗点亮的终点也是拍
   },
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, 1, this.from);
     if (shot.heading) {
       section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
     }
-    // 揭示进度铺满整句的字幕块跨度；chips() 内部按 p 逐颗点亮
-    const p = easeOut3(inv(n, frames[0], frames[0] + 8 + shot.items.length * 10));
+    // 揭示进度铺满整句的字幕块跨度；chips() 内部按 p 逐颗点亮。
+    // 进度终点与 beats 用同一个 beatEnd 口径，两边不会打架。
+    const end = beatEnd(shot.sid, frames[0], 8 + shot.items.length * 10);
+    const p = easeOut3(inv(n, frames[0], end));
     if (p <= 0.01) return;
     ctx.save();
     ctx.globalAlpha = Math.min(1, p * 2);
@@ -460,7 +475,7 @@ const chips = {
 const barsT = {
   beats: (shot, start, sid) => {
     const f0 = staggerFrames(sid, 1, start)[0];
-    return [f0, f0 + 30];   // 生长 30 帧走完
+    return [f0, beatEnd(sid, f0, 30)];   // 生长 30 帧走完（夹进镜头窗口）
   },
   draw(ctx, n, shot, accent) {
     const items = shot.items;
@@ -468,7 +483,7 @@ const barsT = {
     if (shot.heading) {
       section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
     }
-    const p = easeOut3(inv(n, frames[0], frames[0] + 30));
+    const p = easeOut3(inv(n, frames[0], beatEnd(shot.sid, frames[0], 30)));
     const x0 = 240, w = 800, h = 340, y0 = 200;
     barsDraw(ctx, x0, y0, w, h, shot.unit ? items.map((it) => ({...it, unit: it.unit ?? shot.unit})) : items,
       {p, baseColor: accent});

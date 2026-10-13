@@ -16,7 +16,7 @@
 |---|---|---|
 | `api` | `index.js` 重名导出（只在浏览器求值时报 `Duplicate export of 'S'`） | 不要 |
 | `imports`（shots） | 镜头文件相对路径写错（页面**静默**不 ready，只有抓 console 才看得到） | 不要 |
-| `timeline` | 引用不存在的句 id / 字幕块号（只在渲到那一帧时才在画面上报错） | 不要 |
+| `timeline` | 引用不存在的句 id / 字幕块号（只在渲到那一帧时才在画面上报错）。**含 `film.config.mjs` 的 `hud`**——`drawHud` 每帧都查句 id，写错会让整片每一帧都抛错 | 不要 |
 | `scene` | scene.json 规格不合法（未知类型、缺字段、对齐到不存在的句/块、顺序不递增……每条带 code/path/hint） | 不要 |
 | `assets` | 用了没声明的素材名；或声明了但 `public/` 下没有那个文件 | 不要 |
 | `imports`（runtime） | 引擎自身模块的相对路径 | 不要 |
