@@ -10,6 +10,7 @@
 import {readFileSync, existsSync, readdirSync, statSync} from 'node:fs';
 import {join, dirname, resolve, relative} from 'node:path';
 import {DEFAULT_THEME, normalizeConfig} from '../../../contract/config.js';
+import {validateScene} from '../../../contract/scene.js';
 
 /** 公开面的重名导出。`export *` 与具名导出混用时撞名，静态读 index.js 就能提前抓到。 */
 export function checkPublicApi(apiFile) {
@@ -41,6 +42,8 @@ export function checkPublicApi(apiFile) {
 
 /** 模块相对路径是否都存在。裸导入（'filmwright'）交给 import map，这里不判。 */
 export function checkImports(dir, label = dir) {
+  // 目录可以不存在：纯 scene 项目没有 shots/，这不是错误
+  if (!existsSync(dir)) return {name: 'imports', ok: true, checked: 0, problems: []};
   const files = [];
   (function walk(d) {
     for (const e of readdirSync(d)) {
@@ -160,7 +163,7 @@ export function checkThemeKeys(runtimeDir) {
  *   - 声明了但 `public/` 下找不到文件 → 报出来（否则要等 boot 才报 404）
  *   - 声明了却没人用 → 只提示，不算失败（可能是留着以后用的）
  */
-export function checkAssets(projectDir, rawConfig) {
+export function checkAssets(projectDir, rawConfig, scene = null) {
   const bad = [];
   const hints = [];
   let checked = 0;
@@ -204,7 +207,12 @@ export function checkAssets(projectDir, rawConfig) {
     }
   }
 
-  // 3. 声明了没人用 → 提示
+  // 3. 声明了没人用 → 提示。镜头与 scene 两个来源都要算。
+  if (scene && Array.isArray(scene.shots)) {
+    for (const s of scene.shots) {
+      if (s && s.type === 'image' && typeof s.asset === 'string') used.add(s.asset);
+    }
+  }
   for (const a of cfg.assets) {
     if (!used.has(a.name)) hints.push(`素材「${a.name}」声明了但镜头里没人用`);
   }
@@ -215,5 +223,29 @@ export function checkAssets(projectDir, rawConfig) {
     checked,
     problems: bad,
     hints,
+  };
+}
+
+/**
+ * 场景规格（scene.json）的静态校验。
+ *
+ * 没有这个文件就跳过（纯镜头表项目）。有的话，boot 在浏览器里查的是
+ * **同一份实现**（contract/scene.js）——这里只是把失败提前到不启浏览器的几秒里，
+ * 而且每条错误带 code/path/hint，AI 读完能直接改。
+ */
+export function checkScene(projectDir, proj) {
+  if (!proj.scene) {
+    return {name: 'scene', ok: true, checked: 0, problems: [], notes: ['没有 scene.json（纯镜头表项目）']};
+  }
+  let assetNames = null;
+  try {
+    assetNames = normalizeConfig(proj.raw).assets.map((a) => a.name);
+  } catch { /* 配置本身读不了，assets 那道会报 */ }
+  const r = validateScene(proj.scene, {timeline: proj.timeline ?? {sentences: []}, assetNames});
+  return {
+    name: 'scene',
+    ok: r.ok,
+    checked: Array.isArray(proj.scene.shots) ? proj.scene.shots.length : 0,
+    problems: r.errors.map((e) => `[${e.code}] ${e.path}：${e.message}${e.hint ? '（' + e.hint + '）' : ''}`),
   };
 }

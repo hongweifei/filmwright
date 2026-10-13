@@ -7,7 +7,7 @@ import {parseArgs, str} from './args.mjs';
 import * as commands from './commands.mjs';
 
 const COMMANDS = [
-  ['check', '自检：公开面重名导出、模块路径、时间轴引用、全帧绘制、画质', 'check'],
+  ['check', '自检：公开面重名导出、模块路径、时间轴引用、场景规格、全帧绘制、画质', 'check'],
   ['preview', '预览页（拖动时间轴 / 播放 / 改文件热重载）[--no-open] [--seconds N]', 'preview'],
   ['tts', '解说词 → 配音 + 时间轴', 'tts'],
   ['stills', '出静帧        --frames 1,300  --dir <目录>', 'stills'],

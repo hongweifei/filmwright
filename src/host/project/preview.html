@@ -191,7 +191,8 @@ async function load() {
   const info = await boot({
     config: p.config,
     timeline: p.timeline,
-    loadShots: () => import(p.shotsUrl + '?v=' + Date.now()),
+    scene: p.scene ?? null,
+    loadShots: p.shotsUrl ? () => import(p.shotsUrl + '?v=' + Date.now()) : undefined,
   }, (w, h) => {
     canvas.width = w;
     canvas.height = h;

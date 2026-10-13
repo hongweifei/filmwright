@@ -5,6 +5,11 @@
 
 ## [未发布]
 
+### 新增
+
+- **场景规格 `scene.json`（AI 自动化的入口）**：声明式镜头，v0 含 7 类模板（title / bullets / stat / flow / code / image / compare）。AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。校验与 boot 共用一份实现（`src/contract/scene.js`），错误带 code/path/hint；静态自检加第 9 道 `scene`（`--static-only` 七道不启浏览器）。示例 `examples/scenecast` 整个项目没有 `shots/`，画面全部来自规格（其 `timeline.json` 是合成夹具；跑 `tts` 会生成真实配音）。
+- 文档：docs/scene.md 场景规格参考。
+
 ### 修复
 
 - 渲染会话以无头模式（`--headless=new`）启动浏览器。此前注释写的是无头、参数里却从未传过这个旗标，在有显示器的机器上碰巧能跑；CI 的 Ubuntu 没有 X server，浏览器直接退出（`Missing X server or $DISPLAY`）。本机已验证无头渲染与既有像素基准逐字节一致（6/6 帧），基准无需重抓。

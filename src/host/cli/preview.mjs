@@ -6,7 +6,7 @@ import {spawn} from 'node:child_process';
 import {existsSync} from 'node:fs';
 import {relative} from 'node:path';
 import {serveProject} from '../project/server.mjs';
-import {requireTimeline} from '../project/load.mjs';
+import {requireTimeline, shotsRelOrNull} from '../project/load.mjs';
 import {findBrowser} from '../browser/find.mjs';
 import {num} from './args.mjs';
 
@@ -24,18 +24,21 @@ function openInBrowser(url) {
 
 export async function preview(ctx) {
   requireTimeline(ctx.proj);
-  const shotsRel = relative(ctx.projectDir, ctx.proj.paths.shots).replace(/\\/g, '/');
+  const shotsRel = shotsRelOrNull(ctx.proj);
   const server = await serveProject(ctx.projectDir, {
     raw: ctx.proj.raw,
     timeline: ctx.proj.timeline,
     shotsRel,
+    scene: ctx.proj.scene ?? null,
     watch: true,          // 预览才需要热重载；渲染不需要（会拖慢且无意义）
   });
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/preview`;
 
   console.log(`filmwright 预览：${url}`);
-  console.log(`  改 ${shotsRel} 或 film.config.mjs 后保存，页面会自动重载。`);
+  const watched = [shotsRel ? shotsRel + '/' : null, ctx.proj.scene ? 'scene.json' : null, 'film.config.mjs']
+    .filter(Boolean).join('、');
+  console.log(`  改 ${watched} 后保存，页面会自动重载。`);
   console.log('  按 Ctrl+C 结束。');
 
   // --no-open：在无头环境/自动化测试里用，不要真去开浏览器

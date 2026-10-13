@@ -4,11 +4,12 @@
 //   film.config.mjs   导出一个配置对象（default）
 //   script/narration.txt   解说词（可选，给 tts 用）
 //   script/timeline.json   tts 生成的时间轴（渲染必需）
-//   shots/index.js         导出 SHOTS 数组（每项 {start, draw}）
+//   scene.json             场景规格（可选）：声明式镜头，AI/模板路线的入口
+//   shots/index.js         导出 SHOTS 数组（每项 {start, draw}；与 scene 可混用）
 //   public/fonts/...       字体
 //   public/assets/<slug>/audio.wav   配音（可选，给 mux 用）
 import {existsSync, readFileSync} from 'node:fs';
-import {resolve, join} from 'node:path';
+import {resolve, join, relative} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
 export {KIT_ROOT} from '../root.mjs';
@@ -30,6 +31,7 @@ export function projectPaths(projectDir) {
     config: join(dir, 'film.config.mjs'),
     narration: join(dir, 'script', 'narration.txt'),
     timeline: join(dir, 'script', 'timeline.json'),
+    scene: join(dir, 'scene.json'),
     shots: join(dir, 'shots', 'index.js'),
     audio: (slug) => join(dir, 'public', 'assets', slug, 'audio.wav'),
     // 交付物
@@ -54,8 +56,19 @@ export async function loadProject(projectDir) {
   if (existsSync(p.timeline)) {
     timeline = JSON.parse(readFileSync(p.timeline, 'utf8'));
   }
+  // 场景规格：声明式镜头（AI 的落点）。没有就是纯镜头表项目。
+  let scene = null;
+  if (existsSync(p.scene)) {
+    scene = JSON.parse(readFileSync(p.scene, 'utf8'));
+  }
 
-  return {paths: p, raw, timeline};
+  return {paths: p, raw, timeline, scene};
+}
+
+/** 镜头目录相对项目根的路径；没有 shots/index.js（纯 scene 项目）给 null。 */
+export function shotsRelOrNull(proj) {
+  if (!existsSync(proj.paths.shots)) return null;
+  return relative(proj.paths.dir, proj.paths.shots).replace(/\\/g, '/');
 }
 
 /** 需要时间轴的命令（render/check）用它，缺了就给出下一步该跑什么。 */

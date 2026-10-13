@@ -37,7 +37,7 @@ git clone https://github.com/hongweifei/filmwright filmwright && cd filmwright
 pip install edge-tts numpy          # 要配音时
 
 node bin/filmwright.mjs tts    --project examples/minimal   # 解说词 -> 配音 + 时间轴
-node bin/filmwright.mjs check  --project examples/minimal   # 八道自检
+node bin/filmwright.mjs check  --project examples/minimal   # 九道自检
 node bin/filmwright.mjs all    --project examples/minimal --shards 3
 # -> examples/minimal/renders/minimal.mp4
 ```
@@ -52,7 +52,7 @@ node bin/filmwright.mjs preview --project examples/minimal
 
 | 命令 | 作用 |
 |---|---|
-| `check` | 八道自检：导出、模块路径、时间轴引用、素材、主题键、全帧绘制、画质（明细见[质量保障](docs/qc.md)） |
+| `check` | 九道自检：导出、模块路径、时间轴引用、场景规格、素材、主题键、全帧绘制、画质（明细见[质量保障](docs/qc.md)） |
 | `preview` | 预览页：拖动时间轴 / 播放 / 热重载（SSE 推送，不是轮询） |
 | `tts` | 解说词 → `audio.wav` + `timeline.json`（逐句缓存） |
 | `stills` | `--frames 40,470` 出静帧 |
@@ -69,6 +69,7 @@ node bin/filmwright.mjs preview --project examples/minimal
 |---|---|
 | [入门](docs/getting-started.md) | 装环境、跑通示例 |
 | [教程](docs/tutorial.md) | 从零做一个片子的完整流程 |
+| [场景规格](docs/scene.md) | `scene.json`：AI/模板路线的入口，声明内容即出画面 |
 | [配置参考](docs/config.md) | `film.config.mjs` 全部字段与校验规则 |
 | [API 参考](docs/api.md) | 镜头里能 import 的一切 |
 | [命令参考](docs/cli.md) | 八个命令的全部选项 |
@@ -95,7 +96,7 @@ my-film/
 ## 质量网
 
 - `npm test` —— 72 个单元测试，纯函数、零依赖，秒级；
-- `filmwright check` —— 八道自检，`--static-only` 六道不启浏览器；画质自检带负面对照（故意做坏，证明真的会报）；
+- `filmwright check` —— 九道自检，`--static-only` 七道不启浏览器；画质自检带负面对照（故意做坏，证明真的会报）；
 - `tools/regression.mjs` —— 像素回归：纯结构改动必须逐字节复现基准，改一个像素都不算重构。
 
 细节见[质量保障](docs/qc.md)。CI 在 GitHub Actions 上分「静态 / 渲染」两个 job 跑同一套。

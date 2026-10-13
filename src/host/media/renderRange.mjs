@@ -1,19 +1,20 @@
 // 渲染：静帧 / 一段 mp4 / PNG 序列。一个浏览器实例负责一段连续帧。
 import {mkdirSync, writeFileSync, rmSync} from 'node:fs';
-import {dirname, join, relative} from 'node:path';
+import {dirname, join} from 'node:path';
 import {serveProject} from '../project/server.mjs';
+import {shotsRelOrNull} from '../project/load.mjs';
 import {openSession} from '../browser/session.mjs';
 import {spawnTool, ffmpegPath, checkSpawned} from './ffmpegBin.mjs';
 
 /** 起服务 + 开会话；调用方负责 close()。 */
 export async function openProjectSession(projectDir, proj, opts = {}) {
   const cfgSize = proj.raw.size ?? {width: 1280, height: 720};
-  const shotsRel = relative(projectDir, proj.paths.shots).replace(/\\/g, '/');
   // serveProject 返回 Promise，要 await —— 否则拿到的是 Promise 不是 server
   const server = await serveProject(projectDir, {
     raw: proj.raw,
     timeline: proj.timeline,
-    shotsRel,
+    shotsRel: shotsRelOrNull(proj),
+    scene: proj.scene ?? null,
   });
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/`;

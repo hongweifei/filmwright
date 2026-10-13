@@ -38,7 +38,8 @@ async function load() {
   return boot({
     config: p.config,
     timeline: p.timeline,
-    loadShots: () => import(p.shotsUrl),
+    scene: p.scene ?? null,
+    loadShots: p.shotsUrl ? () => import(p.shotsUrl) : undefined,
   }, (w, h) => {
     canvas.width = w;
     canvas.height = h;

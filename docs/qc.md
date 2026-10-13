@@ -8,22 +8,23 @@
 | 自检（`filmwright check`） | 整片渲染不崩、引用关系成立、画质在阈值内 | 静态秒级 / 全量要真画 |
 | 像素回归（`tools/regression.mjs`） | 结构改动没有改掉任何一个像素 | 真渲若干帧 |
 
-## 八道自检
+## 九道自检
 
-`filmwright check --project <项目目录>` 依次跑八道，前三层不启浏览器：
+`filmwright check --project <项目目录>` 依次跑九道，前七道不启浏览器：
 
 | 检查 | 抓的问题 | 要浏览器吗 |
 |---|---|---|
 | `api` | `index.js` 重名导出（只在浏览器求值时报 `Duplicate export of 'S'`） | 不要 |
 | `imports`（shots） | 镜头文件相对路径写错（页面**静默**不 ready，只有抓 console 才看得到） | 不要 |
 | `timeline` | 引用不存在的句 id / 字幕块号（只在渲到那一帧时才在画面上报错） | 不要 |
+| `scene` | scene.json 规格不合法（未知类型、缺字段、对齐到不存在的句/块、顺序不递增……每条带 code/path/hint） | 不要 |
 | `assets` | 用了没声明的素材名；或声明了但 `public/` 下没有那个文件 | 不要 |
 | `imports`（runtime） | 引擎自身模块的相对路径 | 不要 |
 | `themeKeys` | 运行时代码引用了 `theme` 里不存在的配色键 | 不要 |
 | `frames` | 每帧绘制抛错（抓「只在某一帧才炸」） | **要** |
 | `quality` | 静止过久、空白帧（见下） | **要** |
 
-加 `--static-only` 只跑前六道，不启浏览器——CI 与改完镜头后的快速验证用。
+加 `--static-only` 只跑前七道，不启浏览器——CI 与改完镜头后的快速验证用。
 
 ### `themeKeys` 这道为什么值钱
 

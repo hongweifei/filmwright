@@ -1,0 +1,187 @@
+// scene 规格校验与对齐解析的单元测试。
+// 重点是错误路径：每条守卫都必须被故意喂一个坏数据，证明它会红。
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {resolveAt, validateScene, SHOT_TYPES, SCENE_SCHEMA} from '../src/contract/scene.js';
+import {setTimeline, cutBefore, BLK} from '../src/contract/timeline.js';
+
+const tl = {
+  fps: 30,
+  total_frames: 600,
+  chapters: [{n: 1, title: '甲', from: 100}, {n: 2, title: '乙', from: 300}],
+  sentences: [
+    {id: 'S01', chapter: 1, from: 106, to: 197, text: '第一句'},
+    {id: 'S02', chapter: 2, from: 250, to: 340, text: '第二句'},
+  ],
+  subs: [
+    {from: 106, to: 150, text: '一'}, {from: 150, to: 197, text: '二'},
+    {from: 250, to: 300, text: '三'}, {from: 300, to: 340, text: '四'},
+  ],
+};
+
+const codes = (res) => res.errors.map((e) => e.code);
+
+// ---------- resolveAt ----------
+
+test('resolveAt：帧号原样', () => {
+  assert.equal(resolveAt(12, tl), 12);
+});
+
+test('resolveAt：句 id 提前 8 帧（cutBefore 语义）', () => {
+  assert.equal(resolveAt('S01', tl), 98);
+});
+
+test('resolveAt：block 锚点 + lead + offset', () => {
+  assert.equal(resolveAt({s: 'S01', block: 2, lead: 0}, tl), 150);
+  assert.equal(resolveAt({s: 'S01', block: 2}, tl), 142);
+  assert.equal(resolveAt({s: 'S01', block: 2, offset: -4}, tl), 138);
+  assert.equal(resolveAt({s: 'S02', lead: 12}, tl), 238);
+});
+
+test('resolveAt：结果下限 1 帧', () => {
+  assert.equal(resolveAt({s: 'S01', lead: 200}, tl), 1);
+});
+
+test('resolveAt：不存在的句 id 报 SCENE_NO_SENTENCE', () => {
+  assert.throws(() => resolveAt('S99', tl), (e) => e.code === 'SCENE_NO_SENTENCE');
+});
+
+test('resolveAt：块号越界要说清共几块（负面对照）', () => {
+  assert.throws(() => resolveAt({s: 'S01', block: 5}, tl),
+    (e) => e.code === 'SCENE_NO_BLOCK' && e.message.includes('共 2 块'));
+});
+
+test('resolveAt：非法形状 / lead / offset（负面对照）', () => {
+  assert.throws(() => resolveAt(0, tl), (e) => e.code === 'SCENE_AT_FRAME');
+  assert.throws(() => resolveAt(2.5, tl), (e) => e.code === 'SCENE_AT_FRAME');
+  assert.throws(() => resolveAt({block: 1}, tl), (e) => e.code === 'SCENE_AT_SHAPE');
+  assert.throws(() => resolveAt({s: 'S01', lead: -1}, tl), (e) => e.code === 'SCENE_AT_LEAD');
+  assert.throws(() => resolveAt({s: 'S01', offset: 1.5}, tl), (e) => e.code === 'SCENE_AT_OFFSET');
+});
+
+test('resolveAt 与 timeline.js 的 S/BLK/cutBefore 语义一致（钉住两份实现不漂移）', () => {
+  setTimeline(tl);
+  assert.equal(resolveAt('S01', tl), cutBefore('S01'));
+  assert.equal(resolveAt('S02', tl), cutBefore('S02'));
+  assert.equal(resolveAt({s: 'S01', block: 2, lead: 0}, tl), BLK('S01', 2));
+  assert.equal(resolveAt({s: 'S02', block: 1, lead: 0}, tl), BLK('S02', 1));
+});
+
+// ---------- validateScene：正例 ----------
+
+test('validateScene：最小合法规格通过', () => {
+  const r = validateScene({
+    $schema: SCENE_SCHEMA,
+    shots: [
+      {type: 'title', at: 1, title: '片名', sub: '副题'},
+      {type: 'bullets', at: 'S01', heading: '要点', items: [{t: '一', d: '甲'}, {t: '二'}]},
+      {type: 'stat', at: {s: 'S01', block: 2}, value: 81, unit: 'ms', label: '每帧'},
+      {type: 'image', at: 'S02', asset: 'filmstrip'},
+    ],
+  }, {timeline: tl, assetNames: ['filmstrip']});
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+});
+
+test('validateScene：七类模板的最小实例都合法', () => {
+  // 每类单独成一个规格：单镜头规格里它就是第一个镜头，必须从第 1 帧起。
+  const shots = {
+    title: {type: 'title', at: 1, title: 't'},
+    bullets: {type: 'bullets', at: 1, items: [{t: 'a'}]},
+    stat: {type: 'stat', at: 1, value: 1, label: 'l'},
+    flow: {type: 'flow', at: 1, boxes: [{label: 'a'}, {label: 'b', sub: 's'}]},
+    code: {type: 'code', at: 1, lines: ['x', {text: 'y', mark: 'hl'}]},
+    image: {type: 'image', at: 1, asset: 'a'},
+    compare: {type: 'compare', at: 1, left: {title: 'L', items: ['x']}, right: {title: 'R', items: ['y']}},
+  };
+  assert.deepEqual(Object.keys(shots).sort(), [...SHOT_TYPES].sort(), '测试要覆盖全部类型');
+  for (const s of Object.values(shots)) {
+    const r = validateScene({shots: [s]}, {timeline: tl, assetNames: ['a']});
+    assert.equal(r.ok, true, s.type + ' → ' + JSON.stringify(r.errors));
+  }
+});
+
+// ---------- validateScene：负面对照（每条守卫喂一个坏数据） ----------
+
+test('负面对照：顶层与 shots 形状', () => {
+  assert.ok(codes(validateScene(null, {timeline: tl})).includes('SCENE_NOT_OBJECT'));
+  assert.ok(codes(validateScene({shots: []}, {timeline: tl})).includes('SCENE_NO_SHOTS'));
+  assert.ok(codes(validateScene({extra: 1, shots: [{type: 'title', at: 1, title: 't'}]}, {timeline: tl}))
+    .includes('SCENE_UNKNOWN_FIELD'));
+  assert.ok(codes(validateScene({$schema: 'v9', shots: [{type: 'title', at: 1, title: 't'}]}, {timeline: tl}))
+    .includes('SCENE_SCHEMA'));
+});
+
+test('负面对照：未知类型要列出可用的', () => {
+  const r = validateScene({shots: [{type: 'pie', at: 1}]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_UNKNOWN_TYPE');
+  assert.ok(e, '必须报未知类型');
+  assert.ok(e.hint.includes('title') && e.hint.includes('compare'), 'hint 要列出全部可用类型');
+});
+
+test('负面对照：缺 at / 缺必填字段 / 字段类型错', () => {
+  const r = validateScene({shots: [
+    {type: 'title', title: 't'},                       // 缺 at
+    {type: 'title', at: 5},                             // 缺 title
+    {type: 'stat', at: 6, value: '81', label: 'l'},     // value 写成字符串
+    {type: 'bullets', at: 7, items: []},                // items 空
+    {type: 'flow', at: 8, boxes: [{label: 'only'}]},    // boxes < 2
+  ]}, {timeline: tl});
+  const c = codes(r);
+  assert.ok(c.includes('SCENE_MISSING_AT'), '缺 at');
+  assert.ok(c.includes('SCENE_MISSING_FIELD'), '缺 title 必填');
+  assert.ok(c.includes('SCENE_BAD_FIELD'), 'value 类型 / items 空 / boxes 少');
+});
+
+test('负面对照：未知字段必须响，不静默忽略', () => {
+  const r = validateScene({shots: [
+    {type: 'title', at: 1, title: 't', titel: '拼错'},
+    {type: 'bullets', at: 2, items: [{t: 'a', text: '多写的'}]},
+  ]}, {timeline: tl});
+  const c = codes(r);
+  assert.ok(c.includes('SCENE_UNKNOWN_FIELD'), JSON.stringify(r.errors));
+  const e = r.errors.find((x) => x.code === 'SCENE_UNKNOWN_FIELD');
+  assert.ok(e.path.startsWith('shots['), 'path 要指到具体镜头与字段：' + e.path);
+});
+
+test('负面对照：image 引用未声明的素材', () => {
+  const r = validateScene({shots: [
+    {type: 'title', at: 1, title: 't'}, {type: 'image', at: 2, asset: 'nope'},
+  ]}, {timeline: tl, assetNames: ['filmstrip']});
+  const e = r.errors.find((x) => x.code === 'SCENE_NO_ASSET');
+  assert.ok(e && e.hint.includes('filmstrip'), 'hint 要列出已声明的素材');
+});
+
+test('负面对照：第一个镜头不从 1 开始', () => {
+  const r = validateScene({shots: [{type: 'title', at: 'S01', title: 't'}]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_FIRST_NOT_1');
+  assert.ok(e && e.hint.includes('at'), 'hint 要给出改法：' + JSON.stringify(e));
+});
+
+test('负面对照：对齐后顺序不递增要指出是哪两个', () => {
+  const r = validateScene({shots: [
+    {type: 'title', at: 1, title: 't'},
+    {type: 'bullets', at: 'S02', items: [{t: 'a'}]},
+    {type: 'stat', at: 'S01', value: 1, label: 'l'},   // 回到更早的句
+  ]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_NOT_INCREASING');
+  assert.ok(e && e.path === 'shots[2].at', 'path 指到乱序的那个镜头：' + e.path);
+});
+
+test('负面对照：code 行的 mark 不认识要报可选值', () => {
+  const r = validateScene({shots: [{type: 'code', at: 1, lines: [{text: 'x', mark: 'boom'}]}]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_BAD_FIELD');
+  assert.ok(e && e.hint.includes('add'), 'hint 要列出可用的 mark');
+});
+
+test('负面对照：compare 两侧形状', () => {
+  const r = validateScene({shots: [{type: 'compare', at: 1, left: {title: 'L'}, right: 'not-object'}]}, {timeline: tl});
+  const c = codes(r);
+  assert.ok(c.includes('SCENE_BAD_FIELD'), '缺 items 与右侧非对象都要报：' + JSON.stringify(r.errors));
+});
+
+test('对齐解析失败的镜头不炸校验器，转成带 path 的错误', () => {
+  const r = validateScene({shots: [{type: 'title', at: 'S99', title: 't'}]}, {timeline: tl});
+  assert.equal(r.ok, false);
+  assert.equal(r.errors[0].path, 'shots[0].at');
+  assert.equal(r.errors[0].code, 'SCENE_NO_SENTENCE');
+});

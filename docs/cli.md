@@ -28,7 +28,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 
 | 命令 | 作用 |
 |---|---|
-| `check` | 八道自检（[质检文档](qc.md)） |
+| `check` | 九道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
 | `tts` | 解说词 → 配音 + 时间轴 |
 | `stills` | 出指定帧的静帧 |

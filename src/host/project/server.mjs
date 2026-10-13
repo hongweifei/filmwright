@@ -30,7 +30,7 @@ const MIME = {
   '.mp4': 'video/mp4',
 };
 
-export function serveProject(projectDir, {raw, timeline, shotsRel, watch: doWatch = false}) {
+export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null, watch: doWatch = false}) {
   // SSE 订阅者：文件变化时推 reload
   const clients = new Set();
   let watchers = [];
@@ -44,10 +44,11 @@ export function serveProject(projectDir, {raw, timeline, shotsRel, watch: doWatc
 
   function startWatching() {
     if (!doWatch || watchers.length) return;
-    // 只盯会改变画面的东西：镜头、配置、时间轴。
+    // 只盯会改变画面的东西：镜头、场景规格、配置、时间轴。
     // 不盯整个项目目录 —— 那会把 .work/ 里的渲染产物也算进来，自己触发自己。
     const targets = [
       {path: join(projectDir, 'shots'), kind: '镜头'},
+      {path: join(projectDir, 'scene.json'), kind: '场景规格'},
       {path: join(projectDir, 'film.config.mjs'), kind: '配置'},
       {path: join(projectDir, 'script', 'timeline.json'), kind: '时间轴'},
     ];
@@ -79,12 +80,13 @@ export function serveProject(projectDir, {raw, timeline, shotsRel, watch: doWatc
         return;
       }
 
-      // 生成的引导模块：配置 + 时间轴 + 镜头模块地址
+      // 生成的引导模块：配置 + 时间轴 + 场景规格 + 镜头模块地址（纯 scene 项目为 null）
       if (p === '/__filmwright/project.js') {
         const body =
           `export const config = ${JSON.stringify(raw)};\n` +
           `export const timeline = ${JSON.stringify(timeline)};\n` +
-          `export const shotsUrl = ${JSON.stringify('/proj/' + shotsRel)};\n`;
+          `export const scene = ${JSON.stringify(scene ?? null)};\n` +
+          `export const shotsUrl = ${shotsRel ? JSON.stringify('/proj/' + shotsRel) : 'null'};\n`;
         res.writeHead(200, {'Content-Type': MIME['.js'], 'Cache-Control': 'no-store'});
         res.end(body);
         return;

@@ -3,9 +3,11 @@
 // 渲染页只需要 import 这个文件，不必知道内部怎么分层。
 import {install as installConfig, config, view} from '../../contract/config.js';
 import {setTimeline, timeline, cardRange, tailFrom} from '../../contract/timeline.js';
+import {validateScene} from '../../contract/scene.js';
 import {setShots, bindShots, shotAt, shots} from './shots.js';
 import {setChapterCards, chapterCards} from '../chrome/chapterCard.js';
 import {loadAssets} from '../assets.js';
+import {compileScene} from '../scene/templates.js';
 import {drawFrame} from './drawFrame.js';
 
 export {drawFrame, shotAt, shots, chapterCards, timeline, view, tailFrom};
@@ -34,17 +36,23 @@ async function loadFonts(files) {
  * 这类查询（那是它的价值：不写硬编码帧号），而查询要求时间轴已装载。
  * 所以这里收的是一个 **加载函数** 而不是已求值的模块 —— 由我们决定求值时机。
  *
+ * 镜头有两个来源，可以混用：
+ *   - `scene`：scene.json 声明式规格（AI/模板路线），校验失败当场报可行动的错；
+ *   - `loadShots` / `shots`：手写镜头（逃生舱）。
+ * 两者合并后交给 setShots/bindShots —— 起始帧冲突会在那里报，不在这里和稀泥。
+ *
  * @param {object} p
  * @param {object} p.config   配置
  * @param {object} p.timeline 时间轴
- * @param {() => Promise<any>} p.loadShots 延迟加载镜头模块
+ * @param {object} [p.scene]  scene.json 解析结果（可选）
+ * @param {() => Promise<any>} [p.loadShots] 延迟加载镜头模块（没有 scene 时必填）
  * @param {(w:number,h:number)=>void} [resize] 画布尺寸回调（浏览器里用）
  */
 export async function boot(p, resize) {
   if (!p?.config) throw new Error('filmwright: 缺 config');
   if (!p.timeline) throw new Error('filmwright: 缺 timeline —— 先跑 filmwright tts');
-  if (typeof p.loadShots !== 'function' && !p.shots) {
-    throw new Error('filmwright: 缺 loadShots（或已求值的 shots）');
+  if (!p.scene && typeof p.loadShots !== 'function' && !p.shots) {
+    throw new Error('filmwright: 既没有 scene.json 也没有镜头表 —— 项目里至少放一样');
   }
 
   const cfg = installConfig(p.config);
@@ -59,9 +67,21 @@ export async function boot(p, resize) {
   const assets = await loadAssets(cfg.assets);
 
   // 时间轴就绪之后才求值镜头模块
-  const mod = p.shots ?? await p.loadShots();
-  const list = mod.default ?? mod.SHOTS ?? mod;
-  if (!Array.isArray(list)) throw new Error('filmwright: 镜头模块要导出 SHOTS 数组');
+  const list = [];
+  if (p.scene) {
+    const v = validateScene(p.scene, {timeline, assetNames: cfg.assets.map((a) => a.name)});
+    if (!v.ok) {
+      throw new Error('filmwright: scene.json 校验失败：\n'
+        + v.errors.map((e) => `  [${e.code}] ${e.path}：${e.message}${e.hint ? '（' + e.hint + '）' : ''}`).join('\n'));
+    }
+    list.push(...compileScene(p.scene, timeline));
+  }
+  if (p.shots || p.loadShots) {
+    const mod = p.shots ?? await p.loadShots();
+    const manual = mod.default ?? mod.SHOTS ?? mod;
+    if (!Array.isArray(manual)) throw new Error('filmwright: 镜头模块要导出 SHOTS 数组');
+    list.push(...manual);
+  }
   bindShots(setShots(list), timeline.totalFrames);
 
   // 章节卡：第 2 章起，落在时间轴留出的空白里
