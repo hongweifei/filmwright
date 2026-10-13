@@ -35,10 +35,12 @@ jobs:
 
       # 核心命令零依赖；只有 MCP 测试需要 @modelcontextprotocol/sdk。
       # 装依赖让 tests/mcp.test.mjs 不被跳过（没装时它会优雅 skip）。
+      # 注意：这个 job **不跑重浏览器测试**（review/stills 要真渲染），
+      # 那些在下面的 browser job 里跑（那里本来就有浏览器）。
       - name: 安装依赖（仅 MCP 测试需要）
         run: npm ci
 
-      - name: 单元测试（含 MCP 端到端）
+      - name: 单元测试（协议层；重浏览器测试留给 browser job）
         run: npm test
 
       - name: 静态自检（不启浏览器）
@@ -60,6 +62,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: 安装依赖（MCP 重浏览器测试需要）
+        run: npm ci
 
       # ubuntu-latest 不自带 ffmpeg（实测 ENOENT）；windows 用 choco 补。
       - name: 安装 ffmpeg
@@ -83,47 +88,51 @@ jobs:
       - name: 逐帧 + 画质自检
         run: node bin/filmwright.mjs check --project examples/minimal
 
+      # 重浏览器测试（MCP 的 stills/review 要真渲染）：static job 里跳过、
+      # 这里跑 —— 这个 job 本来就有浏览器与 ffmpeg。
+      - name: MCP 重浏览器测试（stills / review 回图）
+        env:
+          FILMWRIGHT_TEST_BROWSER: '1'
+        run: node --test tests/mcp.test.mjs
+
       # 画质/逐帧是「阈值型 + 浏览器型」检查：读数贴阈值或 runner 资源紧张时
       # 会随机翻面（实测 windows runner 上不同步骤轮流挂，代码未变）。
-      # 失败时把**所有失败检查**的完整读数打出来，而不是只猜 quality。
       #
-      # 这一步**必须永不失败**（continue-on-error + 处处 || true）：诊断脚本自己挂掉
-      # 会把真正的失败信息一起埋掉（实测发生过一次）。
+      # 把现场写成 **artifact** —— 未登录时 job 日志正文与 ::error:: annotation
+      # 都拿不到（logs API 重定向到登录页；失败步骤里的 ::error:: 不保证进
+      # annotation），而 artifact 是公开可下载的。这是唯一可靠的通道。
       #
-      # 同时用 `::error::` 输出关键读数 —— 它会变成 **annotation**，而 annotation
-      # 在未登录时也能通过 API 读到（job 日志正文不行：公开仓库的 logs API 会
-      # 重定向到登录页）。这是把 CI 内部信息取出来的唯一通道。
+      # 这一步必须永不失败（continue-on-error + 处处 || true）：诊断脚本自己挂掉
+      # 会把真正的失败信息一起埋掉（实测发生过）。
       - name: 失败现场（仅失败时跑）
         if: failure()
         continue-on-error: true
         run: |
-          node bin/filmwright.mjs check --project examples/minimal --json > ci-check.json 2>&1 || true
-          node -e "
-          const fs = require('node:fs');
-          const emit = (s) => console.log('::error::' + String(s).replace(/\r?\n/g, ' ⏎ ').slice(0, 800));
-          let j = null;
-          try { j = JSON.parse(fs.readFileSync('ci-check.json','utf8')); } catch (e) {
-            emit('拿不到 JSON（check 可能本身崩了）。原始输出：' + fs.readFileSync('ci-check.json','utf8').slice(0, 600));
-          }
-          if (j) {
-            emit('summary: ok=' + j.ok + ' errors=' + (j.errors||[]).length);
-            for (const e of j.errors||[]) emit('ERROR ' + e.code + ' ' + e.message);
-            for (const c of (j.data && j.data.checks) || []) {
-              const head = (c.ok ? 'OK ' : 'FAIL ') + c.name + ' checked=' + c.checked;
-              const probs = (c.problems||[]).join(' | ');
-              const stats = (c.stats||[]).map((s) => s.id + ':静止' + s.longestStatic + ',墨迹' + (s.inkMin*100).toFixed(2) + '%,末拍' + (s.hold===null?'-':s.hold) + '/' + s.holdSource).join(' | ');
-              emit(head + (probs ? ' >> ' + probs : '') + (stats ? ' >> ' + stats : ''));
-            }
-            emit('阈值: staticFrames 90 / holdFrames 30 / inkMin 0.40%');
-          }
-          " || true
-          echo '--- .work 产物 ---'
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}" || true
-          echo '--- parts ---'
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(' ',f,statSync(d+'/'+f).size)}catch(e){console.log(' 读不到',e.message)}" || true
-          echo '--- node/ffmpeg ---'
-          node --version || true
-          ffmpeg -version 2>&1 | head -1 || true
+          {
+            echo "== 时间 =="; date
+            echo "== 版本 =="; node --version; ffmpeg -version 2>&1 | head -1
+            echo "== check --json =="
+          } > ci-failure.txt 2>&1
+          node bin/filmwright.mjs check --project examples/minimal --json >> ci-failure.txt 2>&1 || true
+          {
+            echo "== .work 产物 =="
+          } >> ci-failure.txt
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}" >> ci-failure.txt 2>&1 || true
+          {
+            echo "== parts =="
+          } >> ci-failure.txt
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(' ',f,statSync(d+'/'+f).size)}catch(e){console.log(' 读不到',e.message)}" >> ci-failure.txt 2>&1 || true
+          echo '--- 现场已写入 ci-failure.txt ---'
+          node -e "const s=require('node:fs').readFileSync('ci-failure.txt','utf8');console.log(s.slice(0,4000))" || true
+
+      - name: 上传失败现场
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-${{ runner.os }}
+          path: ci-failure.txt
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: 场景规格示例（纯 scene 项目）
         run: |
