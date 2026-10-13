@@ -69,6 +69,8 @@ node bin/filmwright.mjs tts --project my-film
 
 ## 4. 写镜头
 
+> **先选路线**：本教程演示手写镜头（完全自由的逃生舱）。如果内容适合套模板——要点列表、大数字、流程、代码块、图片、对比——更推荐直接写声明式的 `scene.json`，AI/批量生成走这条路，节奏由模板保证：见[场景规格](scene.md)。两条路线可以在一个项目里混用。
+
 镜头是 `{start, draw}` 对象，import 的全部来自 `'filmwright'`：
 
 ```js

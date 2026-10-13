@@ -1,7 +1,7 @@
 {
   "name": "filmwright",
   "version": "0.1.0",
-  "description": "在 Canvas 2D 上逐帧绘制的中文说明片渲染库：Chrome + CDP 逐帧截图 -> ffmpeg",
+  "description": "专为 AI 自动化视频制作设计的逐帧渲染框架：Canvas 2D 上第 N 帧只是 N 的函数；scene.json 声明式镜头 + 模板节奏；Chrome + CDP 逐帧截图 → ffmpeg；九道自检与 MCP 服务器给 agent 用",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -11,8 +11,20 @@
     "animation",
     "ffmpeg",
     "chrome-devtools-protocol",
-    "chinese"
+    "chinese",
+    "ai",
+    "mcp",
+    "text-to-video",
+    "declarative"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hongweifei/filmwright.git"
+  },
+  "homepage": "https://github.com/hongweifei/filmwright#readme",
+  "bugs": {
+    "url": "https://github.com/hongweifei/filmwright/issues"
+  },
   "bin": {
     "filmwright": "bin/filmwright.mjs"
   },

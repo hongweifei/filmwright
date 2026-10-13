@@ -86,7 +86,7 @@ filmwright check --project <项目目录> [--static-only] [--no-quality]
                  [--static-frames N] [--hold-frames N] [--ink-min N] [--quality-step N]
 ```
 
-- `--static-only`：只跑读文件的前六道，不启浏览器，秒级。CI 与改完镜头的快速验证用。
+- `--static-only`：只跑读文件的前七道，不启浏览器，秒级。CI 与改完镜头的快速验证用。
 - `--no-quality`：跑逐帧自检但跳过画质统计。
 - 四个数值参数覆盖画质阈值（默认按 1280×720 的 32×18 网格校准）。含义见 [LIMITATIONS](../LIMITATIONS.md)。
 

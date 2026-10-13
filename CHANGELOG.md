@@ -11,6 +11,7 @@
 - **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致；错误带结构化 `code` 与 `where` 路径，给 agent 直接消费（见 docs/cli.md）。
 - **`filmwright new <目录>`**：项目脚手架，`--template scene`（默认）/ `shots` 两种骨架；目录非空直接拒绝（`DIR_NOT_EMPTY`），从不覆盖已有文件。
 - **`filmwright mcp`：MCP 服务器（stdio）**，把工具链暴露给 agent——`filmwright_new / timeline / scene_validate / tts / check / stills / render / all` 八个工具，返回值与 `--json` 同形状。唯一需要 npm 依赖的子命令（`@modelcontextprotocol/sdk` + `zod`），且 SDK 惰性加载：没装依赖时其余命令照常跑，`mcp` 报 `NO_MCP_SDK` 并给出安装提示。`tests/mcp.test.mjs` 走真实 JSON-RPC 握手端到端验证（没装 SDK 时优雅跳过）。
+- 文档：docs/ai.md（agent 接入指南：MCP 配置、推荐回路、错误码速查）。
 - 文档：docs/scene.md 场景规格参考。
 
 ### 修复
