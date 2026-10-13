@@ -106,9 +106,20 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 ## CI 怎么跑
 
-`.github/workflows/ci.yml` 分两个 job，失败信息指向明确：
+`.github/workflows/ci.yml` 分两个 job × 平台矩阵：
 
-- **static**——单元测试 + 静态自检（不启浏览器）。挂掉基本就是代码错了（引用、导出、纯函数行为）。
-- **browser**——无头 Chrome + ffmpeg：逐帧 + 画质自检、**渲染确定性自证**（同一次运行内 capture → verify，两轮渲染逐字节相同）、负面对照、素材与预览页验证、端到端出片并检查产物非空。挂掉更可能是渲染行为变了。
+- **static**——`ubuntu` / `macOS` / `windows` 三个 OS 都跑：单元测试 + 静态自检（不启浏览器）。核心零依赖，这是「跨平台」最便宜也最真的证据。MCP 的**协议层**测试（握手、tools/list、只读工具）在这里跑。
+- **browser**——`ubuntu` / `windows`：无头浏览器 + ffmpeg。逐帧 + 画质自检、MCP 的**重浏览器**测试（`FILMWRIGHT_TEST_BROWSER=1` 才跑 stills/review 回图）、渲染确定性自证（同运行内 capture → verify）、负面对照、素材与预览页验证、端到端出片并验帧数。macOS 渲染不进矩阵——没有本地实测证据，不猜。
 
-两个 job 分开，是为了从失败一眼看出是哪一类问题。渲染全程无头（`--headless=new`）：CI 与服务器上没有显示器，有头模式直接退出；无头与有头同一条渲染路径，基准验证过逐字节一致。
+几个踩出来的 CI 约束（都写进了注释，别重犯）：
+
+| 约束 | 为什么 |
+|---|---|
+| 诊断步骤必须放 **job 末尾** | `if: failure()` 只对它**之前**已失败的步骤生效；放中间会永远 skipped |
+| 失败现场写 **step summary + artifact** | 公开仓库未登录时，job 日志正文、artifact 下载、失败步骤里的 `::error::` annotation **都拿不到** |
+| 别用 `ls \| head -1` 取产物 | Git Bash 的 `ls` 是多列输出，会截出文件名片段；用 node 取 |
+| 别依赖 `$RUNNER_TEMP` | windows 的 Git Bash 下可能展开为空，`--baseline` 会静默回落到入库夹具 |
+| 重浏览器测试与协议层分开 | 前者要真渲染（慢、依赖浏览器），后者毫秒级；混在一起慢机器上必脆 |
+| `--shards auto` 而非硬写片数 | windows runner 只有 2 核，硬写 2 片等于超订资源 |
+
+**关于 flaky 的判定纪律**：同一步骤「一次过、一次挂」时必须复跑定性，不能算修好。本次排查中 windows 渲染 job 的失败点曾逐次迁移（端到端出片 → 逐帧+画质 → MCP 测试 → 渲染确定性 → …），**每次的根因都不同且都定位到了**：定时器泄漏（测试进程挂 302 秒）、夹具被 CI 覆盖、`$RUNNER_TEMP` 展开为空、浏览器断开无处理、分片失败无重试。修完后 CI 全绿。

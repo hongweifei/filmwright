@@ -156,6 +156,7 @@ filmwright render --project <项目目录> [--shards N|auto] [--resume] [--from 
 - `--shards N` 分片并行：每片一个独立浏览器实例，各渲一段，最后 ffmpeg concat 无损拼接。片数开太多会吃内存（每实例约几百 MB），超过 CPU 核数收益递减。
 - **`--shards auto`**：按 CPU 核数自动定（留一核给主进程，每片至少约 60 帧）。
 - **`--resume`**：复用 `.work/parts/` 里已完成的分片，不从头渲 —— 长片渲到一半挂掉时用。**注意**：它只判文件存在且非空，**不校验内容**；改过时间轴或镜头之后旧分片已不对应，那种情况别加 `--resume`。
+- **分片失败自动重试一次**：长片最常见的失败是浏览器抖动（无头实例偶发退出），不是内容问题。重试成功会在输出里标「（重试后成功）」，`--json` 的 `retried` 与 `parts[].attempts` 如实记录；两次都失败仍然报错（不掩盖），并提示用 `--resume` 续跑。
 - `--from` / `--to` 只渲一个区间（调试某一段时用）。
 - `--crf` 传给 ffmpeg 的质量参数，默认 16。
 - `--json` 里带性能读数：`seconds` / `msPerFrame` / `parts[{i,from,to,seconds,reused}]` / `reused` —— 换机器、换浏览器后可以直接对比。

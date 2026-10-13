@@ -7,6 +7,18 @@
 
 ### 新增
 
+- **CI 平台矩阵真跑通了**（ubuntu / macOS / windows 的静态 + ubuntu / windows 的渲染，5 个 job 全绿）。排查中定位并修掉一串真实缺陷，见下面的「修复」。
+
+### 修复
+
+- **MCP 测试的定时器泄漏**：`call()` 的 300s `setTimeout` 从不清理，`close()` 只 kill 不等退出 —— 断言 4 秒跑完、进程却挂 **302 秒**才结束（CI 上表现为「某步骤跑很久然后失败」）。修后同一命令墙钟 303s → 7.3s。
+- **CI 覆盖入库夹具**：渲染确定性自证会把 `examples/minimal/regression-baseline.json`（本机夹具）覆盖掉。`regression.mjs` 加 `--baseline`，CI 写临时路径；`--baseline` 传空值现在**报错**而不是静默回落（Windows 的 Git Bash 下 `$RUNNER_TEMP` 可能展开为空）。
+- **浏览器断开时永远挂住**：`session.mjs` 没有 `ws.onclose/onerror` 处理，浏览器退出后所有在飞的 CDP 调用永不返回，且 `send` 完全无超时。现在断开即拒绝所有 pending，全部 CDP 调用统一超时（协议 30s、单帧 60s）。负面对照：杀掉浏览器后 **22ms** 报出「浏览器连接已断开」。
+- **分片失败无重试**：长片渲到 90% 时一片抖动就整条失败。现在**自动重试一次**并如实记录（`retried` / `attempts`），两次都失败仍报错并提示 `--resume`。配 6 条行为测试（3 条负面对照），通过依赖注入单测，不依赖伪造 ffmpeg。
+- **诊断步骤永远 skipped**：`if: failure()` 只对**之前**的失败生效，而它被放在 job 中部。移到末尾；失败现场同时写 step summary 与 artifact（未登录时日志/annotation/artifact 下载都拿不到，这是唯一能取到真因的通道）。
+- `regression.mjs` 吞掉子进程输出（`execFileSync` + `stdio: 'pipe'` 只抛 `Command failed`），改为把 stdout/stderr 原样打出。
+- CI 产物检查改用 node + ffprobe 验帧数，不再用 `ls | head -1`（Git Bash 多列输出会截出片段）。
+
 - **长片可靠性**：`--shards auto`（按 CPU 核数自动定分片，留一核给主进程）、`--resume`（复用已完成分片，渲到一半挂掉不用从头来）、`--json` 报性能读数（`msPerFrame` / 每片耗时 `parts[]` / `reused`）——换机器换浏览器后可对比。
 - `examples/promo` 渲出成片（2141 帧 / 71.3s / 4.1 MB，4 分片 263 秒），README 用其片头帧作演示。
 
