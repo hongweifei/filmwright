@@ -29,6 +29,13 @@ function openSession() {
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
   });
   const send = (msg) => srv.stdin.write(JSON.stringify(msg) + '\n');
+  /** 工具调用：返回 {payload, content, isError}；协议层错误（无 content）直接抛原文。 */
+  const callTool = async (name, args) => {
+    const r = await call('tools/call', {name, arguments: args});
+    if (r.error) throw new Error(`MCP 协议错误（${name}）：` + JSON.stringify(r.error).slice(0, 800));
+    if (!r.result?.content) throw new Error(`MCP 返回没有 content（${name}）：` + JSON.stringify(r.result ?? null).slice(0, 800));
+    return {content: r.result.content, isError: !!r.result.isError};
+  };
   const call = (method, params) => new Promise((res, rej) => {
     const myId = ++id;
     // 超时要留足余量（review / stills 会真开浏览器渲染，CI 慢机器上可达 60s+），
@@ -41,10 +48,11 @@ function openSession() {
   });
   return {
     call,
+    callTool,
     notify: send,
     text: async (name, args) => {
-      const r = await call('tools/call', {name, arguments: args});
-      return {payload: JSON.parse(r.result.content[0].text), isError: !!r.result.isError};
+      const {content, isError} = await callTool(name, args);
+      return {payload: JSON.parse(content[0].text), isError};
     },
     /**
      * 关会话：关 readline、杀掉服务器进程、**并等它真的退出**。
@@ -124,24 +132,31 @@ test('MCP：stills / review 真的回图（PNG 魔数），量受 max_images 约
     s.notify({jsonrpc: '2.0', method: 'notifications/initialized'});
 
     // stills：渲 2 帧、要 2 张图（验回图 + 数量约束）
-    const r = await s.call('tools/call', {name: 'filmwright_stills', arguments: {
+    const r = await s.callTool('filmwright_stills', {
       project: join(ROOT, 'examples', 'scenecast'), frames: [150, 470],
       dir: join(ROOT, '.work', 'mcp-test-stills'), max_images: 2,
-    }});
-    const imgs = r.result.content.filter((c) => c.type === 'image');
-    assert.equal(imgs.length, 2, '应内联 2 张图');
+    });
+    const imgs = r.content.filter((c) => c.type === 'image');
+    // 先验 ok：stills 失败时 `ok:false` 且**不带图**（这是设计），
+    // 若直接断言图片数，失败信息只有「0 !== 2」，看不出是渲染失败还是别的。
+    // （CI 上真出现过「回 0 张图」而日志无任何线索 —— 那次是 stills 本身失败。）
+    assert.equal(JSON.parse(r.content[0].text).ok, true,
+      'stills 命令失败，原始返回：' + r.content[0].text.slice(0, 800));
+    assert.equal(imgs.length, 2,
+      '应内联 2 张图；实际 content 类型=' + JSON.stringify(r.content.map((c) => c.type)));
     assert.ok(imgs.every((i) => i.mimeType === 'image/png' && isPng(i.data)), 'PNG 魔数不对');
-    assert.equal(JSON.parse(r.result.content[0].text).ok, true);
 
     // review：一次调用 = 校验 + 静态自检 + 代表帧回图。
     // 只渲 1 帧：链路正确性不需要更多帧，而慢机器上每帧都要钱。
-    const v = await s.call('tools/call', {name: 'filmwright_review', arguments: {
+    const v = await s.callTool('filmwright_review', {
       project: join(ROOT, 'examples', 'scenecast'), max_images: 1,
-    }});
-    const payload = JSON.parse(v.result.content[0].text);
-    assert.equal(payload.ok, true, JSON.stringify(payload.errors));
-    const vImgs = v.result.content.filter((c) => c.type === 'image');
-    assert.equal(vImgs.length, 1, 'max_images=1 应给 1 张');
+    });
+    const payload = JSON.parse(v.content[0].text);
+    assert.equal(payload.ok, true, 'review 失败：' + JSON.stringify(payload.errors));
+    const vImgs = v.content.filter((c) => c.type === 'image');
+    assert.equal(vImgs.length, 1,
+      'max_images=1 应给 1 张；实际类型=' + JSON.stringify(v.content.map((c) => c.type)) +
+      ' payload=' + v.content[0].text.slice(0, 600));
     assert.ok(vImgs[0] && isPng(vImgs[0].data), 'review 回的图必须是 PNG');
     assert.ok(payload.data.frames.length === 1 && payload.data.frames[0].frame > 0);
     assert.ok(payload.data.shots >= 8, 'scenecast 有 8 个镜头，shots 应报全量');
