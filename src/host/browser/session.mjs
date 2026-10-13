@@ -124,32 +124,55 @@ export async function openSession(url, size, opts = {}) {
 
   let id = 0;
   const pending = new Map();
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.id && pending.has(msg.id)) { pending.get(msg.id)(msg); pending.delete(msg.id); }
-  };
-  const send = (method, params = {}) => new Promise((res) => {
-    const myId = ++id;
-    pending.set(myId, res);
-    ws.send(JSON.stringify({id: myId, method, params}));
-  });
 
   /**
-   * 带超时的 CDP 调用。
+   * WebSocket 断开 / 出错时**立即拒绝所有 pending 调用**。
    *
-   * 为什么必须有：无超时的 evaluate 在浏览器卡死（CI 的 windows runner 上实测会）
-   * 时永远不返回 —— 整个自检挂住直到 job 超时，报出来的还是「进程被杀」，
-   * 看不出是浏览器的问题。超时后至少能给出可行动的错。
+   * 这是「浏览器中途退出」的正确处理：不处理的话，所有在飞的 CDP 调用
+   * （尤其无超时的 send）永远不 resolve，整个渲染/自检挂到 job 超时，
+   * 报出来还是「进程被杀」——看不出是浏览器掉了。
+   * 实测 CI 的 windows runner 上会出现（步骤耗时异常长然后失败）。
+   */
+  let wsClosed = null;
+  const rejectAll = (why) => {
+    wsClosed = why;
+    for (const [, entry] of pending) {
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.rej(new Error('filmwright: 浏览器连接已断开（' + why + '）'));
+    }
+    pending.clear();
+  };
+  ws.onclose = () => rejectAll('WebSocket closed');
+  ws.onerror = () => rejectAll('WebSocket error');
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    const entry = msg.id ? pending.get(msg.id) : null;
+    if (entry) {
+      if (entry.timer) clearTimeout(entry.timer);
+      pending.delete(msg.id);
+      entry.res(msg);
+    }
+  };
+
+  /**
+   * CDP 调用（统一带超时 + 断开即拒）。
+   *
+   * 为什么全部都要超时：无超时的调用在浏览器卡死或退出时永远不返回，
+   * 整个流程挂到 job 超时，报出来是「进程被杀」，掩盖真实原因。
+   * 默认 30s；单帧渲染/截图给 60s（正常 ~80ms，超了就是真卡住）。
    */
   const sendTimeout = (method, params = {}, ms = 30000) => new Promise((res, rej) => {
+    if (wsClosed) { rej(new Error('filmwright: 浏览器连接已断开（' + wsClosed + '）')); return; }
     const myId = ++id;
     const timer = setTimeout(() => {
       pending.delete(myId);
       rej(new Error(`filmwright: CDP ${method} 超过 ${ms}ms 没响应（浏览器可能卡死或已退出）`));
     }, ms);
-    pending.set(myId, (m) => { clearTimeout(timer); res(m); });
+    pending.set(myId, {res, rej, timer});
     ws.send(JSON.stringify({id: myId, method, params}));
   });
+  /** 默认超时的简写（协议握手这类快调用）。 */
+  const send = (method, params = {}) => sendTimeout(method, params, 30000);
 
   await send('Page.enable');
   await send('Runtime.enable');
