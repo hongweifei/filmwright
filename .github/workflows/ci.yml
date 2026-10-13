@@ -109,8 +109,10 @@ jobs:
       # 而且跨 OS 比对本来就不成立（见 docs/qc.md）。
       - name: 渲染确定性（同运行内 capture → verify，两轮渲染逐字节相同）
         run: |
-          node tools/regression.mjs capture --project examples/minimal --baseline "$RUNNER_TEMP/regression-baseline.json"
-          node tools/regression.mjs verify  --project examples/minimal --baseline "$RUNNER_TEMP/regression-baseline.json"
+          BASE=$(node -e "console.log(require('node:path').join(require('node:os').tmpdir(),'fw-regression-baseline.json'))")
+          echo "基准：$BASE"
+          node tools/regression.mjs capture --project examples/minimal --baseline "$BASE"
+          node tools/regression.mjs verify  --project examples/minimal --baseline "$BASE"
 
       - name: 负面对照（证明画质检查真的会报）
         run: node tools/quality-negative.mjs
@@ -165,12 +167,12 @@ jobs:
             echo "== 版本 =="; node --version; ffmpeg -version 2>&1 | head -1
             echo "== 渲染确定性（复跑并保留输出）=="
           } > ci-failure.txt 2>&1
-          node tools/regression.mjs capture --project examples/minimal --baseline "$RUNNER_TEMP/rb.json" >> ci-failure.txt 2>&1 || true
-          node tools/regression.mjs verify  --project examples/minimal --baseline "$RUNNER_TEMP/rb.json" >> ci-failure.txt 2>&1 || true
+          node tools/regression.mjs capture --project examples/minimal --baseline "$(node -e "console.log(require('node:path').join(require('node:os').tmpdir(),'fw-rb.json'))")" >> ci-failure.txt 2>&1 || true
+          node tools/regression.mjs verify  --project examples/minimal --baseline "$(node -e "console.log(require('node:path').join(require('node:os').tmpdir(),'fw-rb.json'))")" >> ci-failure.txt 2>&1 || true
           {
             echo "== 静帧直跑（看真因）=="
           } >> ci-failure.txt
-          node bin/filmwright.mjs stills --project examples/minimal --frames 30 --dir "$RUNNER_TEMP/stills" >> ci-failure.txt 2>&1 || true
+          node bin/filmwright.mjs stills --project examples/minimal --frames 30 --dir "$(node -e "console.log(require('node:path').join(require('node:os').tmpdir(),'fw-stills'))")" >> ci-failure.txt 2>&1 || true
           {
             echo "== check --json =="
           } >> ci-failure.txt
@@ -181,6 +183,14 @@ jobs:
           node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}" >> ci-failure.txt 2>&1 || true
           echo '--- 现场前 5000 字 ---'
           node -e "console.log(require('node:fs').readFileSync('ci-failure.txt','utf8').slice(0,5000))" || true
+          # 同时写进 step summary：它是**公开可读**的（artifact 下载需要认证，
+          # job 日志正文也需要认证；summary 不需要），是取出真因的可靠通道。
+          {
+            echo '## 失败现场'
+            echo '```'
+            head -c 4000 ci-failure.txt 2>/dev/null || cat ci-failure.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: 上传失败现场
         if: failure()

@@ -20,7 +20,16 @@ const KIT = join(ROOT, 'bin', 'filmwright.mjs');
 
 function arg(name, def) {
   const i = process.argv.indexOf('--' + name);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : def;
+  if (i < 0) return def;
+  const v = process.argv[i + 1];
+  // 给了 `--baseline` 但值为空：**报错**而不是回落到默认。
+  // 静默回落会在 CI 上悄悄覆盖入库的本机夹具（实测：windows 的 Git Bash 里
+  // $RUNNER_TEMP 可能展开为空，于是 --baseline 变成空值）。
+  if (!v || v.startsWith('--')) {
+    console.error(`✗ --${name} 需要一个值（收到 ${JSON.stringify(v ?? '')}）`);
+    process.exit(2);
+  }
+  return v;
 }
 
 const cmd = process.argv[2];
