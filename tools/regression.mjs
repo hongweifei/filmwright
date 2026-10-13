@@ -48,8 +48,19 @@ const outDir = join(workDir, 'regression');
 mkdirSync(workDir, {recursive: true});
 rmSync(outDir, {recursive: true, force: true});
 
-execFileSync('node', [KIT, 'stills', '--project', projectDir,
-  '--frames', frames.join(','), '--dir', outDir], {stdio: 'pipe'});
+// 渲染失败时**把子进程的输出原样带出来**。
+// 用 execFileSync 的默认行为（stdio: 'pipe' 且不打印）会把真因吞掉，
+// 只抛一句 "Command failed" —— CI 日志里什么都看不到（实测踩过：
+// 「渲染确定性」步骤 5 秒失败，日志里没有任何线索）。
+try {
+  execFileSync('node', [KIT, 'stills', '--project', projectDir,
+    '--frames', frames.join(','), '--dir', outDir], {stdio: 'pipe'});
+} catch (e) {
+  console.error('✗ 渲染静帧失败（stills 的输出如下）');
+  console.error('--- stdout ---\n' + String(e.stdout || '').slice(-3000));
+  console.error('--- stderr ---\n' + String(e.stderr || '').slice(-3000));
+  process.exit(1);
+}
 
 const digest = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const shot = (n) => join(outDir, `f${String(n).padStart(5, '0')}.png`);

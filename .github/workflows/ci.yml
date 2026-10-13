@@ -97,43 +97,6 @@ jobs:
 
       # 画质/逐帧是「阈值型 + 浏览器型」检查：读数贴阈值或 runner 资源紧张时
       # 会随机翻面（实测 windows runner 上不同步骤轮流挂，代码未变）。
-      #
-      # 把现场写成 **artifact** —— 未登录时 job 日志正文与 ::error:: annotation
-      # 都拿不到（logs API 重定向到登录页；失败步骤里的 ::error:: 不保证进
-      # annotation），而 artifact 是公开可下载的。这是唯一可靠的通道。
-      #
-      # 这一步必须永不失败（continue-on-error + 处处 || true）：诊断脚本自己挂掉
-      # 会把真正的失败信息一起埋掉（实测发生过）。
-      - name: 失败现场（仅失败时跑）
-        if: failure()
-        continue-on-error: true
-        run: |
-          {
-            echo "== 时间 =="; date
-            echo "== 版本 =="; node --version; ffmpeg -version 2>&1 | head -1
-            echo "== check --json =="
-          } > ci-failure.txt 2>&1
-          node bin/filmwright.mjs check --project examples/minimal --json >> ci-failure.txt 2>&1 || true
-          {
-            echo "== .work 产物 =="
-          } >> ci-failure.txt
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}" >> ci-failure.txt 2>&1 || true
-          {
-            echo "== parts =="
-          } >> ci-failure.txt
-          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work/parts';try{for(const f of readdirSync(d))console.log(' ',f,statSync(d+'/'+f).size)}catch(e){console.log(' 读不到',e.message)}" >> ci-failure.txt 2>&1 || true
-          echo '--- 现场已写入 ci-failure.txt ---'
-          node -e "const s=require('node:fs').readFileSync('ci-failure.txt','utf8');console.log(s.slice(0,4000))" || true
-
-      - name: 上传失败现场
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-failure-${{ runner.os }}
-          path: ci-failure.txt
-          if-no-files-found: ignore
-          retention-days: 14
-
       - name: 场景规格示例（纯 scene 项目）
         run: |
           node bin/filmwright.mjs check --project examples/scenecast --static-only
@@ -185,3 +148,46 @@ jobs:
           console.log(f, size, 'bytes,', got, 'frames');
           if (got !== want) { console.error('帧数不对：产物 ' + got + '，时间轴 ' + want); process.exit(1); }
           "
+
+      # ⚠ 诊断步骤必须在 **job 末尾**：`if: failure()` 只对**它之前**已失败的步骤
+      # 生效。放在中间时，后面步骤失败它早已被跳过 —— 实测踩过：诊断步骤显示
+      # skipped，真因一个字都拿不到。
+      #
+      # 现场写成 artifact：未登录时 job 日志正文与 ::error:: annotation 都拿不到
+      # （logs API 重定向到登录页），artifact 是唯一可靠的公开通道。
+      # 这一步必须永不失败（continue-on-error + 处处 || true）。
+      - name: 失败现场（仅失败时跑）
+        if: failure()
+        continue-on-error: true
+        run: |
+          {
+            echo "== 时间 =="; date
+            echo "== 版本 =="; node --version; ffmpeg -version 2>&1 | head -1
+            echo "== 渲染确定性（复跑并保留输出）=="
+          } > ci-failure.txt 2>&1
+          node tools/regression.mjs capture --project examples/minimal --baseline "$RUNNER_TEMP/rb.json" >> ci-failure.txt 2>&1 || true
+          node tools/regression.mjs verify  --project examples/minimal --baseline "$RUNNER_TEMP/rb.json" >> ci-failure.txt 2>&1 || true
+          {
+            echo "== 静帧直跑（看真因）=="
+          } >> ci-failure.txt
+          node bin/filmwright.mjs stills --project examples/minimal --frames 30 --dir "$RUNNER_TEMP/stills" >> ci-failure.txt 2>&1 || true
+          {
+            echo "== check --json =="
+          } >> ci-failure.txt
+          node bin/filmwright.mjs check --project examples/minimal --json >> ci-failure.txt 2>&1 || true
+          {
+            echo "== .work 产物 =="
+          } >> ci-failure.txt
+          node -e "const {readdirSync,statSync}=require('node:fs');const d='examples/minimal/.work';try{for(const f of readdirSync(d)){const s=statSync(d+'/'+f);console.log(' ',f,s.isDirectory()?'<dir>':s.size)}}catch(e){console.log(' 读不到',e.message)}" >> ci-failure.txt 2>&1 || true
+          echo '--- 现场前 5000 字 ---'
+          node -e "console.log(require('node:fs').readFileSync('ci-failure.txt','utf8').slice(0,5000))" || true
+
+      - name: 上传失败现场
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-${{ runner.os }}
+          path: ci-failure.txt
+          if-no-files-found: ignore
+          retention-days: 14
