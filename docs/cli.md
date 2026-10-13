@@ -13,7 +13,16 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | `--project <目录>` | 项目目录（内含 `film.config.mjs`），**必填**，所有命令都要 |
 | `--browser <路径>` | 浏览器可执行文件；也可用环境变量 `CHROME_BIN` |
 
-环境不满足时（Node 版本、WebSocket、浏览器）启动即报清楚缺什么（`src/host/preflight.mjs`），不会等到深处报 `WebSocket is not defined`。
+环境不满足时（Node 版本、WebSocket、浏览器）启动即报清楚缺什么（`src/host/preflight.mjs`），不会等到深处报 `WebSocket is not defined`；`render` / `mux` / `sheet` 在干活前先查 ffmpeg，缺了当场报，不会渲到一半崩在 spawn 上。
+
+外部工具的位置可用环境变量指定：
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `CHROME_BIN` | 自动查找 | 浏览器可执行文件 |
+| `FFMPEG_BIN` | `ffmpeg` | ffmpeg 可执行文件路径 |
+| `FFPROBE_BIN` | `ffprobe` | ffprobe 可执行文件路径 |
+| `FILMWRIGHT_NO_OPEN` | — | 设了就等价于 `preview --no-open` |
 
 ## 命令一览
 

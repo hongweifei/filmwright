@@ -46,11 +46,18 @@ jobs:
         with:
           node-version: '22'
 
-      # ubuntu-latest 自带 google-chrome 与 ffmpeg，这里只做确认：
-      # 缺了就直接失败并说清楚，不要让后面的步骤报出看不懂的错。
-      - name: 确认环境（Chrome / ffmpeg）
+      # ubuntu-latest 不自带 ffmpeg（实测 render 一步 spawn ffmpeg ENOENT）；
+      # 且 `ffmpeg -version | head -1` 这种写法在命令缺失时也会绿 —— 管道退出码
+      # 取的是 head 的 0。所以：先显式安装，再用 command -v 硬断言。
+      - name: 安装 ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: 确认环境（Chrome / ffmpeg，缺失即失败）
         run: |
+          set -e
           google-chrome --version || chromium --version
+          command -v ffmpeg >/dev/null || { echo 'ffmpeg 不在 PATH'; exit 1; }
+          command -v ffprobe >/dev/null || { echo 'ffprobe 不在 PATH'; exit 1; }
           ffmpeg -version | head -1
 
       - name: 逐帧 + 画质自检

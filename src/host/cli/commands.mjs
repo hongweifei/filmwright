@@ -2,16 +2,18 @@
 //
 // 约定：命令收到 (ctx) —— {projectDir, proj, args, opts}，返回退出码（0 成功）。
 import {existsSync, mkdirSync, rmSync, writeFileSync, statSync} from 'node:fs';
-import {spawn, spawnSync} from 'node:child_process';
+import {spawnSync} from 'node:child_process';
 import {dirname, join, resolve} from 'node:path';
 import {requireTimeline} from '../project/load.mjs';
 import {renderRange, renderStills, renderSequence} from '../media/renderRange.mjs';
 import {muxVideo} from '../media/mux.mjs';
+import {spawnTool, ffmpegPath, checkSpawned} from '../media/ffmpegBin.mjs';
 import {runChecks} from '../checks/index.mjs';
 import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
 import {preview as previewCmd} from './preview.mjs';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
 import {num, str} from './args.mjs';
+import {assertTool} from '../preflight.mjs';
 
 const API_FILE = join(RUNTIME_ROOT, 'index.js');
 
@@ -75,6 +77,7 @@ export async function stills(ctx) {
 
 /** 抽帧联络表。 */
 export async function sheet(ctx) {
+  assertTool(ffmpegPath(), '联络表的抽帧拼接要 ffmpeg');
   requireTimeline(ctx.proj);
   const total = ctx.proj.timeline.total_frames;
   const from = num(ctx.args, 'from', 1);
@@ -96,12 +99,11 @@ export async function sheet(ctx) {
   mkdirSync(dirname(out), {recursive: true});
   const rows = Math.ceil(frames.length / cols);
   const scale = Math.max(120, Math.round(1760 / cols));
-  const code = await new Promise((res) => {
-    const ff = spawn('ffmpeg', ['-y', '-i', join(tmp, 's%04d.png'), '-vf',
-      `scale=${scale}:-1,tile=${cols}x${rows}`, '-frames:v', '1', '-update', '1', out],
-      {stdio: ['ignore', 'ignore', 'inherit']});
-    ff.on('close', res);
-  });
+  const ff = spawnTool('ffmpeg', ['-y', '-i', join(tmp, 's%04d.png'), '-vf',
+    `scale=${scale}:-1,tile=${cols}x${rows}`, '-frames:v', '1', '-update', '1', out],
+    {stdio: ['ignore', 'ignore', 'inherit']});
+  const code = await new Promise((res) => ff.on('close', res));
+  checkSpawned(ff, '联络表拼接');
   if (code !== 0) throw new Error('filmwright: 拼联络表失败');
   if (!existsSync(out) || statSync(out).size === 0) {
     throw new Error('filmwright: 联络表没写出来');
@@ -112,6 +114,7 @@ export async function sheet(ctx) {
 
 /** 渲染。 */
 export async function render(ctx) {
+  assertTool(ffmpegPath(), '渲染编码要 ffmpeg');
   requireTimeline(ctx.proj);
   const total = ctx.proj.timeline.total_frames;
   const from = num(ctx.args, 'from', 1);
@@ -137,6 +140,7 @@ export async function render(ctx) {
 
 /** 画面与配音合流。 */
 export async function mux(ctx) {
+  assertTool(ffmpegPath(), '合流要 ffmpeg');
   requireTimeline(ctx.proj);
   const slug = ctx.proj.raw.slug ?? 'film';
   const audio = ctx.proj.paths.audio(slug);
@@ -202,11 +206,10 @@ async function renderSharded(ctx, {from, to, shards, out, crf}) {
   const listFile = join(tmp, 'list.txt');
   writeFileSync(listFile, results.map((r) => `file '${r.part.replace(/\\/g, '/')}'`).join('\n'), 'utf8');
   mkdirSync(dirname(out), {recursive: true});
-  const code = await new Promise((res) => {
-    const ff = spawn('ffmpeg', ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out],
-      {stdio: ['ignore', 'ignore', 'inherit']});
-    ff.on('close', res);
-  });
+  const ff = spawnTool(ffmpegPath(), ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out],
+    {stdio: ['ignore', 'ignore', 'inherit']});
+  const code = await new Promise((res) => ff.on('close', res));
+  checkSpawned(ff, '分片无损拼接');
   if (code !== 0) throw new Error('filmwright: 拼接失败');
   console.log(`${out}  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
 }

@@ -6,7 +6,7 @@
 |---|---|---|
 | Node.js | **≥ 22**（驱动浏览器要用全局 `WebSocket`，Node 20 上没有——实测过） | 全部 JS 工具 |
 | Chrome / Chromium / Edge | 任何近版本；自动查找，或用 `--browser` / `CHROME_BIN` 指定 | 逐帧渲染 |
-| ffmpeg + ffprobe | 在 `PATH` 里 | 编码、合流、抽帧、联络表 |
+| ffmpeg + ffprobe | 在 `PATH` 里，或用 `FFMPEG_BIN` / `FFPROBE_BIN` 指定路径 | 编码、合流、抽帧、联络表 |
 | Python 3 + `edge-tts` + `numpy` | `pip install edge-tts numpy` | 只有 `tts` 命令要 |
 
 没有 npm 依赖，不需要打包器。环境不满足时启动即报清楚缺什么，而不是在深处报看不懂的错。

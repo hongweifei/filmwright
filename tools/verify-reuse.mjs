@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {loadProject} from '../src/host/project/load.mjs';
 import {renderStills} from '../src/host/media/renderRange.mjs';
 import {install as setConfig} from '../src/contract/config.js';
+import {ffprobePath} from '../src/host/media/ffmpegBin.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJ = join(ROOT, 'examples', 'minimal');
@@ -21,7 +22,7 @@ rmSync(bigOut, {recursive: true, force: true});
 const made = await renderStills(PROJ, bigProj, [30, 250, 700, 1150], bigOut);
 console.log('1920×1080 静帧：');
 for (const f of made) {
-  const sz = execFileSync(process.env.FFPROBE || 'ffprobe',
+  const sz = execFileSync(ffprobePath(),
     ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', f], {encoding: 'utf8'}).trim();
   console.log(`  ${f.split(/[\\/]/).pop()}  ${sz}`);
 }

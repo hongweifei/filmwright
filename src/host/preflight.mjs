@@ -49,3 +49,11 @@ export function which(cmd) {
   const r = spawnSync(probe, [cmd], {encoding: 'utf8'});
   return r.status === 0 && String(r.stdout || '').trim().length > 0;
 }
+
+/** 外部命令缺失就当场报：渲染前先查，别等渲了几百帧才崩在 spawn 上。 */
+export function assertTool(cmd, what) {
+  if (which(cmd)) return;
+  throw new Error(
+    `filmwright: 找不到 ${cmd} —— ${what}\n` +
+    '  装上它（如 sudo apt-get install ffmpeg），或用环境变量 FFMPEG_BIN / FFPROBE_BIN 指定可执行文件路径。');
+}

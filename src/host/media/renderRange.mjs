@@ -1,9 +1,9 @@
 // 渲染：静帧 / 一段 mp4 / PNG 序列。一个浏览器实例负责一段连续帧。
-import {spawn} from 'node:child_process';
 import {mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {dirname, join, relative} from 'node:path';
 import {serveProject} from '../project/server.mjs';
 import {openSession} from '../browser/session.mjs';
+import {spawnTool, ffmpegPath, checkSpawned} from './ffmpegBin.mjs';
 
 /** 起服务 + 开会话；调用方负责 close()。 */
 export async function openProjectSession(projectDir, proj, opts = {}) {
@@ -42,7 +42,7 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
     }
     let ff = null;
     if (!pngDir) {
-      ff = spawn('ffmpeg', ['-y', '-f', 'image2pipe', '-framerate', String(proj.raw.fps ?? 30), '-i', '-',
+      ff = spawnTool(ffmpegPath(), ['-y', '-f', 'image2pipe', '-framerate', String(proj.raw.fps ?? 30), '-i', '-',
         '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-crf', String(crf), out],
         {stdio: ['pipe', 'ignore', 'inherit']});
     }
@@ -58,6 +58,7 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
     if (ff) {
       ff.stdin.end();
       const code = await new Promise((r) => ff.on('close', r));
+      checkSpawned(ff, '渲染编码');
       if (code !== 0) throw new Error('filmwright: ffmpeg 退出码 ' + code);
     }
     const err = sess.lastError();

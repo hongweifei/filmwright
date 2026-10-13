@@ -9,6 +9,7 @@
 
 - 渲染会话以无头模式（`--headless=new`）启动浏览器。此前注释写的是无头、参数里却从未传过这个旗标，在有显示器的机器上碰巧能跑；CI 的 Ubuntu 没有 X server，浏览器直接退出（`Missing X server or $DISPLAY`）。本机已验证无头渲染与既有像素基准逐字节一致（6/6 帧），基准无需重抓。
 - `tools/verify-assets.mjs`、`tools/verify-preview.mjs` 改为走 `openSession`：此前各自复制了一份浏览器启动逻辑，既漏掉 headless，又在浏览器提前退出时一直空等 30 秒，最后报出 `Failed to parse URL from http://127.0.0.1:null/json/list` —— 一个掩盖真实原因的错。现在启动失败当场报出浏览器 stderr。`tools/boot-error.mjs` 是抓 boot 失败的诊断工具，保留自己的事件流，同样补了无头与快速失败。
+- ffmpeg / ffprobe 的定位与 spawn 收拢到 `src/host/media/ffmpegBin.mjs`：此前三处 spawn 都没挂 `error` 监听，ffmpeg 缺失时以 unhandled `error` event 崩掉，只见 `spawn ffmpeg ENOENT` 堆栈。现在 `render` / `mux` / `sheet` 在干活**前**先用 `which` 断言，缺了当场报「装什么、怎么指定」；spawn 层再兜底。路径可用 `FFMPEG_BIN` / `FFPROBE_BIN` 指定。CI 的「确认环境」一步同时修了一个假检查：`ffmpeg -version | head -1` 在 ffmpeg 缺失时也绿（管道退出码取的是 `head` 的 0），现改为 `command -v` 硬断言并显式安装 ffmpeg。
 
 ### 变更
 
