@@ -69,7 +69,7 @@ node tools/regression.mjs capture --project examples/minimal   # 改之前
 node tools/regression.mjs verify  --project examples/minimal   # 改之后，必须全同
 ```
 
-逐字节相同才说明真的只是搬家；有一帧不同，说明行为被改了——要么是故意的（重新 `capture`，并在提交消息里写明），要么是 bug。基准文件（`examples/minimal/regression-baseline.json`）**跟着仓库走**，别人 clone 下来就能 verify。
+逐字节相同才说明真的只是搬家；有一帧不同，说明行为被改了——要么是故意的（重新 `capture`，并在提交消息里写明），要么是 bug。像素回归的基准文件（`examples/minimal/regression-baseline.json`）**跟着仓库走**，别人 clone 下来就能 verify。但基准是**本机夹具**：字体栅格化随操作系统与浏览器版本变，verify 要在抓基准的同一类环境跑，跨 OS 逐字节比对必然红——所以 CI 上不比基准，改做「同一次运行内 capture → verify」的自证（见下）。
 
 ## 验证夹具在 `tools/`
 
@@ -99,6 +99,6 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 `.github/workflows/ci.yml` 分两个 job，失败信息指向明确：
 
 - **static**——单元测试 + 静态自检（不启浏览器）。挂掉基本就是代码错了（引用、导出、纯函数行为）。
-- **browser**——逐帧 + 画质自检、像素回归、负面对照、素材与预览页验证、端到端出片并检查产物非空。挂掉更可能是渲染行为变了。
+- **browser**——无头 Chrome + ffmpeg：逐帧 + 画质自检、**渲染确定性自证**（同一次运行内 capture → verify，两轮渲染逐字节相同）、负面对照、素材与预览页验证、端到端出片并检查产物非空。挂掉更可能是渲染行为变了。
 
-两个 job 分开，是为了从失败一眼看出是哪一类问题。
+两个 job 分开，是为了从失败一眼看出是哪一类问题。渲染全程无头（`--headless=new`）：CI 与服务器上没有显示器，有头模式直接退出；无头与有头同一条渲染路径，基准验证过逐字节一致。

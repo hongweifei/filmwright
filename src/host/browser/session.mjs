@@ -77,6 +77,9 @@ export async function openSession(url, size, opts = {}) {
   const args = [
     '--remote-debugging-port=0',
     `--user-data-dir=${profile}`,
+    // 无头是必须的：CI / 服务器上没有 X server，有头模式直接退出
+    // （实测报 "Missing X server or $DISPLAY"）。headless=new 与有头同一条渲染路径。
+    '--headless=new',
     `--window-size=${size.width},${size.height}`,
     '--hide-scrollbars',
     '--disable-gpu',

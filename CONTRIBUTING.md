@@ -23,7 +23,7 @@ node bin/filmwright.mjs check --project examples/minimal --static-only
 | 预览页 | `node tools/verify-preview.mjs` |
 | 素材系统 | `node tools/verify-assets.mjs` |
 
-像素回归的基准（`examples/minimal/regression-baseline.json`）跟着仓库走。改动**故意**改变了画面时，重新 `capture`，并在提交消息里写明「有意改变画面」。
+像素回归的基准（`examples/minimal/regression-baseline.json`）跟着仓库走。改动**故意**改变了画面时，重新 `capture`，并在提交消息里写明「有意改变画面」。基准是本机夹具：`verify` 要在抓基准的同一类环境跑（字体栅格化随操作系统/浏览器版本变，跨 OS 逐字节比对必然红）；CI 上做的是同一次运行内的 capture → verify 自证。
 
 ## 代码结构规则
 

@@ -1,10 +1,16 @@
 # CI：两层，分开跑，失败信息指向明确。
 #
 #   static  无依赖：单元测试 + 静态自检（不启浏览器）。几十秒内出结果。
-#   browser 要 Chrome + ffmpeg：逐帧 + 画质自检 + 像素回归。
+#   browser 要 Chrome + ffmpeg：无头渲染的全部验证。
 #
 # 分开的理由：static 挂掉基本就是代码错了（引用、导出、纯函数行为）；
 # browser 挂掉更可能是渲染行为变了。混在一个 job 里看不出是哪一类。
+#
+# 关于像素回归：基准（examples/minimal/regression-baseline.json）是在
+# **抓基准的那台机器**上 capture 的，字体栅格化随操作系统/浏览器版本变，
+# 跨 OS 逐字节比对必然红。所以：
+#   - 本机（抓基准的同一类环境）：capture → 改结构 → verify，逐字节全同才算重构；
+#   - CI（无头 Ubuntu）：同一运行内 capture → verify，自证「两轮渲染逐字节相同」。
 name: CI
 
 on:
@@ -31,7 +37,7 @@ jobs:
         run: node bin/filmwright.mjs check --project examples/minimal --static-only
 
   browser:
-    name: 渲染（Chrome + ffmpeg）
+    name: 渲染（无头 Chrome + ffmpeg）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,8 +56,10 @@ jobs:
       - name: 逐帧 + 画质自检
         run: node bin/filmwright.mjs check --project examples/minimal
 
-      - name: 像素回归（与基准逐字节比对）
-        run: node tools/regression.mjs verify --project examples/minimal
+      - name: 渲染确定性（同运行内 capture → verify，两轮渲染逐字节相同）
+        run: |
+          node tools/regression.mjs capture --project examples/minimal
+          node tools/regression.mjs verify --project examples/minimal
 
       - name: 负面对照（证明画质检查真的会报）
         run: node tools/quality-negative.mjs

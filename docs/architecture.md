@@ -71,6 +71,7 @@ shots/index.js ──┘
 同一份镜头在不同浏览器、不同机器上渲染结果**逐像素相同**，靠的不是运气：
 
 - Chrome 启动参数钉死 `--force-color-profile=srgb`。实测系统 Edge 与 Chrome-for-Testing 在**没有**这个参数时有 85% 像素差 1–8 级；钉死之后逐像素完全相同。
+- `--headless=new`。渲染不依赖显示器——CI 与服务器上没有 X server，有头模式直接退出（实测报 `Missing X server or $DISPLAY`）；无头与有头走同一条渲染路径，抓基准验证过逐字节一致。
 - `--disable-gpu`。宁可慢也要确定性，不追求 GPU 加速路径。
 - 任何「随机」都来自确定性哈希（`rnd(seed)`），同一 seed 永远同一串。
 - 时间轴是**数据**（`timeline.json`），不是代码；逐句配音有内容寻址缓存，改一句只重合成那一句。
@@ -100,3 +101,4 @@ shots/index.js ──┘
 | 模块相对路径写错，页面**静默**不 ready | 静态检查 `imports` 逐文件验证相对路径存在 |
 | `letterSpacing` 忘了复位，"MoonBit" 上屏成 "MoonB it" | `text()` 内部 save/restore，退出即还原 |
 | 页面模块加载失败完全静默 | 渲染页把错误**画进画面**并记进 `window.__bootError` / `__lastError`，QC 不会把出错帧当正常帧 |
+| CI 无显示器，有头浏览器直接退出 | 渲染会话一律无头启动（`--headless=new`），并验证过与有头逐像素一致 |
