@@ -10,6 +10,7 @@
 - **场景规格 `scene.json`（AI 自动化的入口）**：声明式镜头，v0 含 7 类模板（title / bullets / stat / flow / code / image / compare）。AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。校验与 boot 共用一份实现（`src/contract/scene.js`），错误带 code/path/hint；静态自检加第 9 道 `scene`（`--static-only` 七道不启浏览器）。示例 `examples/scenecast` 整个项目没有 `shots/`，画面全部来自规格（其 `timeline.json` 是合成夹具；跑 `tts` 会生成真实配音）。
 - **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致；错误带结构化 `code` 与 `where` 路径，给 agent 直接消费（见 docs/cli.md）。
 - **`filmwright new <目录>`**：项目脚手架，`--template scene`（默认）/ `shots` 两种骨架；目录非空直接拒绝（`DIR_NOT_EMPTY`），从不覆盖已有文件。
+- **`filmwright mcp`：MCP 服务器（stdio）**，把工具链暴露给 agent——`filmwright_new / timeline / scene_validate / tts / check / stills / render / all` 八个工具，返回值与 `--json` 同形状。唯一需要 npm 依赖的子命令（`@modelcontextprotocol/sdk` + `zod`），且 SDK 惰性加载：没装依赖时其余命令照常跑，`mcp` 报 `NO_MCP_SDK` 并给出安装提示。`tests/mcp.test.mjs` 走真实 JSON-RPC 握手端到端验证（没装 SDK 时优雅跳过）。
 - 文档：docs/scene.md 场景规格参考。
 
 ### 修复

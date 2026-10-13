@@ -30,7 +30,12 @@ jobs:
           # engines 要求 >=22：驱动浏览器用全局 WebSocket，Node 20 上没有。
           node-version: '22'
 
-      - name: 单元测试（纯函数，零依赖）
+      # 核心命令零依赖；只有 MCP 测试需要 @modelcontextprotocol/sdk。
+      # 装依赖让 tests/mcp.test.mjs 不被跳过（没装时它会优雅 skip）。
+      - name: 安装依赖（仅 MCP 测试需要）
+        run: npm ci
+
+      - name: 单元测试（含 MCP 端到端）
         run: npm test
 
       - name: 静态自检（不启浏览器）

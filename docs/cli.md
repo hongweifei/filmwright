@@ -52,6 +52,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | 命令 | 作用 |
 |---|---|
 | `new` | 新建项目骨架（scene / shots 两种模板） |
+| `mcp` | MCP 服务器（stdio），把工具链暴露给 agent |
 | `check` | 九道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
 | `tts` | 解说词 → 配音 + 时间轴 |
@@ -68,6 +69,15 @@ filmwright new <目录> [--template scene|shots]
 ```
 
 建一个能直接跑通的最小项目：`film.config.mjs`、`script/narration.txt`、`scene.json`（默认模板）、`.gitignore`、`public/` 占位说明；`--template shots` 改产手写镜头骨架。目标目录**已存在且非空会直接拒绝**（`DIR_NOT_EMPTY`），脚手架从不覆盖已有文件。`slug` 取目录名并净化。
+
+## `mcp`
+
+```bash
+npm install          # 只有 MCP 需要依赖；其余命令零依赖
+filmwright mcp       # stdio 服务器，日志走 stderr，Ctrl+C 结束
+```
+
+把整条工具链作为 MCP 工具暴露给 agent（new / timeline / scene_validate / tts / check / stills / render / all），返回值与 `--json` 同形状。客户端配置与推荐的 agent 工作回路见 [AI / agent 接入指南](ai.md)。
 
 ## `check`
 

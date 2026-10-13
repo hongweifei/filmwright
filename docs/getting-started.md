@@ -9,7 +9,7 @@
 | ffmpeg + ffprobe | 在 `PATH` 里，或用 `FFMPEG_BIN` / `FFPROBE_BIN` 指定路径 | 编码、合流、抽帧、联络表 |
 | Python 3 + `edge-tts` + `numpy` | `pip install edge-tts numpy` | 只有 `tts` 命令要 |
 
-没有 npm 依赖，不需要打包器。环境不满足时启动即报清楚缺什么，而不是在深处报看不懂的错。
+渲染层零 npm 依赖，不需要打包器。`filmwright mcp`（MCP 服务器）是唯一需要 `npm install` 的子命令——不装它，其余命令照常跑。环境不满足时启动即报清楚缺什么，而不是在深处报看不懂的错。
 
 > 只在 Windows 上实测过。管线本身是跨平台的（浏览器查找列表含 macOS / Linux 路径），其他平台见 [LIMITATIONS](../LIMITATIONS.md)。
 
@@ -44,13 +44,21 @@ node bin/filmwright.mjs preview --project examples/minimal
 
 ## 改成你自己的片子
 
-跟着[教程](tutorial.md)走一遍：建目录、写配置、写解说词、写镜头，二十分钟能出第一条 46 秒的成片。
+```bash
+node bin/filmwright.mjs new my-film          # 骨架：config + narration + scene.json
+node bin/filmwright.mjs tts --project my-film
+node bin/filmwright.mjs all --project my-film
+```
+
+然后跟着[教程](tutorial.md)改内容：写解说词、改 `scene.json` 配画面（AI/模板路线），或写 `shots/index.js`（手写镜头的逃生舱）。二十分钟能出第一条片子。
 
 ## 下一步读什么
 
 | 文档 | 内容 |
 |---|---|
 | [教程](tutorial.md) | 从零做一个片子的完整流程 |
+| [场景规格](scene.md) | `scene.json`：AI/模板路线的入口 |
+| [AI / agent 接入](ai.md) | MCP、`--json` 契约、agent 工作回路 |
 | [配置参考](config.md) | `film.config.mjs` 全部字段 |
 | [API 参考](api.md) | 镜头里能 import 的一切 |
 | [命令参考](cli.md) | 八个命令的全部选项与产物落点 |

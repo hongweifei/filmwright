@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/hongweifei/filmwright/actions/workflows/ci.yml/badge.svg)](https://github.com/hongweifei/filmwright/actions/workflows/ci.yml)
 
-在 Canvas 2D 上**逐帧绘制**的中文说明片渲染工具链。Chrome + CDP 逐帧截图 → ffmpeg。
+在 Canvas 2D 上**逐帧绘制**的中文说明片渲染框架，专为 **AI 自动化视频制作**设计：AI 写内容与节拍（`scene.json`），引擎负责节奏与确定性。Chrome + CDP 逐帧截图 → ffmpeg。
 
-**零 npm 依赖**：只要有 Node 22+、一个 Chrome/Chromium/Edge、以及 ffmpeg，就能把一份解说词变成一条成片。
+**运行时零依赖**：浏览器里跑的渲染层不 import 任何 npm 包；宿主工具链除 MCP 服务外零依赖。只要有 Node 22+、一个 Chrome/Chromium/Edge、以及 ffmpeg，就能把一份解说词变成一条成片。
 
 ![示例片第 470 帧](docs/images/example-frame.png)
 
@@ -71,6 +71,7 @@ node bin/filmwright.mjs preview --project examples/minimal
 | [入门](docs/getting-started.md) | 装环境、跑通示例 |
 | [教程](docs/tutorial.md) | 从零做一个片子的完整流程 |
 | [场景规格](docs/scene.md) | `scene.json`：AI/模板路线的入口，声明内容即出画面 |
+| [AI / agent 接入](docs/ai.md) | MCP 服务器、`--json` 契约、推荐工作回路、错误码速查 |
 | [配置参考](docs/config.md) | `film.config.mjs` 全部字段与校验规则 |
 | [API 参考](docs/api.md) | 镜头里能 import 的一切 |
 | [命令参考](docs/cli.md) | 八个命令的全部选项 |

@@ -24,7 +24,12 @@ export {KIT_ROOT} from '../root.mjs';
  */
 export function projectPaths(projectDir) {
   const dir = resolve(projectDir);
-  if (!existsSync(dir)) throw new Error('filmwright: 项目目录不存在：' + dir);
+  if (!existsSync(dir)) {
+    const e = new Error('filmwright: 项目目录不存在：' + dir);
+    e.code = 'NO_PROJECT_DIR';
+    e.hint = '给 --project 一个存在的目录；新项目用 filmwright new <目录>';
+    throw e;
+  }
   const work = join(dir, '.work');
   return {
     dir,
@@ -46,11 +51,18 @@ export async function loadProject(projectDir) {
   const p = projectPaths(projectDir);
 
   if (!existsSync(p.config)) {
-    throw new Error(`filmwright: 找不到 ${p.config}\n  项目里要有一个 film.config.mjs，default 导出一个配置对象。`);
+    const e = new Error(`filmwright: 找不到 ${p.config}\n  项目里要有一个 film.config.mjs，default 导出一个配置对象。`);
+    e.code = 'NO_CONFIG';
+    e.hint = '新项目用 filmwright new <目录> 生成骨架';
+    throw e;
   }
   const mod = await import(pathToFileURL(p.config).href);
   const raw = mod.default;
-  if (!raw) throw new Error('filmwright: film.config.mjs 没有 default 导出');
+  if (!raw) {
+    const e = new Error('filmwright: film.config.mjs 没有 default 导出');
+    e.code = 'NO_CONFIG_DEFAULT';
+    throw e;
+  }
 
   let timeline = null;
   if (existsSync(p.timeline)) {

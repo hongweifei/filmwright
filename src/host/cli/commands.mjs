@@ -87,6 +87,27 @@ export async function preview(ctx) {
   return previewCmd(ctx);
 }
 
+/**
+ * MCP 服务器（stdio）。SDK 是惰性 import：
+ * 没装依赖的机器上，其余命令照常跑——核心工具链的零依赖不被 MCP 拖破。
+ */
+export async function mcp() {
+  let startMcp;
+  try {
+    ({startMcp} = await import('../mcp/server.mjs'));
+  } catch (e) {
+    if (e && e.code === 'ERR_MODULE_NOT_FOUND') {
+      const err = new Error('filmwright: MCP 服务器需要依赖 @modelcontextprotocol/sdk');
+      err.code = 'NO_MCP_SDK';
+      err.hint = '在本仓库目录跑一次 npm install（其余命令不需要任何 npm 依赖）';
+      throw err;
+    }
+    throw e;
+  }
+  const code = await startMcp();
+  return {code: code ?? 0};
+}
+
 /** 新建项目骨架。不需要 --project：目标目录就是位置参数。 */
 export async function newProject(ctx) {
   const say = makeSay(ctx.args);
