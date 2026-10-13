@@ -2,6 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {SHOT_TYPES} from '../src/contract/scene.js';
+import {setTimeline} from '../src/contract/timeline.js';
 import {TEMPLATES, compileScene} from '../src/runtime/scene/templates.js';
 
 test('TEMPLATES 的键与 SHOT_TYPES 严格一致（多一个少一个都算错）', () => {
@@ -22,6 +23,9 @@ test('compileScene：解析 at、绑定 sid，产出 {start, scene, draw} 的镜
     sentences: [{id: 'S01', chapter: 1, from: 106, to: 197, text: 'x'}],
     subs: [{from: 106, to: 150, text: 'a'}, {from: 150, to: 197, text: 'b'}],
   };
+  // compileScene 编译期就要查 S()/BLK()（算节拍），所以时间轴必须先装载 ——
+  // 浏览器里 boot 保证这一点，测试要自己装。
+  setTimeline(tl);
   const shots = compileScene({
     shots: [
       {type: 'title', at: 1, title: 't'},
@@ -34,6 +38,38 @@ test('compileScene：解析 at、绑定 sid，产出 {start, scene, draw} 的镜
   assert.equal(shots[1].scene.sid, 'S01');
   assert.equal(shots[0].scene.sid, null);
   for (const s of shots) assert.equal(typeof s.draw, 'function');
+});
+
+test('compileScene：每个模板都产出整数节拍，且与元素数一致', () => {
+  const tl = {
+    fps: 30, total_frames: 900,
+    sentences: ['S01', 'S02'].map((id, i) => ({id, chapter: 1, from: 100 + i * 200, to: 260 + i * 200, text: 'x'})),
+    subs: [
+      {from: 100, to: 160, text: 'a'}, {from: 160, to: 220, text: 'b'}, {from: 220, to: 260, text: 'c'},
+      {from: 300, to: 360, text: 'd'}, {from: 360, to: 420, text: 'e'},
+    ],
+  };
+  setTimeline(tl);
+  const shots = compileScene({
+    shots: [
+      {type: 'title', at: 1, title: 't'},
+      {type: 'bullets', at: 'S01', items: [{t: 'a'}, {t: 'b'}, {t: 'c'}]},
+      {type: 'table', at: 'S02', columns: ['A', 'B'], rows: [['1', '2'], ['3', '4']]},
+    ],
+  }, tl);
+  assert.equal(shots[0].beats.length, 3, 'title 固定三拍');
+  assert.deepEqual(shots[0].beats, [9, 41, 59]);
+  // bullets 三行 → 三拍；table 表头 + 2 行 → 三拍。具体帧号由字幕块决定，
+  // 断言结构与「跟着块走」的事实，不钉死算术（算术变了要连着改三处）。
+  assert.equal(shots[1].beats.length, 3);
+  assert.equal(shots[2].beats.length, 3);
+  assert.ok(shots[1].beats.every((b, i) => i === 0 || b > shots[1].beats[i - 1]), 'bullets 节拍必须递增');
+  // S01 的三个块起点是 100/160/220，节拍 = 块起点 - 4（被镜头起始夹住第一拍）
+  assert.deepEqual(shots[1].beats.slice(1), [156, 216], '后两拍必须锚在字幕块前 4 帧');
+  for (const s of shots) {
+    assert.ok(s.beats.every((b) => Number.isInteger(b) && b >= 1), '节拍必须是整数帧号');
+    assert.ok(s.beats.every((b) => b >= s.start), '节拍不得早于镜头起始');
+  }
 });
 
 test('compileScene：没有模板的类型当场抛错', () => {

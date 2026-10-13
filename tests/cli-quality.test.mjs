@@ -110,6 +110,42 @@ test('末拍稳定期是「只报告」读数：hold 可以是 null，且不进 
   const stats = aggregateShots(samples(), shots, THRESHOLDS);
   assert.ok('hold' in stats[0], '统计里应有 hold 字段供报告');
   assert.equal(judgeQuality(stats, THRESHOLDS).filter((p) => p.includes('末拍')).length, 0);
+  assert.equal(stats[0].holdSource, 'inferred', '没声明节拍时走像素推断');
+});
+
+// ---------- 声明节拍（scene 模板自动带）：末拍稳定期升级为硬判据 ----------
+
+const shotB = (beats) => [{id: 'SHB', from: 1, to: 600, beats}];
+
+test('声明节拍：停留足够 → 不报，hold 按声明算', () => {
+  const stats = aggregateShots(samples(), shotB([40, 120, 300]), THRESHOLDS);
+  assert.equal(stats[0].holdSource, 'declared');
+  assert.equal(stats[0].hold, 300);
+  assert.deepEqual(judgeQuality(stats, THRESHOLDS), []);
+});
+
+test('负面对照：末拍后停留不足要判失败（像素推断做不到这条）', () => {
+  const stats = aggregateShots(samples(), shotB([40, 590]), THRESHOLDS);
+  assert.equal(stats[0].hold, 10);
+  const problems = judgeQuality(stats, THRESHOLDS);
+  assert.ok(problems.some((p) => p.includes('末拍后只停留 10 帧')), JSON.stringify(problems));
+  assert.ok(problems[0].includes('at'), 'hint 要给出路（对齐更靠前 / 下一镜头更晚）');
+});
+
+test('负面对照：节拍排到镜头结束之后要判失败', () => {
+  const stats = aggregateShots(samples(), shotB([40, 700]), THRESHOLDS);
+  assert.equal(stats[0].beatsBeyond, 100);
+  const problems = judgeQuality(stats, THRESHOLDS);
+  assert.ok(problems.some((p) => p.includes('镜头结束之后')), JSON.stringify(problems));
+});
+
+test('声明路径不受呼吸像素干扰：像素全程呼吸，仍按声明判出停留不足', () => {
+  // 呼吸动效让像素推断读不出落位（这正是当年降级成"仅报告"的原因）；
+  // 有声明节拍时它不该干扰判定。
+  const stats = aggregateShots(samples({beatEvery: 10 ** 9}), shotB([40, 585]), THRESHOLDS);
+  assert.equal(stats[0].holdSource, 'declared');
+  assert.equal(stats[0].hold, 15);
+  assert.ok(judgeQuality(stats, THRESHOLDS).some((p) => p.includes('末拍后只停留')));
 });
 
 test('聚合：镜头区间为空时不产生条目（不报假问题）', () => {

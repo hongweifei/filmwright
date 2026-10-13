@@ -15,6 +15,13 @@ export function setShots(list) {
     if (typeof s.draw !== 'function') {
       throw new Error('filmwright: 镜头缺少 draw 函数（start=' + s.start + '）');
     }
+    // 可选的节拍声明（绝对帧号）：画质自检靠它区分「入场/离场」，把末拍稳定期
+    // 从读数升级成硬判据。scene 模板自动带上；手写镜头自愿声明，不声明就维持原样。
+    if (s.beats !== undefined) {
+      if (!Array.isArray(s.beats) || s.beats.some((b) => !Number.isInteger(b) || b < 1)) {
+        throw new Error('filmwright: 镜头 beats 必须是 ≥1 的整数帧号数组（start=' + s.start + '）');
+      }
+    }
   }
   for (let i = 1; i < declared.length; i++) {
     if (declared[i].start <= declared[i - 1].start) {

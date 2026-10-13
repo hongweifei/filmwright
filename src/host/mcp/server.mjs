@@ -6,19 +6,39 @@
 //   2. stdout 只属于 JSON-RPC：任何人类可读的日志走 stderr；
 //   3. 失败不是异常：isError + 结构化 errors（code/where/hint），
 //      模型读完能直接改。报错是给模型读的 prompt。
-import {resolve} from 'node:path';
+import {resolve, join} from 'node:path';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
 import {z} from 'zod';
 import {readFileSync} from 'node:fs';
 import * as commands from '../cli/commands.mjs';
 import {loadProject} from '../project/load.mjs';
-import {sceneSchema, validateScene} from '../../contract/scene.js';
+import {renderStills} from '../media/renderRange.mjs';
+import {sceneSchema, validateScene, resolveAt} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
 
 const json = (v) => JSON.stringify(v, null, 2);
 const result = (payload) => ({content: [{type: 'text', text: json(payload)}]});
 const fail = (payload) => ({...result(payload), isError: true});
+
+// 回图的量：默认 4 张、上限 8 张。再多会把一次工具调用的载荷撑爆，
+// 而模型看 4 张足够判断构图 —— 其余给路径，让它按需再看。
+const DEFAULT_IMAGES = 4;
+const MAX_IMAGES = 8;
+const imageCap = (n) => Math.min(Math.max(1, Number(n) || DEFAULT_IMAGES), MAX_IMAGES);
+
+/** 文本 JSON + PNG 内联（MCP image content）。超出时把说明并回 payload.note。 */
+function withImages(payload, files, want) {
+  const cap = imageCap(want);
+  const taken = files.slice(0, cap);
+  const content = [{type: 'text', text: json(files.length > taken.length
+    ? {...payload, note: `图片内联了前 ${taken.length}/${files.length} 张（max_images 可调，上限 ${MAX_IMAGES}）；全部路径在 data.files`}
+    : payload)}];
+  for (const f of taken) {
+    content.push({type: 'image', data: readFileSync(f).toString('base64'), mimeType: 'image/png'});
+  }
+  return {content, isError: payload.ok === false};
+}
 
 /** 跑一个既有命令（json 模式），把 {code,data,errors,warnings} 原样带回。 */
 async function run(name, project, extraArgs = {}, opts = {}) {
@@ -118,14 +138,89 @@ export function buildServer() {
     run('check', project, static_only ? {'static-only': true} : {}));
 
   server.registerTool('filmwright_stills', {
-    title: '出静帧',
-    description: '渲指定帧为 PNG 并返回路径 —— 用它目视检查画面，形成「改规格 → 看帧」的闭环。',
+    title: '出静帧（带回图片）',
+    description: '渲指定帧为 PNG，并把图片本身作为 MCP image content 返回 —— 多模态模型直接看自己做的画面。默认内联 4 张（max_images 可到 8），其余给路径。',
     inputSchema: {
       project: projectArg,
       frames: z.array(z.number().int().min(1)).min(1).describe('帧号数组'),
       dir: z.string().describe('输出目录（建议项目 .work/ 下）'),
+      max_images: z.number().int().min(1).optional().describe('内联图片张数，默认 4，上限 8'),
     },
-  }, async ({project, frames, dir}) => run('stills', project, {frames: frames.join(','), dir}));
+  }, async ({project, frames, dir, max_images}) => {
+    const r = await run('stills', project, {frames: frames.join(','), dir});
+    const payload = JSON.parse(r.content[0].text);
+    if (!payload.ok) return r;
+    return withImages(payload, payload.data.files ?? [], max_images);
+  });
+
+  /**
+   * 一轮完整的「改 → 验 → 看」：scene 校验 + 静态自检 + 各镜头代表帧回图。
+   * agent 每改一轮规格调一次，不用自己拼三步、也不用猜该看哪一帧。
+   */
+  server.registerTool('filmwright_review', {
+    title: '一轮自检 + 目视（推荐回路）',
+    description: '一次调用完成：scene 校验 → 七道静态自检 → 每个镜头取一张代表帧（落位后 60% 处）并内联回图。改完 scene.json 就调它。',
+    inputSchema: {
+      project: projectArg,
+      max_images: z.number().int().min(1).optional().describe('内联图片张数，默认 4，上限 8'),
+    },
+  }, async ({project, max_images}) => {
+    try {
+      const dir = resolve(project);
+      const proj = await loadProject(dir);
+      const errors = [];
+      const warnings = [];
+      // 1) scene 校验（有 scene.json 才查）。规格有错就到此为止 ——
+      //    渲染一份坏规格没有意义，先把可行动的错交回去。
+      let assetNames = null;
+      try { assetNames = normalizeConfig(proj.raw).assets.map((a) => a.name); } catch { /* check 会报 */ }
+      if (proj.scene) {
+        const v = validateScene(proj.scene, {timeline: proj.timeline ?? {sentences: []}, assetNames});
+        if (!v.ok) {
+          return fail({ok: false, command: 'review', stage: 'scene',
+            errors: v.errors.map((e) => ({...e, stage: 'scene'})), warnings: [],
+            data: {note: '先修 scene.json 再 review：这一步没渲染'}});
+        }
+      }
+      // 2) 静态自检（不启浏览器那七道）
+      const c = await commands.check({projectDir: dir, proj, args: {json: true, 'static-only': true}, opts: {}});
+      for (const e of c.errors ?? []) errors.push({...e, stage: 'check'});
+      warnings.push(...(c.warnings ?? []));
+      if ((c.code ?? 0) !== 0) {
+        return fail({ok: false, command: 'review', errors, warnings, data: {stage: 'check', note: '静态自检没过，这一步没渲染'}});
+      }
+      // 3) 代表帧：scene 项目按镜头取（起始 + 区间 60%）；纯手写镜头退化为全片均匀采样
+      const total = proj.timeline?.total_frames ?? 0;
+      let marks = [];
+      if (proj.scene?.shots?.length) {
+        const starts = proj.scene.shots.map((s) => resolveAt(s.at, proj.timeline));
+        marks = proj.scene.shots.map((s, i) => {
+          const a = starts[i];
+          const b = i + 1 < starts.length ? starts[i + 1] : total;
+          return {label: `${s.type}@${typeof s.at === 'string' ? s.at : s.at ?? ''}`,
+            frame: Math.max(1, Math.min(total, a + Math.round((b - a) * 0.6)))};
+        });
+      } else {
+        const n = 4;
+        marks = Array.from({length: n}, (_, i) => ({label: `sample${i + 1}`, frame: Math.max(1, Math.round(total * (i + 0.6) / n))}));
+        warnings.push('没有 scene.json，代表帧退化为全片均匀采样 4 张（手写镜头项目请自己给 frames）');
+      }
+      const picked = marks.slice(0, imageCap(max_images));
+      const outDir = join(dir, '.work', 'review');
+      const files = await renderStills(dir, proj, picked.map((m) => m.frame), outDir, {});
+      const payload = {
+        ok: errors.length === 0, command: 'review', errors, warnings,
+        data: {
+          shots: marks.length,
+          frames: picked.map((m, i) => ({label: m.label, frame: m.frame, file: files[i]})),
+          note: '图片按 frames 顺序内联在下面的 image content 里',
+        },
+      };
+      return withImages(payload, files, max_images);
+    } catch (e) {
+      return fail({ok: false, command: 'review', errors: [{code: e.code ?? 'ERROR', message: e.message, ...(e.hint ? {hint: e.hint} : {})}]});
+    }
+  });
 
   server.registerTool('filmwright_render', {
     title: '渲染（无声视频）',

@@ -29,6 +29,8 @@ function makeSamples(from, to, {stillRun = 0, ink = 0.2, beatEvery = 60} = {}) {
 }
 
 const shots = [{id: 'SH', from: 1, to: 600}];
+// 声明了节拍的镜头：末拍稳定期是硬判据（scene 模板自动声明；手写镜头可选声明）
+const shotsWithBeats = (beats) => [{id: 'SHB', from: 1, to: 600, beats}];
 const cases = [
   {
     name: '正常片（有落位、有呼吸、墨迹够）',
@@ -45,11 +47,29 @@ const cases = [
     samples: makeSamples(1, 600, {ink: 0.0001}),
     expect: '墨迹',
   },
+  {
+    name: '声明节拍：末拍后只停留 10 帧（硬判据）',
+    samples: makeSamples(1, 600, {ink: 0.2}),
+    shots: shotsWithBeats([40, 590]),
+    expect: '末拍后只停留',
+  },
+  {
+    name: '声明节拍：停留充足（不该报）',
+    samples: makeSamples(1, 600, {ink: 0.2}),
+    shots: shotsWithBeats([40, 120, 300]),
+    expect: 0,
+  },
+  {
+    name: '声明节拍：节拍排到镜头结束之后（硬判据）',
+    samples: makeSamples(1, 600, {ink: 0.2}),
+    shots: shotsWithBeats([40, 700]),
+    expect: '镜头结束之后',
+  },
 ];
 
 let bad = 0;
 for (const c of cases) {
-  const stats = aggregateShots(c.samples, shots, THRESHOLDS);
+  const stats = aggregateShots(c.samples, c.shots ?? shots, THRESHOLDS);
   const problems = judgeQuality(stats, THRESHOLDS);
   const ok = c.expect === 0
     ? problems.length === 0
@@ -62,11 +82,12 @@ for (const c of cases) {
   }
 }
 
-// 再确认「不判失败」的那条不会误伤：只有呼吸、没有落位的镜头
+// 再确认「不判失败」的那条不会误伤：只有呼吸、没有落位、**且没声明节拍**的镜头
+// （像素推断分不清入场/离场，所以这条路径只报告；声明了节拍的由上面的用例覆盖）
 const noBeat = aggregateShots(makeSamples(1, 600, {ink: 0.2, beatEvery: 10 ** 9}), shots, THRESHOLDS);
 const noBeatProblems = judgeQuality(noBeat, THRESHOLDS);
 const noBeatOk = !noBeatProblems.some((p) => p.includes('末拍'));
-console.log(`${noBeatOk ? '✓' : '✗'} 全程呼吸、无落位的镜头不会被判「末拍稳定期不足」`);
+console.log(`${noBeatOk ? '✓' : '✗'} 未声明节拍 + 全程呼吸的镜头不会被判「末拍稳定期不足」`);
 if (!noBeatOk) { bad++; for (const p of noBeatProblems) console.log('     ' + p); }
 
 console.log(bad === 0 ? '\n负面对照全部符合预期。' : `\n${bad} 项不符合预期。`);

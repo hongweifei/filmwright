@@ -54,7 +54,8 @@ filmwright mcp                     # stdio 服务器
 | `filmwright_scene_validate` | 只查 scene.json，秒级，不启浏览器 |
 | `filmwright_tts` | 解说词 → 配音 + 时间轴 |
 | `filmwright_check` | 九道自检（`static_only` 可选） |
-| `filmwright_stills` | 出静帧给你**看**（多模态自查的关键） |
+| `filmwright_stills` | 出静帧，**并把 PNG 直接回给模型**（默认 4 张，`max_images` 可到 8）——多模态自查的关键 |
+| `filmwright_review` | **一轮「改 → 验 → 看」**：scene 校验 + 静态自检 + 各镜头代表帧回图。改完 scene.json 就调它 |
 | `filmwright_render` | 渲染无声视频 |
 | `filmwright_all` | check → render → mux 一条龙 |
 
@@ -63,10 +64,13 @@ filmwright mcp                     # stdio 服务器
 ```
 filmwright_schema（拿 13 类模板与上限）→ filmwright_new → 写 narration.txt → filmwright_tts
   → filmwright_timeline（拿准句 id 与块数）→ 写 scene.json
-  → filmwright_scene_validate（秒级快改）
-  → filmwright_check static_only=true → filmwright_stills（目视！多模态看自己做的帧）
+  → filmwright_review（一轮搞定：校验 + 静态自检 + 代表帧回图，直接看图改）
   → 满意后 filmwright_all
 ```
+
+`filmwright_review` 就是这条回路的封装：它先校验规格（**规格有错就不渲染**，把可行动的错
+直接交回来），再跑七道静态自检，然后按镜头取代表帧（区间 60% 处，元素都落位了）把 PNG
+内联回图。一轮调用 = 一次自我修正，不用自己拼三步、也不用猜该看哪一帧。
 
 两条纪律：
 

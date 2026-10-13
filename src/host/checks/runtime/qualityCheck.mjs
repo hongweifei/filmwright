@@ -33,10 +33,11 @@ export async function checkQuality(projectDir, proj, opts = {}, th = THRESHOLDS)
     problems,
     stats,
     detail: summarize(stats),
-    // 只报告、不判失败的读数：末拍稳定期（见 quality.mjs 里为什么降级）
+    // 只报告、不判失败的读数：**没有声明节拍**的镜头，末拍稳定期是像素推断出来的，
+    // 分不清入场/离场，所以只进摘要（声明了节拍的由 judgeQuality 硬判）。
     notes: stats
-      .filter((s) => s.hold !== null && s.hold < th.holdFrames)
-      .map((s) => `镜头 ${s.id} 末拍稳定期 ${s.hold} 帧（<${th.holdFrames}，仅报告）`),
+      .filter((s) => s.holdSource === 'inferred' && s.hold !== null && s.hold < th.holdFrames)
+      .map((s) => `镜头 ${s.id} 末拍稳定期 ${s.hold} 帧（<${th.holdFrames}，像素推断，仅报告）`),
   };
 }
 

@@ -22,6 +22,13 @@ const W = () => 1280;
 /** 呼吸系数：幅度按静止阈值的口径给足。 */
 const breathe = (n, amp = 0.035, period = 34) => 1 + Math.sin(n / period) * amp;
 
+/**
+ * 末拍预留帧数：镜头内容必须在这之前全部落位，给观众留出「看完」的时间。
+ * 与画质自检的 holdFrames 默认值同数（那边判失败，这边不越界）——
+ * 模板主动压节拍，比事后被自检打回更省一轮。
+ */
+const HOLD_RESERVE = 30;
+
 /** 单元素入场进度（提前 4 帧起、20 帧走完，与示例片同一口径）。 */
 const enterAt = (n, f) => easeOut3(inv(n, f, f + 20));
 
@@ -39,6 +46,20 @@ function staggerFrames(sid, count, from) {
     if (blocks.length === 0) blocks.push(s.from);
     let last = blocks[blocks.length - 1];
     while (blocks.length < count) { last += 18; blocks.push(last); }
+    // **为末拍预留停留时间**：元素多于字幕块时，上面的 +18 铺法会把最后一拍
+    // 推到句子结束附近，停留期被吃光（实测 scenecast 的 code 镜头只剩 16 帧）。
+    // 与其让自检打回，不如在这里把整串节拍等比压回安全线内。
+    const horizon = s.to - HOLD_RESERVE;
+    if (blocks.length > 1 && blocks[blocks.length - 1] > horizon) {
+      const first = blocks[0];
+      const span = horizon - first;
+      // span ≤ 0 说明这个镜头的区间本来就装不下这么多元素 —— 不硬压，
+      // 让画质自检报出来（它会说「内容太多或对齐太晚」并给出路）。
+      if (span > 0) {
+        const step = span / (blocks.length - 1);
+        blocks = blocks.map((_, i) => Math.round(first + i * step));
+      }
+    }
   }
   const out = [];
   for (let i = 0; i < count; i++) {
@@ -52,6 +73,8 @@ function staggerFrames(sid, count, from) {
 // 约定：draw(ctx, n, shot, accent)，this 绑定镜头区间（this.from / this.to）。
 
 const title = {
+  // 片头的节拍是它自己的入场时间线（8 起、40 落位、58 分隔线走完）
+  beats: (shot, start) => [start + 8, start + 40, start + 58],
   draw(ctx, n, shot, accent) {
     const cx = W() / 2;
     const a = easeOut3(inv(n, 8, 40));
@@ -83,6 +106,7 @@ const title = {
 };
 
 const bullets = {
+  beats: (shot, start, sid) => staggerFrames(sid, shot.items.length, start),
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, shot.items.length, this.from);
     if (shot.heading) {
@@ -117,6 +141,7 @@ const bullets = {
 };
 
 const stat = {
+  beats: (shot, start) => [start + 6, start + 46],
   draw(ctx, n, shot, accent) {
     const p = easeOut3(inv(n, this.from + 6, this.from + 46));
     const b = p >= 1 ? breathe(n, 0.03, 38) : 1;
@@ -132,6 +157,7 @@ const stat = {
 };
 
 const flowT = {
+  beats: (shot, start, sid) => staggerFrames(sid, shot.boxes.length, start),
   draw(ctx, n, shot, accent) {
     const boxes = shot.boxes;
     const frames = staggerFrames(shot.sid, boxes.length, this.from);
@@ -152,6 +178,7 @@ const flowT = {
 };
 
 const code = {
+  beats: (shot, start, sid) => staggerFrames(sid, shot.lines.length, start),
   draw(ctx, n, shot, accent) {
     const lines = shot.lines;
     const frames = staggerFrames(shot.sid, lines.length, this.from);
@@ -172,6 +199,7 @@ const code = {
 };
 
 const image = {
+  beats: (shot, start, sid) => [staggerFrames(sid, 1, start)[0] + 6],
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, 1, this.from);
     if (shot.heading) {
@@ -202,6 +230,13 @@ const image = {
 };
 
 const compare = {
+  beats: (shot, start, sid) => {
+    const f = staggerFrames(sid, 2, start);
+    // 两侧条目各自的进场也算拍（模板里是 f + 8 + i*10）
+    const inner = Math.max(shot.left.items.length, shot.right.items.length);
+    for (let i = 1; i < inner; i++) f.push(f[1] + 8 + i * 10);
+    return f;
+  },
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, 2, this.from);
     if (shot.heading) {
@@ -240,6 +275,7 @@ const compare = {
 // ---------- v0.2 扩充：steps / table / quote / terminal / chips / bars ----------
 
 const steps = {
+  beats: (shot, start, sid) => staggerFrames(sid, shot.steps.length, start),
   draw(ctx, n, shot, accent) {
     const rows = shot.steps;
     const frames = staggerFrames(shot.sid, rows.length, this.from);
@@ -290,6 +326,7 @@ const steps = {
 };
 
 const table = {
+  beats: (shot, start, sid) => staggerFrames(sid, shot.rows.length + 1, start),
   draw(ctx, n, shot, accent) {
     const cols = shot.columns;
     const rows = shot.rows;
@@ -335,6 +372,7 @@ const table = {
 };
 
 const quote = {
+  beats: (shot, start, sid) => [staggerFrames(sid, 1, start)[0] + 22],
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, 1, this.from);
     const p = easeOut3(inv(n, frames[0], frames[0] + 22));
@@ -374,6 +412,7 @@ const quote = {
 };
 
 const terminalT = {
+  beats: (shot, start, sid) => staggerFrames(sid, shot.lines.length, start),
   draw(ctx, n, shot, accent) {
     const lines = shot.lines.map((l) => (typeof l === 'string' ? {text: l} : l));
     const frames = staggerFrames(shot.sid, lines.length, this.from);
@@ -394,6 +433,10 @@ const terminalT = {
 };
 
 const chips = {
+  beats: (shot, start, sid) => {
+    const f0 = staggerFrames(sid, 1, start)[0];
+    return [f0, f0 + 8 + shot.items.length * 10];   // 逐颗点亮的终点也是拍
+  },
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, 1, this.from);
     if (shot.heading) {
@@ -415,6 +458,10 @@ const chips = {
 };
 
 const barsT = {
+  beats: (shot, start, sid) => {
+    const f0 = staggerFrames(sid, 1, start)[0];
+    return [f0, f0 + 30];   // 生长 30 帧走完
+  },
   draw(ctx, n, shot, accent) {
     const items = shot.items;
     const frames = staggerFrames(shot.sid, 1, this.from);
@@ -449,6 +496,11 @@ export const TEMPLATES = {
 /**
  * 把校验过的 scene 编译成镜头数组（boot 的 SHOTS）。
  * 编译期只解析 at（需要时间轴数据）；字幕块查询留在 draw 里，运行时用已装载的时间轴。
+ *
+ * 每个镜头同时算出 **beats（节拍表，绝对帧号）**：模板画多少个错峰元素，就有
+ * 多少拍。它交给画质自检当「入场/离场」的信号 —— 像素 diff 分不清一次变化是
+ * 入场还是离场，而节拍是声明出来的事实（LIMITATIONS 里记的死结就靠它解开）。
+ * 编译期与 draw 用同一个 staggerFrames，两边不会漂（有测试钉住）。
  */
 export function compileScene(scene, tl) {
   return scene.shots.map((raw) => {
@@ -457,9 +509,10 @@ export function compileScene(scene, tl) {
     const start = resolveAt(raw.at, tl);
     const sid = typeof raw.at === 'string' ? raw.at
       : (raw.at && typeof raw.at === 'object' ? raw.at.s ?? null : null);
-    const shot = {...raw, start, sid};
+    const shot = {...raw, start, sid, beats: tpl.beats ? tpl.beats(raw, start, sid) : [start]};
     return {
       start,
+      beats: shot.beats,
       scene: shot,
       draw(ctx, n, t, accent) {
         ctx.save();

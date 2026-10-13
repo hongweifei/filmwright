@@ -118,31 +118,46 @@ export function aggregateShots(samples, shots, th = THRESHOLDS) {
 
     // 末拍稳定期。
     //
+    // **有声明节拍（beats）时按声明算** —— 这是 scene 模板自动带来的，也是手写镜头
+    // 可选声明的。声明是事实，不是猜测：最后一拍之后留多久一目了然，所以这条
+    // 从「只报告」升级成硬判据（judgeQuality 里判失败）。
+    //
+    // **没有声明时退回像素推断**，而像素 diff 分不清一次变化是「入场」还是「离场」，
     // 三个概念必须分开，混在一起判据就会自相矛盾：
     //   1. 静止（staticThr 低 0.5）—— 画面有没有在动；呼吸动效读 0.2–0.5
     //   2. 落位（beatThr 高 2.0）—— 有没有一拍元素真正到位；入场读 1–18
     //   3. 离场 —— 末尾那几拍是**走**，不是**落位**
-    //
-    // **诚实的地方**：像素 diff 分不清一次变化是「入场」还是「离场」。
-    // 末尾若是一串连续的多拍，那几乎必然是离场动画 —— 这种镜头就不判这一条
-    // （拿不准的事不硬给结论）。只有末尾是**单独一拍**时，才认为那是末拍落位，
-    // 量它到镜头结束留了多久。
-    const beats = judged.filter((x) => x.diff !== null && x.diff >= th.beatThr);
-    let hold = null;          // null = 不判（末尾是离场，或整个镜头没有落位）
+    // 拿不准的不硬给结论：这条路径下 hold 只作读数进摘要，不判失败。
+    let hold = null;          // null = 不判
     let holdNote = '';
-    if (beats.length === 0) {
-      holdNote = '无显著落位';
-    } else {
-      // 末尾连续几拍（相邻间隔 ≤ 2 个采样步长）算离场
-      let runLen = 1;
-      for (let k = beats.length - 1; k > 0; k--) {
-        if (beats[k].n - beats[k - 1].n <= th.sampleStep * 2) runLen++;
-        else break;
-      }
-      if (runLen >= 2 && beats[beats.length - 1].n > s.to - th.exitGrace - th.sampleStep * 4) {
-        holdNote = `末尾 ${runLen} 拍连续，判为离场`;
+    let holdSource = 'none';
+    let beatsBeyond = 0;      // 最后一拍超出镜头末帧多少（>0 判失败）
+    if (Array.isArray(s.beats) && s.beats.length) {
+      holdSource = 'declared';
+      const last = Math.max(...s.beats);
+      if (last > s.to) {
+        beatsBeyond = last - s.to;
+        holdNote = `最后一拍 f${last} 排在镜头末 f${s.to} 之后`;
       } else {
-        hold = s.to - beats[beats.length - 1].n;
+        hold = s.to - last;
+      }
+    } else {
+      const beats = judged.filter((x) => x.diff !== null && x.diff >= th.beatThr);
+      if (beats.length === 0) {
+        holdNote = '无显著落位';
+      } else {
+        holdSource = 'inferred';
+        // 末尾连续几拍（相邻间隔 ≤ 2 个采样步长）算离场
+        let runLen = 1;
+        for (let k = beats.length - 1; k > 0; k--) {
+          if (beats[k].n - beats[k - 1].n <= th.sampleStep * 2) runLen++;
+          else break;
+        }
+        if (runLen >= 2 && beats[beats.length - 1].n > s.to - th.exitGrace - th.sampleStep * 4) {
+          holdNote = `末尾 ${runLen} 拍连续，判为离场`;
+        } else {
+          hold = s.to - beats[beats.length - 1].n;
+        }
       }
     }
 
@@ -164,6 +179,9 @@ export function aggregateShots(samples, shots, th = THRESHOLDS) {
       staticAt: longestAt,
       hold,
       holdNote,
+      holdSource,
+      beatsBeyond,
+      beats: Array.isArray(s.beats) && s.beats.length ? s.beats : null,
       inkMin,
       inkAt,
       inkMean: inks.reduce((a, b) => a + b, 0) / inks.length,
@@ -191,16 +209,25 @@ export function judgeQuality(stats, th = THRESHOLDS) {
         `（下限 ${(th.inkMin * 100).toFixed(2)}%）：有一帧几乎是空的`
       );
     }
-    // ③ 末拍稳定期 —— **只报告，不判失败**。
+    // ③ 末拍稳定期 —— **声明了节拍的镜头判失败，没声明的只报告**。
     //
-    // 为什么不做成失败判定：像素 diff 分不清一次变化是「入场」还是「离场」，
-    // 而这一条恰恰要求区分两者。实测三种读法都不对：
-    //   - 量「末尾静止」→ 有呼吸动效的镜头永远读 0（那是"一直在动"，不是缺陷）
-    //   - 把末尾几拍都算落位 → 离场被当成末拍（SH02 读 6 帧）
-    //   - 末尾连续几拍算离场 → 片尾压黑又会把稳定期切断
-    // 真实片子的 QC 脚本有同样的毛病（phase-coupled，会读成 0 的假阴性）。
-    // 与其加越来越绕的启发式，不如如实降级：读数放进摘要供人看，不阻断。
-    // 要做成硬判据，得先有能区分入场/离场的信号（例如镜头自己声明节拍）。
+    // 为什么以前只能报告：像素 diff 分不清一次变化是「入场」还是「离场」，
+    // 而这条恰恰要求区分。实测三种读法都不对（量末尾静止 → 有呼吸的镜头永远读 0；
+    // 把末尾几拍算落位 → 离场被当末拍；连续几拍算离场 → 被片尾压黑切断）。
+    // 现在 scene 模板自动声明节拍（staggerFrames 就是节拍表），信号是**事实**
+    // 不是猜测，于是可以硬判：最后一拍之后停留不足 holdFrames，观众来不及看完。
+    if (s.beatsBeyond > 0) {
+      problems.push(
+        `镜头 ${s.id}（f${s.from}-${s.to}）的节拍排到镜头结束之后 ${s.beatsBeyond} 帧` +
+        `（${s.holdNote}）：内容太多或对齐太晚 —— 删减条目、把 at 提前，或让下一镜头更晚`
+      );
+    } else if (s.holdSource === 'declared' && s.hold !== null && s.hold < th.holdFrames) {
+      problems.push(
+        `镜头 ${s.id}（f${s.from}-${s.to}）末拍后只停留 ${s.hold} 帧（<${th.holdFrames}）：` +
+        `最后一拍刚落位就切镜，观众来不及看完 —— 把内容对齐到更靠前的字幕块，或让下一镜头的 at 更晚`
+      );
+    }
+    // holdSource === 'inferred' 的走 notes（见 qualityCheck.mjs），不进 problems。
   }
   return problems;
 }
@@ -208,9 +235,11 @@ export function judgeQuality(stats, th = THRESHOLDS) {
 /** 一行摘要（每个镜头的读数，供人工核对阈值是否合理）。 */
 export function summarize(stats) {
   return stats.map((s) => {
-    const hold = s.hold === null ? `不判（${s.holdNote || '—'}）` : String(s.hold);
+    const hold = s.hold === null
+      ? `不判（${s.holdNote || '—'}）`
+      : `${s.hold}${s.holdSource === 'declared' ? '（声明）' : '（推断，仅报告）'}`;
     return `  ${String(s.id).padEnd(12)} f${String(s.from).padStart(4)}-${String(s.to).padStart(4)}` +
-      `  最长静止 ${String(s.longestStatic).padStart(3)}  末拍 ${hold.padStart(6)}` +
+      `  最长静止 ${String(s.longestStatic).padStart(3)}  末拍 ${hold.padStart(18)}` +
       `  墨迹最低 ${(s.inkMin * 100).toFixed(2)}%`;
   });
 }

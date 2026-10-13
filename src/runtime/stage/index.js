@@ -105,6 +105,8 @@ export async function boot(p, resize) {
     id: s.id ?? `SH${String(i + 1).padStart(2, '0')}`,
     from: s.from,
     to: Math.min(s.to, tail - 1),
+    // 声明过的节拍（scene 模板自动带、手写镜头可选）：画质自检的入场/离场信号
+    beats: Array.isArray(s.beats) && s.beats.length ? s.beats : null,
   }));
 
   return {

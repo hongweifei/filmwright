@@ -7,6 +7,13 @@
 
 ### 新增
 
+- **MCP 回图 + `filmwright_review`**：`filmwright_stills` 把 PNG 作为 MCP image content 直接回给多模态模型（默认内联 4 张、`max_images` 可到 8，其余给路径）；新增 `filmwright_review` 一轮完成「改 → 验 → 看」——scene 校验（规格有错就不渲染，直接交回可行动的错）→ 七道静态自检 → 各镜头代表帧（区间 60% 处）回图。此前 agent 只能拿到图片路径，看不到自己做的画面。
+- **节拍信号（`beats`）解开画质自检的死结**：scene 模板在编译期产出节拍表（与 draw 用同一个 `staggerFrames`，不漂），手写镜头可选声明。**声明了节拍的镜头，末拍稳定期从读数升级为硬判据**——停留不足 `--hold-frames`（默认 30）或节拍排到镜头结束之后都判失败；没声明的维持「只报告」（像素推断分不清入场/离场）。模板还会**主动压节拍**为末拍预留停留时间，避免内容多的镜头被自己挤掉。LIMITATIONS 里那条「要做成硬判据得先有节拍信号」就此解除。
+
+### 修复
+
+- `examples/scenecast` 的 code 镜头被新判据抓出真缺陷（末拍后只停留 16 帧）——根因是模板在「元素多于字幕块」时按固定 +18 帧往后铺，把末拍推到句尾。已改为按可用区间等比压缩并预留停留期。
+
 - **模板镜头扩到 13 类**：`steps`（编号步骤 + 生长连接线 + 当前步点亮）、`table`（表头 + 斑马纹 + 行扫描）、`quote`（居中大字折行 + 引号脉动）、`terminal`（终端窗口逐行输出 + 光标）、`chips`（关键词胶囊自动折行）、`bars`（条形图 + 循环描边）。每类内建入场错峰与落位后的持续动作——验收件 `examples/gallery`（13 镜各一，纯规格）九道自检全过、画质零违规。
 - **容量上限进校验**：bullets/steps ≤6、flow ≤5、code/terminal ≤10、table 4 列 × 8 行、chips ≤12、bars ≤6、compare 各 ≤5，超了报 `SCENE_TOO_MANY`（hint 教拆镜头）。AI 该被校验告知边界，而不是靠肉眼发现溢出。
 - **`filmwright schema`**：机器可读的规格说明书（13 类模板 / 字段 / 上限 / 对齐语法 / 错误码），`--json` 输出；MCP 加 `filmwright_schema` 工具——agent 写 scene 前先拿 schema，不必先读文档。
