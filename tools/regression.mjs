@@ -34,13 +34,15 @@ const frames = String(arg('frames', '30,250,470,600,700,1150'))
   .split(',').map((s) => parseInt(s.trim(), 10)).filter(Number.isFinite);
 
 if (!['capture', 'verify'].includes(cmd)) {
-  console.error('用法：node tools/regression.mjs <capture|verify> [--project <目录>] [--frames 30,250,...]');
+  console.error('用法：node tools/regression.mjs <capture|verify> [--project <目录>] [--frames 30,250,...] [--baseline <路径>]');
   process.exit(2);
 }
 
 const workDir = join(projectDir, '.work', 'qc');
-// 基准放项目根、不进 .work：它是夹具（要提交），不是产物
-const baseFile = join(projectDir, 'regression-baseline.json');
+// 基准放项目根、不进 .work：它是夹具（要提交），不是产物。
+// `--baseline <路径>` 可指定别处 —— CI 的「同运行内 capture → verify」用它写临时
+// 文件，**不覆盖入库的夹具**（那份是本机夹具，跨 OS 不可比，覆盖它只会制造脏工作区）。
+const baseFile = arg('baseline', join(projectDir, 'regression-baseline.json'));
 const outDir = join(workDir, 'regression');
 
 mkdirSync(workDir, {recursive: true});

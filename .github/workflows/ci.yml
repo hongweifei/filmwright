@@ -139,10 +139,15 @@ jobs:
           node bin/filmwright.mjs check --project examples/scenecast --static-only
           node bin/filmwright.mjs check --project examples/gallery --static-only
 
+      # 渲染确定性：同一次运行内 capture → verify，证明「两轮渲染逐字节相同」。
+      #
+      # 基准写到**临时路径**：入库的 regression-baseline.json 是**本机夹具**
+      # （字体栅格化随 OS/浏览器版本变），CI 覆盖它只会制造脏工作区，
+      # 而且跨 OS 比对本来就不成立（见 docs/qc.md）。
       - name: 渲染确定性（同运行内 capture → verify，两轮渲染逐字节相同）
         run: |
-          node tools/regression.mjs capture --project examples/minimal
-          node tools/regression.mjs verify --project examples/minimal
+          node tools/regression.mjs capture --project examples/minimal --baseline "$RUNNER_TEMP/regression-baseline.json"
+          node tools/regression.mjs verify  --project examples/minimal --baseline "$RUNNER_TEMP/regression-baseline.json"
 
       - name: 负面对照（证明画质检查真的会报）
         run: node tools/quality-negative.mjs
