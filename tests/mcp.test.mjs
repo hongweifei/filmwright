@@ -19,14 +19,43 @@ try {
 
 /** 起一个 MCP 会话，返回 call() 与 close()。 */
 function openSession() {
-  const srv = spawn('node', [join(ROOT, 'bin', 'filmwright.mjs'), 'mcp'], {stdio: ['pipe', 'pipe', 'pipe']});
+  // 用 process.execPath 而不是裸 'node'：CI 的 windows runner 上（bash/PowerShell
+  // 混合）PATH 解析可能与本机不同，裸 'node' 可能 spawn 失败。而 spawn 失败是
+  // **未捕获的 error 事件**，会让测试进程立刻退出（实测 CI 上该步骤 0 秒失败、
+  // 本机通过 —— 这个差异正是来源之一）。
+  const srv = spawn(process.execPath, [join(ROOT, 'bin', 'filmwright.mjs'), 'mcp'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let srvErr = '';
+  srv.stderr.on('data', (d) => (srvErr += d));
   const rl = createInterface({input: srv.stdout});
   let id = 0;
   const pending = new Map();
+  let serverDead = null;   // 服务器起不来/已退出时的原因（call() 据此立刻拒绝）
+  // 服务器进程退出/起不来时**拒绝所有 pending 调用**（并把 stderr 带出来）。
+  // 只设一个标志不够：call() 可能已经在等一个永远不会来的响应，于是挂满超时
+  // （实测：删掉 bin/filmwright.mjs 后测试挂满 600 秒）。
+  const failAll = (why) => {
+    serverDead = why;
+    for (const [, entry] of pending) {
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.rej(new Error('MCP 服务器不可用：' + why + (srvErr ? '；stderr=' + srvErr.slice(-400) : '')));
+    }
+    pending.clear();
+  };
+  srv.on('error', (e) => failAll('spawn 失败 ' + e.message));
+  // 退出时记下原因（即使此刻没有 pending）：后续 call() 要能立刻拒绝，
+  // 否则会挂满超时 —— 实测删掉 bin/filmwright.mjs 后测试挂满 600 秒。
+  srv.on('exit', (code) => { failAll('进程退出 code=' + code); });
   rl.on('line', (line) => {
     let m;
     try { m = JSON.parse(line); } catch { return; }
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+    const entry = m.id ? pending.get(m.id) : null;
+    if (entry) {
+      clearTimeout(entry.timer);
+      pending.delete(m.id);
+      entry.res(m);
+    }
   });
   const send = (msg) => srv.stdin.write(JSON.stringify(msg) + '\n');
   /** 工具调用：返回 {payload, content, isError}；协议层错误（无 content）直接抛原文。 */
@@ -37,14 +66,33 @@ function openSession() {
     return {content: r.result.content, isError: !!r.result.isError};
   };
   const call = (method, params) => new Promise((res, rej) => {
+    // 服务器已经死了就立刻拒绝，别等超时。
+    // 两处都要查：serverDead（exit/error 事件已触发）与 srv.exitCode（进程已退出但
+    // 事件还没轮到我们处理）—— 只查前者会漏掉「spawn 后立刻调用」这个时序，
+    // 实测那会让测试挂满超时而不是快速失败。
+    if (serverDead || srv.exitCode !== null) {
+      const why = serverDead ?? ('进程已退出 code=' + srv.exitCode);
+      rej(new Error('MCP 服务器不可用：' + why + (srvErr ? '；stderr=' + srvErr.slice(-400) : '')));
+      return;
+    }
     const myId = ++id;
     // 超时要留足余量（review / stills 会真开浏览器渲染，CI 慢机器上可达 60s+），
     // 但**必须在收到响应时清掉定时器**：未清理的 setTimeout 会让 Node 的事件
     // 循环多活满整个超时时长 —— 实测测试只跑 4 秒、进程却挂了 302 秒才退出，
     // 在 CI 上表现为「这一步莫名跑很久然后失败」。
     const timer = setTimeout(() => { pending.delete(myId); rej(new Error('MCP 超时：' + method)); }, 300000);
-    pending.set(myId, (m) => { clearTimeout(timer); res(m); });
-    send({jsonrpc: '2.0', id: myId, method, params});
+    // pending 里存**对象**（res/rej/timer），不是裸解析函数 ——
+    // failAll 要按字段访问它们来拒绝；存裸函数会让 failAll 静默失效，
+    // 表现为「服务器死了但测试挂满超时」（这个坑真踩过）。
+    pending.set(myId, {res, rej, timer});
+    // 发送前再查一次：spawn 失败/进程秒退时，stdin 写入会抛 EPIPE
+    try {
+      send({jsonrpc: '2.0', id: myId, method, params});
+    } catch (e) {
+      clearTimeout(timer);
+      pending.delete(myId);
+      rej(new Error('MCP 写入失败（服务器可能已退出）：' + e.message));
+    }
   });
   return {
     call,

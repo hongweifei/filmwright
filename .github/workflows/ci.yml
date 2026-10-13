@@ -90,10 +90,18 @@ jobs:
 
       # 重浏览器测试（MCP 的 stills/review 要真渲染）：static job 里跳过、
       # 这里跑 —— 这个 job 本来就有浏览器与 ffmpeg。
+      #
+      # 显式用 bash：windows runner 的默认 shell 是 PowerShell，行为与 ubuntu 不同
+      # （实测该步骤在 windows 上 0 秒失败、而本机同命令通过 —— 环境/shell 差异）。
+      # 与 job 级 defaults 一致地走 bash，消除这一层变量；`set -x` 让命令可见。
       - name: MCP 重浏览器测试（stills / review 回图）
+        shell: bash
         env:
           FILMWRIGHT_TEST_BROWSER: '1'
-        run: node --test tests/mcp.test.mjs
+        run: |
+          set -x
+          node --version
+          node --test tests/mcp.test.mjs
 
       # 画质/逐帧是「阈值型 + 浏览器型」检查：读数贴阈值或 runner 资源紧张时
       # 会随机翻面（实测 windows runner 上不同步骤轮流挂，代码未变）。
