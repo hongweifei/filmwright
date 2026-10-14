@@ -22,7 +22,7 @@
 //
 // 为什么是 OR 而不是单个"恒等值"：glow 在 `intensity=0` **或** `radius=0` 时都等于
 // 什么都没做，单个恒等值表达不了这种关系（第一版就卡在这）。
-export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette'];
+export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate', 'radialBlur', 'distort'];
 
 export const EFFECT_SPECS = {
   blur: {
@@ -68,6 +68,52 @@ export const EFFECT_SPECS = {
       amount: {kind: 'num', min: 0, max: 1, required: true, note: '压暗强度（0=不变，1=最强）'},
       radius: {kind: 'num', min: 0.2, max: 2, def: 1, note: '暗角开始的位置（1 大约在画面边缘）'},
       softness: {kind: 'num', min: 0.01, max: 1, def: 0.5, note: '过渡柔和度（越大越平缓）'},
+    },
+  },
+
+  chromatic: {
+    note: '色差（RGB 分离）：越靠边分得越开，中心干净',
+    noopWhen: [{amount: 0}],
+    params: {
+      amount: {kind: 'num', min: 0, max: 30, required: true, note: '边缘处红/蓝的最大偏移（像素）'},
+      angle: {kind: 'num', min: -180, max: 180, def: 0, note: '分离方向（度，0=水平）'},
+    },
+  },
+
+  grain: {
+    note: '胶片颗粒。噪点是 (像素, 帧号) 的**纯函数** —— 不读时钟，所以同一帧永远同一张',
+    noopWhen: [{amount: 0}],
+    params: {
+      amount: {kind: 'num', min: 0, max: 1, required: true, note: '颗粒强度（0=不变）'},
+      size: {kind: 'num', min: 1, max: 8, def: 1, note: '颗粒尺寸（像素，越大颗粒越粗）'},
+    },
+  },
+
+  pixelate: {
+    note: '马赛克：按方块取色。size=1 是直通',
+    noopWhen: [{size: 1}],
+    params: {
+      size: {kind: 'num', min: 1, max: 64, required: true, note: '方块边长（像素）'},
+    },
+  },
+
+  radialBlur: {
+    note: '径向/缩放模糊：沿"从中心往外"的方向拖尾（8 个采样点，固定）',
+    noopWhen: [{amount: 0}],
+    params: {
+      amount: {kind: 'num', min: 0, max: 0.5, required: true, note: '拖尾长度（占画面比例，0.2 已很明显）'},
+      centerX: {kind: 'num', min: 0, max: 1, def: 0.5, note: '中心 X（0=左，1=右）'},
+      centerY: {kind: 'num', min: 0, max: 1, def: 0.5, note: '中心 Y（0=上，1=下）'},
+    },
+  },
+
+  distort: {
+    note: '波状扭曲（水波/玻璃感）：用正弦把采样位置推开',
+    noopWhen: [{amount: 0}],
+    params: {
+      amount: {kind: 'num', min: 0, max: 1, required: true, note: '扭曲幅度（0=不变，1≈画面 5%）'},
+      frequency: {kind: 'num', min: 1, max: 20, def: 4, note: '波纹密度（一个方向上的波数）'},
+      phase: {kind: 'num', min: -180, max: 180, def: 0, note: '相位（度）：让波纹的位置平移'},
     },
   },
 };

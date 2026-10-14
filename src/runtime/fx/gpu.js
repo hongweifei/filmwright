@@ -122,6 +122,99 @@ void main(){
   gl_FragColor = vec4(src.rgb * mix(1.0, v, amount), src.a);
 }`;
 
+/**
+ * 色差：红/蓝沿一个方向分开，**越靠边分得越开**（中心干净才像真镜头）。
+ *
+ * ⚠️ 尺寸用**两个 float**（texelX/texelY）而不是 `vec2 texel` —— 调度表统一按
+ * `uniform1f` 逐个传，声明成 vec2 会让 `getUniformLocation('texelX')` 返回 null，
+ * 于是 texel 永远是 0、除以 0 变 inf、整幅 NaN（实测踩到过：效果"什么都不做"）。
+ */
+const FS_CHROMATIC = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float amount, angle, texelX, texelY;
+void main(){
+  vec2 dir = vec2(cos(radians(angle)), sin(radians(angle)));
+  vec2 p = uv - 0.5;
+  float d = length(p) * 2.0;                    // 0=中心，≈1.41=四角
+  vec2 off = dir * vec2(texelX, texelY) * amount * d;
+  vec4 c = texture2D(t, uv);
+  float r = texture2D(t, uv + off).r;
+  float b = texture2D(t, uv - off).b;
+  gl_FragColor = vec4(r, c.g, b, c.a);
+}`;
+
+/**
+ * 胶片颗粒。
+ *
+ * ⚠️ 噪点必须是 **(像素, 帧号) 的纯函数** —— 用 `hash(格子 + 帧号)`，
+ * **绝不读时钟**。读时钟会让同一帧两次渲染不同，直接破坏"第 N 帧只是 N 的函数"
+ * （分片/跳帧/增量复用全崩）。这也让"同一帧永远同一张颗粒"成为可验收的性质。
+ */
+const FS_GRAIN = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float amount, size, seed, texelX, texelY;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void main(){
+  vec4 c = texture2D(t, uv);
+  vec2 cell = floor(uv / (vec2(texelX, texelY) * size));
+  float n = hash(cell + vec2(seed * 17.13, seed * 7.71));
+  float d = (n - 0.5) * 2.0 * amount;
+  gl_FragColor = vec4(clamp(c.rgb + d * c.a, 0.0, 1.0), c.a);
+}`;
+
+/** 马赛克：整块取色（取块中心，避免偏移半格）。 */
+const FS_PIXELATE = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float size, texelX, texelY;
+void main(){
+  vec2 cell = floor(uv / (vec2(texelX, texelY) * size));
+  vec2 p = (cell + 0.5) * vec2(texelX, texelY) * size;
+  gl_FragColor = texture2D(t, clamp(p, vec2(0.0), vec2(1.0)));
+}`;
+
+/**
+ * 径向（缩放）模糊：沿"从中心往外"的方向拖尾。
+ *
+ * 固定 8 个采样点：**GLSL ES 1.0 要求循环边界是常量**，
+ * 所以采样数不做成参数（动态边界在 WebGL1 上不可移植）。
+ */
+const FS_RADIAL = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float amount; uniform vec2 center;
+void main(){
+  vec2 dir = uv - center;
+  vec4 sum = vec4(0.0);
+  for (int i = 0; i < 8; i++) {
+    float k = float(i) / 7.0;
+    sum += texture2D(t, clamp(uv - dir * amount * k, vec2(0.0), vec2(1.0)));
+  }
+  gl_FragColor = sum / 8.0;
+}`;
+
+/** 波状扭曲：用正弦把采样位置推开。phase 让波纹平移（仍与时间无关）。 */
+const FS_DISTORT = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float amount, frequency, phase;
+void main(){
+  float ph = radians(phase);
+  vec2 p = uv;
+  p.x += sin(uv.y * frequency * 6.28318 + ph) * amount * 0.05;
+  p.y += cos(uv.x * frequency * 6.28318 + ph) * amount * 0.05;
+  gl_FragColor = texture2D(t, clamp(p, vec2(0.0), vec2(1.0)));
+}`;
+
+/**
+ * **单趟效果**的调度表：program 名 + 要传的 uniform 名。
+ *
+ * 加一个"一趟就够"的效果只需要在这里加一条 + 写一个 FS_* —— 不再往
+ * apply() 的 if/else 链里塞分支（那条链越长越容易漏传 uniform）。
+ * 需要多趟的（blur/glow）仍在 apply() 里单独处理。
+ */
+const SIMPLE_PASSES = {
+  color: {prog: 'color', uniforms: ['exposure', 'brightness', 'contrast', 'saturation', 'hue', 'temperature']},
+  vignette: {prog: 'vignette', uniforms: ['amount', 'radius', 'softness']},
+  chromatic: {prog: 'chromatic', uniforms: ['amount', 'angle', 'texelX', 'texelY']},
+  grain: {prog: 'grain', uniforms: ['amount', 'size', 'seed', 'texelX', 'texelY']},
+  pixelate: {prog: 'pixelate', uniforms: ['size', 'texelX', 'texelY']},
+  radialBlur: {prog: 'radialBlur', uniforms: ['amount', 'centerX', 'centerY']},
+  distort: {prog: 'distort', uniforms: ['amount', 'frequency', 'phase']},
+};
+
 /** 模糊的趟数与抽头间距。抽头间距 ≤2px 是"采样充分"的保证（见 blurTex 注释）。 */
 function blurPlan(radius) {
   const sigmaTotal = Math.max(radius, 0) / 3;
@@ -148,6 +241,11 @@ class GpuStage {
       glowAdd: this._prog(FS_GLOW_ADD),
       color: this._prog(FS_COLOR),
       vignette: this._prog(FS_VIGNETTE),
+      chromatic: this._prog(FS_CHROMATIC),
+      grain: this._prog(FS_GRAIN),
+      pixelate: this._prog(FS_PIXELATE),
+      radialBlur: this._prog(FS_RADIAL),
+      distort: this._prog(FS_DISTORT),
     };
     this.ok = Object.values(this.progs).every(Boolean);
     if (!this.ok) return;
@@ -270,7 +368,7 @@ class GpuStage {
   }
 
   /** 走完一整条效果链，返回画布（结果已在默认帧缓冲上）。 */
-  apply(srcCanvas, steps) {
+  apply(srcCanvas, steps, n) {
     const gl = this.gl;
     const w = srcCanvas.width, h = srcCanvas.height;
     this._ensure(w, h);
@@ -296,21 +394,14 @@ class GpuStage {
         this._pass(this.progs.glowAdd, curTex, out, u1('intensity', step.intensity), blurT.tex);
         curTarget = out; curTex = out.tex;
         touched = true;
-      } else if (step.type === 'color') {
+      } else {
+        // 单趟效果：表驱动（见 SIMPLE_PASSES）。texelX/texelY 与 seed 由这里补上。
+        const spec = SIMPLE_PASSES[step.type];
+        if (!spec) continue;
         const [out] = this._free([curTex], 1);
-        this._pass(this.progs.color, curTex, out, (p) => {
-          for (const k of ['exposure', 'brightness', 'contrast', 'saturation', 'hue', 'temperature']) {
-            gl.uniform1f(gl.getUniformLocation(p, k), step[k]);
-          }
-        });
-        curTarget = out; curTex = out.tex;
-        touched = true;
-      } else if (step.type === 'vignette' && step.amount > 0) {
-        const [out] = this._free([curTex], 1);
-        this._pass(this.progs.vignette, curTex, out, (p) => {
-          gl.uniform1f(gl.getUniformLocation(p, 'amount'), step.amount);
-          gl.uniform1f(gl.getUniformLocation(p, 'radius'), step.radius);
-          gl.uniform1f(gl.getUniformLocation(p, 'softness'), step.softness);
+        const vals = {...step, texelX: 1 / w, texelY: 1 / h, seed: n ?? 0};
+        this._pass(this.progs[spec.prog], curTex, out, (p) => {
+          for (const k of spec.uniforms) gl.uniform1f(gl.getUniformLocation(p, k), vals[k]);
         });
         curTarget = out; curTex = out.tex;
         touched = true;
@@ -356,7 +447,7 @@ export function applyEffects(srcCanvas, compiled, n) {
     // 没有 WebGL 就如实报错，不要静默跳过（静默跳过会让人以为效果生效了）
     throw new Error('filmwright: 这个环境拿不到 WebGL，无法应用 effects');
   }
-  return STAGE.apply(srcCanvas, evalEffects(compiled, n));
+  return STAGE.apply(srcCanvas, evalEffects(compiled, n), n);
 }
 
 /**

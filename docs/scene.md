@@ -248,6 +248,11 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | `glow` | `radius` 0–36（默认 16）、`intensity` 0–3（默认 0.8）、`threshold` 0–1（默认 0.7） | 辉光/泛光：把比阈值亮的部分抽出来模糊，再加性叠回原图。**不给参数就是一次默认辉光** |
 | `color` | `exposure` −4–4 EV、`brightness` 0–4、`contrast` 0–4、`saturation` 0–4、`hue` −180–180°、`temperature` −1–1 | 调色。顺序：曝光 → 亮度 → 对比 → 饱和 → 色相 → 色温。参数都可省，但**至少得给一个**（全用缺省值等于什么都没做） |
 | `vignette` | `amount` 0–1、`radius` 0.2–2（默认 1）、`softness` 0.01–1（默认 0.5） | 暗角：以中心为原点径向压暗 |
+| `chromatic` | `amount` 0–30（像素）、`angle` −180–180°（默认 0） | 色差：红/蓝分离，**越靠边分得越开**（中心干净才像真镜头） |
+| `grain` | `amount` 0–1、`size` 1–8（默认 1） | 胶片颗粒。噪点是 **(像素, 帧号) 的纯函数**——同一帧永远同一张，不同帧不同 |
+| `pixelate` | `size` 1–64（像素） | 马赛克。`size: 1` 是直通 |
+| `radialBlur` | `amount` 0–0.5、`centerX`/`centerY` 0–1（默认 0.5） | 径向/缩放模糊：沿"从中心往外"拖尾（固定 8 采样点） |
+| `distort` | `amount` 0–1、`frequency` 1–20（默认 4）、`phase` −180–180°（默认 0） | 波状扭曲（水波/玻璃感） |
 
 ```json
 "effects": [
@@ -296,8 +301,9 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 
 ### 还没做的（都是有意留的，别当成 bug）
 
-- **其余 7 个效果**（`chromatic` / `distort` / `grain` / `pixelate` / `radialBlur` /
-  `grade` / `displace`）逐个加 —— 长尾，按需补。
+- **还剩 2 个效果**（`grade` 调色预设 / `displace` 跨层置换）—— 长尾，按需补。
+  `grade` 与已有的 `color` 功能重叠（后者已能调曝光/对比/饱和/色相/色温），
+  `displace` 要用另一层当置换图，需要跨层取纹理。
 - **自定义着色器**：命令式入口（`shots/index.js`）将来可以写，但引擎不背书、不进 schema。
 - **大半径模糊**（`radius > 36`）：需要金字塔（降采样 → 小核 → 升采样）。
   现在超限会**校验报错** —— 因为单个小核在大半径下会变成稀疏采样而出振铃

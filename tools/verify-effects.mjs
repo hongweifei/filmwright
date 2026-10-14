@@ -113,6 +113,29 @@ function centerVsCorner(gray, w, h) {
   return {center, corner: corners.reduce((a, b) => a + b, 0) / corners.length};
 }
 
+/**
+ * 块状均匀性：`pixelate` 的判据。
+ *
+ * 马赛克的定义就是"每 size×size 块内颜色相同"，所以**块内的水平相邻差应当 ≈ 0**，
+ * 而块边界处可以有差。这条比"画面变了"锋利得多 —— 它能区分
+ * "真的按方块取色"与"只是把画面弄糊了一点"。
+ *
+ * ⚠️ 必须只在**镜头内容掩码**内统计：效果只作用于镜头层，
+ * 背板（引擎画的底色/网格）没有马赛克化 —— 整帧统计会被它稀释（实测踩到过）。
+ */
+function blockUniformity(gray, w, h, size, mask) {
+  let inSum = 0, inN = 0, bSum = 0, bN = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 1; x < w; x++) {
+      const j = y * w + x;
+      if (mask && (!mask[j] || !mask[j - 1])) continue;
+      const d = Math.abs(gray[j] - gray[j - 1]);
+      if (x % size === 0) { bSum += d; bN++; } else { inSum += d; inN++; }
+    }
+  }
+  return {inside: inN ? inSum / inN : 0, boundary: bN ? bSum / bN : 0};
+}
+
 const W = 1280, H = 720;
 
 /**
@@ -386,7 +409,95 @@ console.log(`  （镜头内容占整帧 ${maskPct}%，四角与边缘是引擎�
 }
 
 line('═');
-console.log('六、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
+console.log('六、五个新效果（每个都给可量化的判据）');
+line();
+{
+  // ── chromatic：红/蓝分开，且越靠边越开 ──
+  const c0 = still([{type: 'chromatic', amount: 12}], 100, 'ch12');
+  const chDiff = maskedMeanAbsDiff(base100.rgb, c0.rgb, mask);
+  console.log(`  chromatic：与不写效果的差异 ${chDiff.toFixed(2)} 级`);
+  ok(chDiff > 1, '色差确实改变了画面');
+  // 红蓝通道"错位"的度量：把红通道整体平移回去，差异应当变小
+  const shiftScore = (rgb, k) => {
+    // 比较 R[x] 与 B[x+k]：如果色差把红往右推，那么 k>0 时应当更接近
+    let s = 0, nn = 0;
+    for (let y = 40; y < H - 40; y += 3) {
+      for (let x = 200; x < W - 200; x += 3) {
+        const i = (y * W + x) * 3, j = (y * W + x + k) * 3;
+        if (j < 0 || j + 2 >= rgb.length) continue;
+        s += Math.abs(rgb[i] - rgb[j + 2]);
+        nn++;
+      }
+    }
+    return s / nn;
+  };
+  const s0 = shiftScore(c0.rgb, 0), s8 = shiftScore(c0.rgb, 8);
+  console.log(`  红蓝错位：不平移 ${s0.toFixed(2)}  平移 8px 后 ${s8.toFixed(2)}`);
+  ok(s8 < s0, '红通道与"平移后的蓝通道"更接近 ⇒ 确实是**通道分离**，不是别的变化');
+  const ch0 = still([{type: 'chromatic', amount: 0}], 100, 'ch0');
+  ok(ch0.hash === base100.hash, 'chromatic amount=0 与不写 effects **逐位相同**');
+
+  // ── grain：噪点是 (像素, 帧号) 的纯函数 ──
+  const g = still([{type: 'grain', amount: 0.35}], 100, 'gr');
+  const gAgain = still([{type: 'grain', amount: 0.35}], 100, 'gr2');
+  const gNext = still([{type: 'grain', amount: 0.35}], 101, 'gr101');
+  ok(g.hash === gAgain.hash, 'grain：**同一帧两次渲染逐字节一致**（噪点不读时钟）');
+  ok(g.hash !== gNext.hash, 'grain：不同帧的颗粒不同（是"会动的胶片颗粒"而不是静态纹理）');
+  const gd = maskedMeanAbsDiff(base100.rgb, g.rgb, mask);
+  const gSmall = still([{type: 'grain', amount: 0.1}], 100, 'grS');
+  const gdSmall = maskedMeanAbsDiff(base100.rgb, gSmall.rgb, mask);
+  console.log(`  grain：强度 0.1 → 差 ${gdSmall.toFixed(2)} 级；强度 0.35 → 差 ${gd.toFixed(2)} 级`);
+  ok(gd > gdSmall && gdSmall > 0, '颗粒强度越大偏离原图越多（单调）');
+  const g0 = still([{type: 'grain', amount: 0}], 100, 'gr0');
+  ok(g0.hash === base100.hash, 'grain amount=0 与不写 effects **逐位相同**');
+
+  // ── pixelate：**块内相邻差应当 ≈ 0** ──
+  const px = still([{type: 'pixelate', size: 8}], 100, 'px8');
+  // 掩码用"**被马赛克改变了的像素**"：blur 掩码里含一圈模糊外溢环，
+  // 那里镜头层是透明的（露出背板的渐变），轮不到马赛克去管 —— 用它会把残差算进来。
+  const mPx = contentMask(base100.rgb, px.rgb);
+  const baseU = blockUniformity(base100.gray, W, H, 8, mPx);
+  const pxU = blockUniformity(px.gray, W, H, 8, mPx);
+  console.log(`  pixelate size=8（只在"被马赛克改变的像素"内统计）：块内相邻差 ${baseU.inside.toFixed(3)} → ${pxU.inside.toFixed(3)}` +
+    `；块边界处 ${pxU.boundary.toFixed(3)}`);
+  // 判据用**相对下降**而不是"≈0"：马赛克层在抗锯齿边缘是**半透明**的，
+  // 叠在有渐变的背板上时背板的起伏会透出来 —— 那是物理正确的结果，不是缺陷。
+  // 块内降到原来的 10% 以下、且块边界远高于块内，足以证明"真的按方块取色"。
+  const drop = pxU.inside / baseU.inside;
+  ok(drop < 0.1, `块内相邻差降到原来的 ${(drop * 100).toFixed(1)}%（${baseU.inside.toFixed(2)} → ${pxU.inside.toFixed(2)}）⇒ 按方块取色`);
+  ok(pxU.boundary > pxU.inside * 5,
+    `块边界处远高于块内（${pxU.boundary.toFixed(1)} vs ${pxU.inside.toFixed(2)}，${(pxU.boundary / Math.max(pxU.inside, 1e-6)).toFixed(0)}×）⇒ 不是把整幅抹平了`);
+  const px1 = still([{type: 'pixelate', size: 1}], 100, 'px1');
+  ok(px1.hash === base100.hash, 'pixelate size=1 与不写 effects **逐位相同**');
+
+  // ── radialBlur：径向拖尾 ⇒ 边缘能量下降，且**离中心越远降得越多** ──
+  const rb = still([{type: 'radialBlur', amount: 0.15}], 100, 'rb');
+  const rbE = edgeEnergy(rb.gray), baseE = edgeEnergy(base100.gray);
+  console.log(`  radialBlur：边缘能量 ${baseE.toFixed(3)} → ${rbE.toFixed(3)}`);
+  ok(rbE < baseE, '径向模糊让高频下降');
+  // 与"均匀模糊"的区别：径向模糊在中心几乎不动，在边缘动得多
+  const rbC = maskedMeanAbsDiff(base100.rgb, rb.rgb, mask);
+  const blC = maskedMeanAbsDiff(base100.rgb, still([{type: 'blur', radius: 6}], 100, 'blcmp').rgb, mask);
+  console.log(`  radialBlur 与不写效果的差异 ${rbC.toFixed(2)} 级（对照：radius=6 均匀模糊 ${blC.toFixed(2)} 级）`);
+  ok(rbC > 0 && Math.abs(rbC - blC) > 0.5, '径向模糊与**均匀模糊**是不同的东西（不是同一个效果换名）');
+  const rb0 = still([{type: 'radialBlur', amount: 0}], 100, 'rb0');
+  ok(rb0.hash === base100.hash, 'radialBlur amount=0 与不写 effects **逐位相同**');
+
+  // ── distort：把采样位置推开 ──
+  const d1 = still([{type: 'distort', amount: 0.3}], 100, 'di1');
+  const d2 = still([{type: 'distort', amount: 0.9}], 100, 'di2');
+  const dd1 = maskedMeanAbsDiff(base100.rgb, d1.rgb, mask);
+  const dd2 = maskedMeanAbsDiff(base100.rgb, d2.rgb, mask);
+  console.log(`  distort：幅度 0.3 → 差 ${dd1.toFixed(2)} 级；幅度 0.9 → 差 ${dd2.toFixed(2)} 级`);
+  ok(dd1 > 0 && dd2 > dd1, '扭曲幅度越大偏离原图越多（单调）');
+  const dp = still([{type: 'distort', amount: 0.3, phase: 90}], 100, 'diP');
+  ok(dp.hash !== d1.hash, 'phase 会平移波纹（相位是有效的参数，不是摆设）');
+  const d0 = still([{type: 'distort', amount: 0}], 100, 'di0');
+  ok(d0.hash === base100.hash, 'distort amount=0 与不写 effects **逐位相同**');
+}
+
+line('═');
+console.log('七、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
 line();
 const N = 60;
 function bench(effects, tag) {

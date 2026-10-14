@@ -371,3 +371,66 @@ test('命令式与声明式在**当前已实现的能力**上是对等的（这�
   assert.ok(out[0].fx, 'effects 编译');
   assert.equal(out[0].start, 1);
 });
+
+// ─────────────────────── 五个新效果（色差 / 颗粒 / 马赛克 / 径向模糊 / 扭曲）───────────────────────
+
+test('新效果的合法写法都通过，越界都报 SCENE_FX_RANGE', () => {
+  assert.deepEqual(codes([{type: 'chromatic', amount: 12}]), []);
+  assert.deepEqual(codes([{type: 'chromatic', amount: 12, angle: -90}]), []);
+  assert.deepEqual(codes([{type: 'grain', amount: 0.3}]), []);
+  assert.deepEqual(codes([{type: 'grain', amount: 0.3, size: 4}]), []);
+  assert.deepEqual(codes([{type: 'pixelate', size: 8}]), []);
+  assert.deepEqual(codes([{type: 'radialBlur', amount: 0.15}]), []);
+  assert.deepEqual(codes([{type: 'radialBlur', amount: 0.15, centerX: 0.2, centerY: 0.8}]), []);
+  assert.deepEqual(codes([{type: 'distort', amount: 0.3, frequency: 6, phase: 45}]), []);
+  assert.deepEqual(codes([{type: 'chromatic', amount: 99}]), ['SCENE_FX_RANGE']);
+  assert.deepEqual(codes([{type: 'grain', amount: 2}]), ['SCENE_FX_RANGE']);
+  assert.deepEqual(codes([{type: 'pixelate', size: 0}]), ['SCENE_FX_RANGE']);
+  assert.deepEqual(codes([{type: 'radialBlur', amount: 0.9}]), ['SCENE_FX_RANGE']);
+  assert.deepEqual(codes([{type: 'distort', amount: 0.3, frequency: 0}]), ['SCENE_FX_RANGE']);
+  // 多个问题会**一起报**（不是只报第一个）—— 上面那条若漏了 amount 会同时得到
+  // SCENE_FX_PARAM + SCENE_FX_RANGE，这是有意的：一次把能改的都告诉模型。
+  assert.deepEqual(codes([{type: 'distort', frequency: 0}]).sort(),
+    ['SCENE_FX_PARAM', 'SCENE_FX_RANGE']);
+});
+
+test('新效果各自的必填参数与可用参数名都要说清', () => {
+  for (const t of ['chromatic', 'grain', 'pixelate', 'radialBlur', 'distort']) {
+    assert.ok(codes([{type: t}]).includes('SCENE_FX_PARAM'), `${t} 缺必填参数要报`);
+  }
+  const e = validateEffects([{type: 'chromatic', amount: 1, blur: 2}]);
+  assert.deepEqual(e.map((x) => x.code), ['SCENE_FX_PARAM']);
+  assert.ok(/amount/.test(e[0].hint), 'hint 要列出该效果的可用参数');
+});
+
+test('新效果的**直通条件**：写了等于没做时不该进 GPU', () => {
+  const N = {from: 1};
+  const noop = (fx) => isNoopEffects(compileEffects([fx], N), 1);
+  assert.equal(noop({type: 'chromatic', amount: 0}), true);
+  assert.equal(noop({type: 'grain', amount: 0}), true);
+  assert.equal(noop({type: 'pixelate', size: 1}), true, 'size=1 就是一像素一块 = 原图');
+  assert.equal(noop({type: 'radialBlur', amount: 0}), true);
+  assert.equal(noop({type: 'distort', amount: 0}), true);
+  assert.equal(noop({type: 'chromatic', amount: 0.5}), false);
+  assert.equal(noop({type: 'grain', amount: 0.01}), false);
+  assert.equal(noop({type: 'pixelate', size: 2}), false);
+  assert.equal(noop({type: 'radialBlur', amount: 0.01}), false);
+  assert.equal(noop({type: 'distort', amount: 0.01}), false);
+});
+
+test('新效果的参数也能用关键帧，且取值逐个查范围', () => {
+  assert.deepEqual(codes([{type: 'grain', amount: [{beat: 1, v: 0}, {beat: 2, v: 0.4}]}]), []);
+  assert.deepEqual(codes([{type: 'chromatic', amount: [{frame: 1, v: 0}, {frame: 30, v: 10}]}]), []);
+  assert.deepEqual(codes([{type: 'pixelate', size: [{frame: 1, v: 1}, {frame: 20, v: 24}]}]), []);
+  const e = validateEffects([{type: 'pixelate', size: [{frame: 1, v: 1}, {frame: 20, v: 999}]}]);
+  assert.deepEqual(e.map((x) => x.code), ['SCENE_FX_RANGE']);
+});
+
+test('效果登记表完整（加效果时这条会提醒补齐直通条件与说明）', () => {
+  assert.equal(EFFECT_TYPES.length, 9);
+  assert.deepEqual(Object.keys(EFFECT_SPECS).sort(), [...EFFECT_TYPES].sort());
+  for (const t of EFFECT_TYPES) {
+    assert.ok(EFFECT_SPECS[t].noopWhen?.length, `${t} 缺直通条件（逐帧短路要用它）`);
+    assert.ok(EFFECT_SPECS[t].note?.length > 4, `${t} 缺说明`);
+  }
+});
