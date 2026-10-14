@@ -97,6 +97,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-comp.mjs` | **验嵌套合成**：用页面内探针观测本地帧换算（不靠像素比对——整帧含随全局时间漂移的背景/HUD） |
 | `verify-clips.mjs` | 验素材管线 host 侧：抽帧帧数、内容寻址缓存命中、改参数重抽、断点安全、源文件缺失与 start 超时长 |
 | `verify-clip-render.mjs` | 验片段在浏览器里真的取到并画出：帧随 n 变化、同一帧两次相同、源帧映射、未声明片段名报错 |
+| `verify-complex.mjs` | **四项复杂制作能力的协作验收**：同一个夹具项目里同时用图层变换、嵌套循环、素材片段、增量重渲与代理，验规格合法、抽帧缓存、代理分辨率、复用与全新重渲逐帧一致、以及三种能力各自确实改变画面 |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |
