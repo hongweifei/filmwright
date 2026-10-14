@@ -73,8 +73,16 @@
     {"type": "image", "at": "S11", "asset": "filmstrip",
      "heading": "image · 图片素材", "note": "boot 加载完才开画：不会有空白帧"},
 
-    {"type": "compare", "at": "S12", "heading": "compare · 两栏对比",
-     "left": {"title": "生成镜头代码", "items": ["自由度最高", "质量靠模型自觉", "难以为继的风格"]},
-     "right": {"title": "填场景规格", "items": ["秒级校验", "节奏由模板保证", "改词不用改帧号"]}}
+    {"type": "layers", "at": "S12", "layers": [
+      {"content": {"type": "compare", "heading": "layers · 同一镜头里并发多层",
+        "left": {"title": "生成镜头代码", "items": ["自由度最高", "质量靠模型自觉", "难以为继的风格"]},
+        "right": {"title": "填场景规格", "items": ["秒级校验", "节奏由模板保证", "改词不用改帧号"]}},
+       "z": 0, "transform": {"y": -34, "scale": 0.82}},
+      {"content": {"type": "chips", "items": ["z 序", "时间窗 from/to", "各自的 transform", "各自的 animate"]},
+       "z": 1, "from": 40, "to": 220,
+       "transform": {"y": 246, "scale": 0.66},
+       "animate": {"alpha": [{"frame": 1, "v": 0}, {"frame": 14, "v": 1, "ease": "out3"}]},
+       "effects": [{"type": "glow", "intensity": 0.3, "threshold": 0.75}]}
+     ]}
   ]
 }
