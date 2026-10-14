@@ -58,7 +58,19 @@ function facts() {
   const hasClips = existsSync(join(ROOT, 'src/host/media/clips.mjs'))
     && existsSync(join(ROOT, 'src/runtime/clips.js'));
 
-  return {templateCount, checkCount, staticCheckCount, commands, mcpToolCount, blendModes, transitions, hasClips};
+  // 单元测试条数：数 `tests/*.test.mjs` 里的 `^test(`。**实测与 `npm test` 报的
+  // pass 数完全一致**（365 = 365），所以不必在检查器里跑一遍测试 —— 那是几十秒的开销。
+  const testDir = join(ROOT, 'tests');
+  const testCount = readdirSync(testDir)
+    .filter((f) => /\.test\.mjs$/.test(f))
+    .reduce((a, f) => a + (readFileSync(join(testDir, f), 'utf8').match(/^test\(/gm) || []).length, 0);
+
+  // 效果数：从契约的 `EFFECT_TYPES` 读（文档里「N 个效果」会与它比）。
+  const fxSrc = readFileSync(join(ROOT, 'src/contract/effects.js'), 'utf8');
+  const effectCount = (fxSrc.match(/export const EFFECT_TYPES = \[([\s\S]*?)\]/)[1].match(/'/g) || []).length / 2;
+
+  return {templateCount, checkCount, staticCheckCount, commands, mcpToolCount, blendModes,
+    transitions, hasClips, testCount, effectCount};
 }
 
 const F = facts();
@@ -115,6 +127,14 @@ const fixes = [
    make: (m) => `${m[1]}${cnNum(F.staticCheckCount)}${m[3]}`, label: '静态自检道数'},
   {re: /(前)(\d+)(道)/g, numIdx: 2, want: F.staticCheckCount,
    make: (m) => `${m[1]}${F.staticCheckCount}${m[3]}`, label: '静态自检道数'},
+
+  // ── 下面两条是这一轮补的：**自然语言里的数字**（此前完全没有守卫）──
+  // 这几轮修过的过期数字里至少一半属于这一类（72 个单元测试 / 七道 / 10 个效果 /
+  // 九道自检），每次都是**碰巧扫到**。加上之后，漂了就自动红。
+  {re: /(\d+)(\s*个单元测试)/g, numIdx: 1, want: F.testCount,
+   make: (m) => `${F.testCount}${m[2]}`, label: '单元测试数'},
+  {re: /(\d+)(\s*个效果)/g, numIdx: 1, want: F.effectCount,
+   make: (m) => `${F.effectCount}${m[2]}`, label: '效果数'},
 ];
 
 /**
@@ -135,6 +155,19 @@ const FACT_CLAIMS = [
 const problems = [];
 let fixedCount = 0;
 
+// CHANGELOG 的**已发布区**是历史：那里写着"72 个单元测试"是**当时的事实**，
+// 跟着实现改等于篡改历史。所以只检查 `[未发布]` 那一节（及其上方）。
+// 判定：找到第一个不是 `[未发布]` 的版本标题行，从那里开始跳过。
+const RELEASED_FROM = new Map();
+{
+  const cl = join(ROOT, 'CHANGELOG.md');
+  if (existsSync(cl)) {
+    const ls = readFileSync(cl, 'utf8').split('\n');
+    const idx = ls.findIndex((l) => /^##\s*\[(?!未发布)/.test(l));
+    if (idx >= 0) RELEASED_FROM.set(relative(ROOT, cl).replace(/\\/g, '/'), idx);
+  }
+}
+
 for (const file of DOC_FILES) {
   const rel = relative(ROOT, file).replace(/\\/g, '/');
   let text = readFileSync(file, 'utf8');
@@ -142,6 +175,8 @@ for (const file of DOC_FILES) {
   const lines = text.split('\n');
 
   lines.forEach((line, i) => {
+    // CHANGELOG 的已发布区是**历史**，整段跳过（见上面 RELEASED_FROM 的说明）。
+    if (RELEASED_FROM.get(rel) !== undefined && i >= RELEASED_FROM.get(rel)) return;
     // 引述历史的行（CHANGELOG 的修复记录等）跳过：那些是被引述的旧说法，
     // 不是当前断言。判定用「同一行里有修正类动词」这个近似 ——
     // 宁可漏报几行，也不要让记录修复的文字永远报红。
@@ -149,8 +184,15 @@ for (const file of DOC_FILES) {
     // 数字类：可自动修
     for (const rule of fixes) {
       for (const m of line.matchAll(rule.re)) {
+        // ⚠️ **引号里的数字不能改** —— 那是在**引述旧值**，不是当前断言。
+        // 实测踩到：CHANGELOG 里写着「写着「九道自检」（实际十道）」，
+        // 自动修正把引号里那个也改成"十道"，变成"写着「十道自检」（实际十道）」——
+        // **把一句正确的话改成了错的**。只豁免"引述类动词"不够（那行没有触发词）。
+        const before = line.slice(Math.max(0, m.index - 1), m.index);
+        const after = line.slice(m.index + m[0].length, m.index + m[0].length + 1);
+        const quoted = /[「“『"]/.test(before) || /[」”』"]/.test(after);
         const got = Number(CN[m[rule.numIdx]] ?? m[rule.numIdx]);
-        if (got === rule.want) continue;
+        if (quoted || got === rule.want) continue;
         problems.push({
           doc: rel, line: i + 1, kind: 'number', label: rule.label,
           why: `说 ${m[0]}，实际 ${rule.want}`,
