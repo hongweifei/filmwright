@@ -493,3 +493,44 @@ test('每个预设的参数都在 color 的合法范围内（不然展开后会�
     }
   }
 });
+
+// ─────────────────────── 程序化噪声置换 displace ───────────────────────
+
+test('displace：amount 必填 0–1，frequency/phase 有范围，amount=0 是直通', () => {
+  assert.deepEqual(codes([{type: 'displace', amount: 0.5}]), []);
+  assert.deepEqual(codes([{type: 'displace', amount: 1, frequency: 24, phase: -90}]), []);
+  assert.ok(codes([{type: 'displace'}]).includes('SCENE_FX_PARAM'), '缺 amount');
+  assert.deepEqual(codes([{type: 'displace', amount: 1.5}]), ['SCENE_FX_RANGE']);
+  assert.deepEqual(codes([{type: 'displace', amount: 1, frequency: 0}]), ['SCENE_FX_RANGE']);
+  assert.deepEqual(codes([{type: 'displace', amount: 1, frequency: 41}]), ['SCENE_FX_RANGE']);
+  // phase 可以走关键帧（流动由它驱动，仍是 N 的函数）
+  assert.deepEqual(codes([{type: 'displace', amount: 0.6,
+    phase: [{frame: 1, v: 0}, {frame: 40, v: 120, ease: 'linear'}]}]), []);
+});
+
+test('displace 与 distort **不是同一个效果**（正弦 vs 值噪声）', () => {
+  const P = EFFECT_SPECS;
+  assert.ok(/噪声/.test(P.displace.note), '说明要写清它是噪声而不是正弦');
+  assert.ok(/正弦/.test(P.distort.note), 'distort 的说明要写清它是正弦');
+  // 两者的直通条件都是 amount=0，但参数集不同（都是 amount/frequency/phase —— 同名不同义，
+  // 所以这里钉住"说明里写清了区别"，而不是靠参数名区分）
+  assert.deepEqual(Object.keys(P.displace.params).sort(), Object.keys(P.distort.params).sort());
+});
+
+test('**SIMPLE_PASSES 里的每个 prog 都要在 this.progs 注册表里有对应项**', async () => {
+  // 这条是这次踩坑之后加的：`displace` 一开始加了契约与 `SIMPLE_PASSES`，
+  // **漏了 `this.progs` 注册表** —— 于是 pass 查到 `undefined` 程序，
+  // 产出不稳定，且看起来像"着色器数学有问题"（排查绕了一大圈）。
+  //
+  // ⚠️ 不要写成"每个效果类型都要在 SIMPLE_PASSES 里" —— `blur`/`glow`
+  // **本来就不在**（金字塔模糊、亮部提取是专门实现）。要核的是这条**不变量**：
+  // `SIMPLE_PASSES` 里声明的 prog 名，必须在注册表里有对应项。
+  const {readFileSync} = await import('node:fs');
+  const src = readFileSync(new URL('../src/runtime/fx/gpu.js', import.meta.url), 'utf8');
+  const progs = [...src.matchAll(/(\w+): \{prog: '(\w+)'/g)].map((m) => ({type: m[1], prog: m[2]}));
+  assert.ok(progs.length >= 6, `只解析到 ${progs.length} 条 SIMPLE_PASSES 表项 —— 解析写错了`);
+  const missing = progs.filter((p) => !src.includes(`${p.prog}: this._prog(`))
+    .map((p) => `${p.type} 的 prog「${p.prog}」没有 this.progs 注册表项`);
+  assert.deepEqual(missing, [],
+    `漏了注册表项不会报错、只会静默产出不稳定画面。缺：${JSON.stringify(missing)}`);
+});

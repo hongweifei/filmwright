@@ -254,6 +254,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | `radialBlur` | `amount` 0–0.5、`centerX`/`centerY` 0–1（默认 0.5） | 径向/缩放模糊：沿"从中心往外"拖尾（固定 8 采样点） |
 | `distort` | `amount` 0–1、`frequency` 1–20（默认 4）、`phase` −180–180°（默认 0） | 波状扭曲（水波/玻璃感） |
 | `grade` | `look`：`teal-orange` / `filmic` / `noir` / `warm` / `cool`；`amount` 0–1 | 调色预设。**`amount` 在"原样"与该预设之间插值**（0=直通）。编译期展开成一个 `color` 步骤，所以不额外开销 |
+| `displace` | `amount` 0–1、`frequency` 1–40（默认 8）、`phase` −180–180°（默认 0） | **程序化值噪声**置换（热浪/水汽/有机抖动）。与 `distort` 的区别：`distort` 是**正弦**（规则，像水波/玻璃），这里是**值噪声**（不规则，像热浪）。`phase` 走关键帧 ⇒ 热浪流动 |
 
 `grade` 是 `color` 的**预设层**：想快速出"电影感"就用它，要精确控制就用 `color`。
 `amount` 是**连续插值**不是开关——实测去色程度随它单调变化（通道差 27.65 → 21.70 → 14.17）。
@@ -308,8 +309,14 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 
 ### 还没做的（都是有意留的，别当成 bug）
 
-- **还剩 1 个效果**（`displace`）—— 见下面「`displace` 怎么做」：
-  **决定改成"程序化噪声置换"**（不再要跨层纹理），所以它**不是**架构性改动了。
+- **效果链 11 个都做完了**（`blur` `glow` `color` `vignette` `chromatic` `grain`
+  `pixelate` `radialBlur` `distort` `grade` `displace`）。`displace` 是程序化噪声置换
+  （不是跨层纹理），详见下面「`displace` 怎么做」。
+  ⚠️ **新增效果要动三处**：契约（`EFFECT_TYPES`/`EFFECT_SPECS`）、`SIMPLE_PASSES`、
+  **以及 `GpuStage` 的 `this.progs` 注册表**。**漏掉第三处不会报错** ——
+  pass 会拿到 `undefined` 程序，产出**不稳定**画面，看起来完全像"着色器数学有问题"。
+  实测在这上面绕过一大圈（排查记录见下），现在有 `tests/effects.test.mjs` 里
+  一条不变量测试守着（`SIMPLE_PASSES` 里每个 prog 都要在注册表里有对应项）。
 - **自定义着色器**：命令式入口（`shots/index.js`）将来可以写，但引擎不背书、不进 schema。
 - **效果只作用于镜头（或图层）整体**，不能只作用于模板内部的某个元素。
   要那种效果就把它拆成独立的一层（`layers` 容器的每层都能挂自己的 `effects`）。

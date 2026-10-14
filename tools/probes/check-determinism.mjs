@@ -38,7 +38,6 @@ const PRESETS = {
   vignette: {amount: 0.5}, chromatic: {amount: 0.5}, grain: {amount: 0.35},
   pixelate: {size: 10}, radialBlur: {amount: 0.3}, distort: {amount: 0.5},
   grade: {look: 'noir', amount: 1},
-  // 实验版：uniform 名沿用 distort 的（amount/frequency/phase）
   displace: {amount: 0.8, frequency: 8},
 };
 
