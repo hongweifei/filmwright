@@ -16,7 +16,7 @@
 //    drawFrame → applyEffects → drawImage，全是同步的。
 //    （实测这是 WebGL 画布最容易踩的坑：跨任务读会拿到空白，
 //    表现为"效果时有时无"的间歇故障。）
-import {compileEffects} from './compile.js';
+import {compileEffects, evalEffects} from './compile.js';
 
 const VS = `attribute vec2 p; varying vec2 uv;
 void main(){ uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
@@ -191,9 +191,10 @@ function getScratch(w, h) {
  *
  * @param {HTMLCanvasElement} srcCanvas 已经把镜头画好的画布
  * @param {object} compiled             compileEffects 的结果
+ * @param {number} n                    当前帧号（效果参数可以是关键帧轨道）
  * @returns {HTMLCanvasElement|null}    结果画布；全短路时返回 null（调用方走原路）
  */
-export function applyEffects(srcCanvas, compiled) {
+export function applyEffects(srcCanvas, compiled, n) {
   if (!compiled || !compiled.steps.length) return null;
   if (!STAGE) STAGE = new GpuStage();
   if (!STAGE.ok) {
@@ -202,7 +203,7 @@ export function applyEffects(srcCanvas, compiled) {
   }
   let out = srcCanvas;
   let applied = false;
-  for (const step of compiled.steps) {
+  for (const step of evalEffects(compiled, n)) {
     if (step.type === 'blur') {
       if (!(step.radius > 0)) continue;          // **短路**：radius=0 直通，不产生趟
       out = STAGE.blur(out, step.radius);
@@ -220,17 +221,18 @@ export function applyEffects(srcCanvas, compiled) {
  * @param {CanvasRenderingContext2D} ctx   目标上下文
  * @param {object} fx                      compileEffects 的结果
  * @param {number} alpha                   整体透明度
+ * @param {number} n                       当前帧号
  * @param {(ctx: CanvasRenderingContext2D) => void} drawInto 把内容画到给定上下文
  * @returns {boolean} 是否走了效果路径（false ⇒ 调用方应走原路）
  */
-export function paintWithEffects(ctx, fx, alpha, drawInto) {
+export function paintWithEffects(ctx, fx, alpha, n, drawInto) {
   const w = ctx.canvas.width, h = ctx.canvas.height;
   const sc = getScratch(w, h);
   const sctx = sc.getContext('2d');
   sctx.setTransform(1, 0, 0, 1, 0, 0);
   sctx.clearRect(0, 0, w, h);
   drawInto(sctx);
-  const res = applyEffects(sc, fx);
+  const res = applyEffects(sc, fx, n);
   if (!res) return false;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);

@@ -259,6 +259,13 @@ export function validateEffects(effects, path = 'effects') {
     }
     for (const [k, ps] of Object.entries(spec.params)) {
       const v = fx[k];
+      const rangeCheck = (val, valPath, push2) => {
+        if (val < ps.min || val > ps.max) {
+          push2('SCENE_FX_RANGE', valPath,
+            `${k} 超出范围：${val}（允许 ${ps.min}–${ps.max}）`,
+            `${k}：${ps.note} —— 允许范围就是 ${ps.min}–${ps.max}`);
+        }
+      };
       if (v === undefined) {
         if (ps.required) {
           push('SCENE_FX_PARAM', `${fp}.${k}`, `${fx.type} 需要参数 ${k}`,
@@ -266,17 +273,22 @@ export function validateEffects(effects, path = 'effects') {
         }
         continue;
       }
-      if (typeof v !== 'number' || !Number.isFinite(v)) {
-        push('SCENE_FX_PARAM', `${fp}.${k}`,
-          `${k} 必须是数值，收到 ${JSON.stringify(v)}`,
-          `${k}：${ps.note}（${ps.min}–${ps.max}）`);
+      // 参数可以是**静态数值**，也可以是**关键帧轨道**（让模糊渐入、辉光脉冲）。
+      // 轨道形状走 validateKeyTrack —— 与 animate 是**同一份**规则，不另写一套。
+      if (Array.isArray(v)) {
+        out.push(...validateKeyTrack(v, `${fp}.${k}`, {
+          valueNote: `${k}：${ps.note}（每个关键帧的 v 都要在 ${ps.min}–${ps.max} 内）`,
+          checkValue: rangeCheck,
+        }));
         continue;
       }
-      if (v < ps.min || v > ps.max) {
-        push('SCENE_FX_RANGE', `${fp}.${k}`,
-          `${k} 超出范围：${v}（允许 ${ps.min}–${ps.max}）`,
-          `${k}：${ps.note} —— 允许范围就是 ${ps.min}–${ps.max}`);
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        push('SCENE_FX_PARAM', `${fp}.${k}`,
+          `${k} 必须是数值或关键帧数组，收到 ${JSON.stringify(v)}`,
+          `${k}：${ps.note}（${ps.min}–${ps.max}）；也可以写成 [{"beat":1,"v":0},{"beat":2,"v":12,"ease":"out3"}]`);
+        continue;
       }
+      rangeCheck(v, `${fp}.${k}`, push);
     }
   });
   return out;
@@ -364,6 +376,87 @@ export function validateLayers(raw, path = 'shots') {
  *
  * @returns {Array} 错误数组（可能为空）
  */
+/**
+ * 校验**一条关键帧轨道**（单个属性 / 单个效果参数的关键帧数组）。
+ *
+ * 抽出来共用：`animate` 的每个属性、以及**效果参数**的关键帧，规则完全一样。
+ * 规则只能有一份 —— 这个项目在「contract 与 runtime 各写一份校验」上吃过漂移的亏，
+ * 所以效果参数的关键帧不另写一套。
+ *
+ * 关键帧问题一律用**动画那一组错误码**（键形状 / 缓动名 / 顺序），不管轨道挂在哪儿：
+ * 它们描述的是**轨道本身的毛病**，与宿主无关；出错路径会精确到
+ * `…effects[0].radius[1].ease`，定位不受影响。
+ *
+ * @param {Array} keys
+ * @param {string} where  出错路径
+ * @param {object} [opts]
+ *   · valueNote  取值说明（拼进 hint）
+ *   · checkValue (v, keyPath, push) => void  额外的取值检查（如 alpha 0–1、范围）
+ */
+function validateKeyTrack(keys, where, {valueNote = '', checkValue = null} = {}) {
+  const out = [];
+  const push = (code, w, m, h) => out.push(err(code, w, m, h));
+  if (!Array.isArray(keys) || !keys.length) {
+    push('SCENE_ANIM_SHAPE', where, '关键帧必须是非空数组',
+      '形如 [{"beat":1,"v":0},{"beat":2,"v":40,"ease":"out3"}]' + (valueNote ? `；${valueNote}` : ''));
+    return out;
+  }
+  const times = [];
+  let base = null;
+  keys.forEach((k, i) => {
+    const kw = `${where}[${i}]`;
+    if (!k || typeof k !== 'object' || Array.isArray(k)) {
+      push('SCENE_ANIM_KEY', kw, '关键帧必须是对象', '形如 {"beat":1,"v":0,"ease":"out3"}');
+      return;
+    }
+    if (typeof k.v !== 'number' || !Number.isFinite(k.v)) {
+      push('SCENE_ANIM_KEY', `${kw}.v`, `关键帧缺少数值 v，收到 ${JSON.stringify(k.v)}`,
+        'v 是要到达的值，例如 40');
+      return;   // 没有合法的 v 就没法继续判取值
+    }
+    const hasBeat = k.beat !== undefined;
+    const hasFrame = k.frame !== undefined;
+    if (hasBeat === hasFrame) {
+      push('SCENE_ANIM_KEY', kw,
+        hasBeat ? 'beat 与 frame 只能给一个' : '关键帧必须给 beat 或 frame',
+        'beat 是第几拍（1 起），frame 是节点内第几帧（1 起）');
+    } else {
+      const name = hasBeat ? 'beat' : 'frame';
+      const t = hasBeat ? k.beat : k.frame;
+      // 同一条轨道内**不允许混用两种时间基** —— 两者的序数不可比，
+      // 混用几乎必然是写错，且"递增"检查会变成无意义的比较。
+      if (base === null) base = name;
+      else if (base !== name) {
+        push('SCENE_ANIM_KEY', kw,
+          `同一轨道里混用了 ${base} 与 ${name} 两种时间基`,
+          '一条轨道内只用一种：要么全 beat（跟着节拍走），要么全 frame（跟绝对帧走）');
+      }
+      if (!Number.isInteger(t) || t < 1) {
+        push('SCENE_ANIM_KEY', `${kw}.${name}`,
+          `${name} 必须是 ≥1 的整数，收到 ${JSON.stringify(t)}`,
+          name === 'beat' ? 'beat: 1 表示第一拍（1 起序数）' : 'frame: 1 表示该节点的第一帧（1 起序数）');
+      } else {
+        times.push(t);
+      }
+    }
+    if (k.ease !== undefined && !EASE_NAMES.includes(k.ease)) {
+      push('SCENE_ANIM_EASE', `${kw}.ease`, `不认识的缓动 ${JSON.stringify(k.ease)}`,
+        `可用：${EASE_NAMES.join(' / ')}`);
+    }
+    if (checkValue) checkValue(k.v, `${kw}.v`, push);
+  });
+
+  for (let i = 1; i < times.length; i++) {
+    if (times[i] <= times[i - 1]) {
+      push('SCENE_ANIM_ORDER', `${where}[${i}]`,
+        `关键帧时间必须严格递增，收到 ${times[i - 1]} → ${times[i]}`,
+        '每个关键帧都要比前一个晚；同一时间点上不能有两个值');
+      break;
+    }
+  }
+  return out;
+}
+
 export function validateAnimate(animate, transform, path = 'animate') {
   const out = [];
   const push = (code, where, message, hint) => out.push(err(code, where, message, hint));
@@ -391,73 +484,18 @@ export function validateAnimate(animate, transform, path = 'animate') {
         `${prop} 同时出现在 transform 与 animate 里（有歧义）`,
         '二选一：要静态值就写在 transform，要动画就只留在 animate');
     }
-    const keys = animate[prop];
-    if (!Array.isArray(keys) || !keys.length) {
-      push('SCENE_ANIM_SHAPE', where, `${prop} 的关键帧必须是非空数组`,
-        '形如 [{"beat":1,"v":0},{"beat":2,"v":40,"ease":"out3"}]');
-      continue;
-    }
-
-    const times = [];
-    let base = null;
-    keys.forEach((k, i) => {
-      const kw = `${where}[${i}]`;
-      if (!k || typeof k !== 'object' || Array.isArray(k)) {
-        push('SCENE_ANIM_KEY', kw, '关键帧必须是对象', '形如 {"beat":1,"v":0,"ease":"out3"}');
-        return;
-      }
-      if (typeof k.v !== 'number' || !Number.isFinite(k.v)) {
-        push('SCENE_ANIM_KEY', `${kw}.v`, `关键帧缺少数值 v，收到 ${JSON.stringify(k.v)}`,
-          'v 是要到达的值，例如 40');
-        return;   // 没有合法的 v 就没法继续判取值
-      }
-      const hasBeat = k.beat !== undefined;
-      const hasFrame = k.frame !== undefined;
-      if (hasBeat === hasFrame) {
-        push('SCENE_ANIM_KEY', kw,
-          hasBeat ? 'beat 与 frame 只能给一个' : '关键帧必须给 beat 或 frame',
-          'beat 是第几拍（1 起），frame 是节点内第几帧（1 起）');
-      } else {
-        const name = hasBeat ? 'beat' : 'frame';
-        const t = hasBeat ? k.beat : k.frame;
-        // 同一属性内**不允许混用两种时间基** —— 两者的序数不可比，
-        // 混用几乎必然是写错，且"递增"检查会变成无意义的比较。
-        if (base === null) base = name;
-        else if (base !== name) {
-          push('SCENE_ANIM_KEY', kw,
-            `同一属性里混用了 ${base} 与 ${name} 两种时间基`,
-            '一个属性内只用一种：要么全 beat（跟着节拍走），要么全 frame（跟绝对帧走）');
+    out.push(...validateKeyTrack(animate[prop], where, {
+      checkValue: (v, kp, p) => {
+        if (prop === 'alpha' && (v < 0 || v > 1)) {
+          p('SCENE_ANIM_VALUE', kp, `alpha 的关键帧值必须在 0–1，收到 ${v}`,
+            'alpha: 0 全透明、1 不透明');
         }
-        if (!Number.isInteger(t) || t < 1) {
-          push('SCENE_ANIM_KEY', `${kw}.${name}`,
-            `${name} 必须是 ≥1 的整数，收到 ${JSON.stringify(t)}`,
-            name === 'beat' ? 'beat: 1 表示第一拍（1 起序数）' : 'frame: 1 表示该节点的第一帧（1 起序数）');
-        } else {
-          times.push(t);
+        if (prop === 'scale' && v <= 0) {
+          p('SCENE_ANIM_VALUE', kp, `scale 的关键帧值必须 > 0，收到 ${v}`,
+            'scale 是倍数，1 为原大');
         }
-      }
-      if (k.ease !== undefined && !EASE_NAMES.includes(k.ease)) {
-        push('SCENE_ANIM_EASE', `${kw}.ease`, `不认识的缓动 ${JSON.stringify(k.ease)}`,
-          `可用：${EASE_NAMES.join(' / ')}`);
-      }
-      if (prop === 'alpha' && (k.v < 0 || k.v > 1)) {
-        push('SCENE_ANIM_VALUE', `${kw}.v`, `alpha 的关键帧值必须在 0–1，收到 ${k.v}`,
-          'alpha: 0 全透明、1 不透明');
-      }
-      if (prop === 'scale' && k.v <= 0) {
-        push('SCENE_ANIM_VALUE', `${kw}.v`, `scale 的关键帧值必须 > 0，收到 ${k.v}`,
-          'scale 是倍数，1 为原大');
-      }
-    });
-
-    for (let i = 1; i < times.length; i++) {
-      if (times[i] <= times[i - 1]) {
-        push('SCENE_ANIM_ORDER', `${where}[${i}]`,
-          `关键帧时间必须严格递增，收到 ${times[i - 1]} → ${times[i]}`,
-          '每个关键帧都要比前一个晚；同一时间点上不能有两个值');
-        break;
-      }
-    }
+      },
+    }));
   }
   return out;
 }

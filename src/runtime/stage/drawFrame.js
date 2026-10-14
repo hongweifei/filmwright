@@ -165,13 +165,13 @@ function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
   const hasLayer = !!tr && (tr.x || tr.y || tr.rotate || (tr.scale !== undefined && tr.scale !== 1)
     || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
 
-  // 有效果链且**不全直通** ⇒ 先把镜头画进离屏画布，过 GPU，再贴回主画布。
-  // 这样做效果只作用于这一个镜头，主画布上引擎已画的背景不受影响。
-  if (shot.fx && !isNoopEffects(shot.fx)) {
-    const done = paintWithEffects(ctx, shot.fx, combined,
+  // 有效果链且**这一帧不全直通** ⇒ 先把镜头画进离屏画布，过 GPU，再贴回主画布。
+  // 逐帧判"是否直通"是必要的：radius 可以是关键帧轨道，"从 0 渐入"的第一帧
+  // 本身就是直通的，那一帧不该进 GPU（省一趟，也让起点与不写效果逐位一致）。
+  if (shot.fx && !isNoopEffects(shot.fx, n)) {
+    const done = paintWithEffects(ctx, shot.fx, combined, n,
       (c) => paintShot(c, shot, n, t, accent, tr, hasLayer, combined));
     if (done) return;
-    // 全短路 → 落到下面的常规路径
   }
 
   // 未声明 transform 且无需淡入 → 与「没有图层合成」时逐字节一致（快路径）。

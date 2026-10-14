@@ -106,7 +106,45 @@ for (let i = 1; i < samples.length; i++) {
 ok(mono, `边缘能量随半径**单调下降**（${samples.map((s) => s.e.toFixed(1)).join(' → ')}）—— 方向正确`);
 
 line('═');
-console.log('三、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
+console.log('四、关键帧参数：模糊**渐入**（radius 从 0 长到 24）');
+line();
+const kfFx = [{type: 'blur', radius: [{frame: 1, v: 0}, {frame: 60, v: 24}]}];
+// 基准要在**同一帧**上取：上面那个 none 是第 100 帧的画面，拿来跟第 1 帧比是错的
+// （不同帧的内容本来就不一样，画面不同不能说明短路有没有生效）。
+const none1 = still(null, 1, 'none1');
+const kf1 = still(kfFx, 1, 'kf1');
+console.log(`  第  1 帧 不写 effects hash ${none1.hash}`);
+console.log(`  第  1 帧 轨道起点   hash ${kf1.hash}   （radius=0）`);
+ok(kf1.hash === none1.hash,
+  '起点（radius=0）与不写 effects **逐位相同** —— 逐帧短路生效，起点不吃一趟 GPU');
+
+const eNone1 = edgeEnergy(none1.gray);
+const kfSamples = [];
+for (const fr of [15, 30, 45, 60]) {
+  // **同帧配对**：模糊有没有生效，只能拿"这一帧有效果"与"这一帧没效果"比。
+  // 跨帧比是错的 —— 镜头的要点在错峰入场，不同帧的内容本来就不一样，
+  // 画面差异里混着内容差异（第一版就是这么错判的）。
+  const withFx = still(kfFx, fr, 'kf' + fr);
+  const base = still(null, fr, 'base' + fr);
+  const e = edgeEnergy(withFx.gray), be = edgeEnergy(base.gray);
+  kfSamples.push({fr, e, baseE: be, hash: withFx.hash});
+  console.log(`  第 ${String(fr).padStart(2)} 帧 有模糊 ${e.toFixed(3)}  无效果 ${be.toFixed(3)}   hash ${withFx.hash}`);
+}
+ok(kfSamples.every((s) => s.e < s.baseE), '每一帧都比**同帧**的不写 effects 更模糊');
+let monoT = true;
+for (let i = 1; i < kfSamples.length; i++) {
+  if (!(kfSamples[i].e < kfSamples[i - 1].e)) monoT = false;
+}
+ok(monoT, `边缘能量随时间**单调下降**（${kfSamples.map((s) => s.e.toFixed(2)).join(' → ')}）—— 确实在渐入`);
+
+// 最锋利的一条：关键帧的**终点**应当与等值静态参数逐位相同 ——
+// 它同时证明了「插值端点精确」与「轨道求值没错位」两件事。
+const static24 = still([{type: 'blur', radius: 24}], 60, 'st24');
+ok(static24.hash === kfSamples[kfSamples.length - 1].hash,
+  '第 60 帧（轨道终点 v=24）与静态 radius=24 **逐位相同**（端点精确、没错位）');
+
+line('═');
+console.log('五、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
 line();
 const N = 60;
 function bench(effects, tag) {

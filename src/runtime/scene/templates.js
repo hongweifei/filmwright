@@ -807,7 +807,7 @@ export function compileScene(scene, tl) {
           tpl: tpl2,
           transform: layer.transform,
           anim: compileAnimate(layer.animate, {beats: contentShot.beats, from: ls}),
-          fx: compileEffects(layer.effects),
+          fx: compileEffects(layer.effects, {beats: contentShot.beats, from: ls}),
         };
       });
       // 由远到近：z 小的先画（在下），同 z 按声明顺序
@@ -842,8 +842,8 @@ export function compileScene(scene, tl) {
                 }
               };
               // 层自己的效果链：与镜头级走**同一个助手**（否则两处合成逻辑会漂移）
-              if (L.fx && !isNoopEffects(L.fx)) {
-                if (paintWithEffects(ctx, L.fx, tr?.alpha ?? 1, paint)) continue;
+              if (L.fx && !isNoopEffects(L.fx, n)) {
+                if (paintWithEffects(ctx, L.fx, tr?.alpha ?? 1, n, paint)) continue;
               }
               paint(ctx);
             }

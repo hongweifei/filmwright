@@ -3,43 +3,65 @@ import {isValidTransform} from '../composite/layer.js';
 import {compileAnimate} from '../scene/animate.js';
 import {validateAnimate} from '../../contract/scene.js';
 import {compileEffects} from '../fx/compile.js';
+import {EFFECT_SPECS} from '../../contract/effects.js';
 
 let SHOTS = [];
 
 /**
- * 编译一个镜头的 `animate`，并做**两条只有绑定期才能查的校验**。
+ * 查一处的 `beat` 锚点是否可用（**只有绑定期才知道**的两条）。
  *
- * 为什么这两条不能放在 contract 里：它们都要知道**该节点的节拍表**，
+ * 为什么不能放在 contract 里：它们都要知道**该节点的节拍表**，
  * 而节拍表是编译期（templates.js）或手写镜头自己声明的 —— 到绑定这一步才齐。
  * 好消息是绑定发生在任何绘制之前，所以它仍是"绘制前就报"，不是渲染期崩。
  *
  * 形状层的校验（属性名/键序/缓动名/取值）已在 contract 里做过，这里不重复。
  */
-function compileShotAnimate(s) {
-  if (!s.animate || typeof s.animate !== 'object') return null;
-  const beats = Array.isArray(s.beats) ? s.beats : [];
-  for (const [prop, keys] of Object.entries(s.animate)) {
+function checkBeatAnchors(tracks, beats, s, what) {
+  for (const [name, keys] of Object.entries(tracks ?? {})) {
     if (!Array.isArray(keys)) continue;              // contract 已报，这里跳过
     for (const k of keys) {
       if (!k || typeof k !== 'object' || k.beat === undefined) continue;
       if (!beats.length) {
         const e = new Error(
-          `filmwright: 关键帧用了 beat 锚点，但这个镜头没有节拍表（属性 ${prop}，start=${s.start}）`);
+          `filmwright: 关键帧用了 beat 锚点，但这个节点没有节拍表（${what} ${name}，start=${s.start}）`);
         e.code = 'SCENE_ANIM_NO_BEATS';
-        e.hint = '两条出路：改用 frame 锚点（节点内第几帧），或给这个镜头声明 beats';
+        e.hint = '两条出路：改用 frame 锚点（节点内第几帧），或给这个节点声明 beats';
         throw e;
       }
       if (k.beat > beats.length) {
         const e = new Error(
-          `filmwright: 关键帧用了第 ${k.beat} 拍，但这个镜头只有 ${beats.length} 拍` +
-          `（属性 ${prop}，start=${s.start}）`);
+          `filmwright: 关键帧用了第 ${k.beat} 拍，但这个节点只有 ${beats.length} 拍` +
+          `（${what} ${name}，start=${s.start}）`);
         e.code = 'SCENE_ANIM_RANGE';
-        e.hint = `这个镜头的拍号是 1–${beats.length}`;
+        e.hint = `这个节点的拍号是 1–${beats.length}`;
         throw e;
       }
     }
   }
-  return compileAnimate(s.animate, {beats, from: s.start});
+}
+
+/**
+ * 编译一个节点的关键帧：`animate`（变换属性）与 `effects`（效果参数）**都编译**。
+ *
+ * 两处的 beat 锚点都要查 —— 效果参数的关键帧同样可能写到不存在的拍上，
+ * 而 contract 只能查形状（它不知道拍数）。
+ */
+function compileNodeTracks(s) {
+  const beats = Array.isArray(s.beats) ? s.beats : [];
+  const node = {beats, from: s.start};
+  if (s.animate) checkBeatAnchors(s.animate, beats, s, 'animate');
+  // 效果参数里是**关键帧轨道**的那些也要查（静态数值没有 beat，会被跳过）
+  for (const [i, fx] of (s.effects ?? []).entries()) {
+    if (!fx || typeof fx !== 'object') continue;
+    const spec = EFFECT_SPECS[fx.type];
+    if (!spec) continue;
+    const tracks = {};
+    for (const [k, ps] of Object.entries(spec.params)) {
+      if (Array.isArray(fx[k])) tracks[k] = fx[k];
+    }
+    checkBeatAnchors(tracks, beats, s, `effects[${i}]`);
+  }
+  return {anim: compileAnimate(s.animate, node), fx: compileEffects(s.effects, node)};
 }
 
 /**
@@ -149,7 +171,7 @@ export function bindShots(declared, totalFrames) {
   SHOTS = declared.map((s, i) => {
     const from = s.start;
     const to = i + 1 < declared.length ? declared[i + 1].start - 1 : totalFrames;
-    return {...s, from, to, anim: compileShotAnimate(s), fx: compileEffects(s.effects)};
+    return {...s, from, to, ...compileNodeTracks({...s, start: from})};
   });
   let cursor = 1;
   for (const s of SHOTS) {
