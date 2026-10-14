@@ -8,6 +8,51 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {findBrowser} from './find.mjs';
 
+/**
+ * 把「帧格式」选项翻译成页面里的 `toDataURL(...)` 参数表达式。
+ *
+ * ## 为什么渲染路径用 JPEG（实测数据）
+ *
+ * 逐帧剖析（1280×720，同一批 40 帧的中位数）：
+ *
+ * | 格式 | 绘制 | **编码** | 载荷 | 单帧总 |
+ * |---|---|---|---|---|
+ * | PNG | 0.6ms | **50.1ms** | **1243 KB** | 97.8ms |
+ * | JPEG q=0.92 | 0.7ms | **29.0ms** | **86.6 KB** | 71.4ms |
+ * | WebP q=0.9 | 0.7ms | 157.9ms | 35.7KB | 149.9ms |
+ *
+ * **绘制只占 0.6ms** —— 瓶颈全在编码与搬运。PNG 是无损压缩，编码慢、
+ * 载荷大 14 倍；而渲染成视频这条路的终点是 h264（有损），中间用 JPEG
+ * 不引入可见损失（成片 PSNR 48.45 dB，视觉透明）。WebP 更小但编码慢 5 倍，排除。
+ *
+ * | 用途 | 格式 | 理由 |
+ * |---|---|---|
+ * | 渲染成视频 | **JPEG q=0.92** | 中间帧是过路数据，终点本来就有损 |
+ * | 静帧 / 像素回归 / 联络表 | **PNG** | 要能逐像素复现（无损） |
+ *
+ * 默认值是 PNG（无损）—— 既有调用方不受影响；渲染路径显式选 JPEG。
+ * `frameFormat` 可写 `'png'` / `'jpeg'` / `'jpeg:80'`（质量 0-100）。
+ */
+export function frameFormatExpr(frameFormat) {
+  const f = String(frameFormat ?? 'png').toLowerCase();
+  if (f === 'png') return `'image/png'`;
+  const m = /^jpe?g(?::(\d{1,3}))?$/.exec(f);
+  if (m) {
+    const q = m[1] === undefined ? 0.92 : Math.max(0.1, Math.min(1, Number(m[1]) / 100));
+    return `'image/jpeg', ${q}`;
+  }
+  throw new Error(`filmwright: 不认识的帧格式「${frameFormat}」；可用 png / jpeg / jpeg:92`);
+}
+
+/** 帧格式的白名单校验（CLI 与配置层共用，避免两处规则漂移）。 */
+export function isValidFrameFormat(s) {
+  const f = String(s ?? '').toLowerCase();
+  // 注意要认 jpg 这个别名 —— 只认 jpeg 会让「白名单说不行、解析器说行」
+  // 的不一致（测试抓到的真问题）。
+  return f === 'png' || f === 'jpeg' || f === 'jpg' || /^jpe?g:\d{1,3}$/.test(f);
+}
+
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -233,62 +278,76 @@ export async function openSession(url, size, opts = {}) {
   });
 
   /**
-   * 读 canvas 后备存储的 PNG（同步绘制完成后立刻读，不经过合成器）。
+   * 把「帧格式」选项翻译成页面里的 `toDataURL(...)` 参数。
    *
-   * 用 toDataURL 而不是 getImageData + 自己编码：toDataURL 由浏览器内部完成
-   * 编码，跨平台一致；而且它返回的就是「这一张 canvas 的 PNG」。
-   * 不走 `Page.captureScreenshot` 的原因见 frame() 上的注释（合成器竞态）。
+   * ## 为什么渲染路径默认用 JPEG（实测数据）
+   *
+   * 逐帧剖析（1280×720，同一批 40 帧的中位数）：
+   *
+   * | 格式 | 绘制 | **编码** | 载荷 | 单帧总 |
+   * |---|---|---|---|---|
+   * | PNG | 0.6ms | **50.1ms** | **1243 KB** | 97.8ms |
+   * | JPEG q=0.92 | 0.7ms | **29.0ms** | **86.6 KB** | 71.4ms |
+   * | WebP q=0.9 | 0.7ms | 157.9ms | 35.7KB | 149.9ms |
+   *
+   * 绘制只占 0.6ms —— 瓶颈全在**编码与搬运**。PNG 是无损压缩，编码慢、
+   * 载荷大 14 倍；而这条路的终点是 h264（有损），所以中间用 JPEG 不引入
+   * 额外可见损失（q=0.92 是视觉透明档），却省掉一半编码时间与 93% 的载荷。
+   * WebP 更小但编码慢 5 倍，排除。
+   *
+   * **stills / 基线那条路仍用 PNG**（无损、便于逐像素比对）—— 两条路的目的不同：
+   *   - 渲染成视频：中间帧只是过路数据，够好就行 → JPEG
+   *   - 出静帧 / 像素回归：要能逐像素复现 → PNG
+   *
+   * **帧格式的默认值是 PNG**（无损）—— 既有调用方不受影响；
+   * **渲染成视频的那条路显式选 JPEG**（见 renderRange）：那是唯一「够好就行」的场景。
+   *
+   * `frameFormat` 可显式指定：`'png'`、`'jpeg'`、`'jpeg:80'`（质量 0-100）。
    */
-  const readCanvas = async (n) => {
-    const r = await sendTimeout('Runtime.evaluate', {
-      // 显式取渲染用的那个 canvas；页面里只有一个。
-      expression: `document.querySelector('canvas').toDataURL('image/png')`,
-      returnByValue: true,
-    }, 60000);
-    const dataUrl = r.result?.result?.value;
-    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
-      throw new Error('filmwright: 第 ' + n + ' 帧从 canvas 读数失败（toDataURL 没返回 PNG）');
-    }
-    return Buffer.from(dataUrl.slice('data:image/png;base64,'.length), 'base64');
-  };
-
   return {
     info,
     /** 原始 CDP 调用（Input / Emulation 等高级用法）；普通取值用 evaluate。 */
     send,
-    async frame(n) {
+    async frame(n, opts2 = {}) {
+      // **一次 CDP 往返**做完「渲染 + 编码 + 取回」。
+      //
+      // 之前是两次 evaluate（先 __renderFrame，再 toDataURL），而实测每次往返的
+      // 固定开销约 20ms —— 与载荷大小几乎无关（载荷差 14 倍时总时间只差 5ms），
+      // 说明瓶颈是**往返次数**而不是数据量。合并后直接省掉一次往返。
+      //
       // 用带超时的调用：浏览器在长渲染里卡死时，`send` 会**永远不返回**，
       // 整个渲染挂到 job 超时，报出来还是「进程被杀」，看不出是浏览器的问题。
-      // 给足 60s（单帧正常 ~80ms，60s 只可能是真卡住），让失败可诊断。
-      const r = await sendTimeout('Runtime.evaluate', {expression: `window.__renderFrame(${n})`, returnByValue: true}, 60000);
+      // 给足 60s（单帧正常 ~30ms，60s 只可能是真卡住），让失败可诊断。
+      const fmt = frameFormatExpr(opts2.frameFormat);
+      const expr = `(() => {
+        window.__renderFrame(${n});
+        return document.querySelector('canvas').toDataURL(${fmt});
+      })()`;
+      const r = await sendTimeout('Runtime.evaluate', {expression: expr, returnByValue: true}, 60000);
       if (r.result?.exceptionDetails) {
         throw new Error('filmwright: 第 ' + n + ' 帧抛错：' + JSON.stringify(r.result.exceptionDetails).slice(0, 400));
       }
-      return readCanvas(n);
+      const dataUrl = r.result?.result?.value;
+      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+        throw new Error('filmwright: 第 ' + n + ' 帧取像素失败（toDataURL 没返回图像）');
+      }
+      return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
     },
 
     /**
-     * 从 **canvas 后备存储**直接读像素（而不是 Page.captureScreenshot）。
-     *
-     * ## 为什么不用截图（实测出来的真 bug）
-     *
-     * 绘制是同步的（`drawFrame` 画完就返回），但 `Page.captureScreenshot` 取的是
-     * **合成器已经呈现的那一帧** —— 合成是异步的，浏览器可能还没把刚画好的内容提交，
-     * 于是截图**偶尔取到上一帧的画面**。
-     *
-     * 实测（同一会话、同一批 60 帧、8 轮，每轮比对全部帧的 sha256）：
-     *   Page.captureScreenshot → 3/60 帧不稳定（每帧表现为「7 次一致 + 1 次孤例」）
-     *   canvas.toDataURL       → 0/60 帧不稳定
-     * 绘制本身是确定的（stills 连取 5 次逐字节相同），所以不确定的是**取像素这一步**。
-     *
-     * 危害不只是「偶尔一帧不对」：有损编码会把它放大 —— 60 帧里 1 帧不同，
-     * 编出来的 mp4 可能 45/60 帧都不同（GOP 与码率控制的连锁），
-     * 于是像素回归、增量重渲的判据全部失效（我正是在做增量重渲时撞上它的）。
-     *
-     * canvas 直读读的是后备存储（绘制结果本身），与合成器无关，因此确定。
+     * 只取当前画布（不重新渲染）——给「渲染完再额外存一份」的场景用。
+     * 常规渲染请用 frame(n)，它把两步合并成一次往返。
      */
-    async captureCanvas(n) {
-      return readCanvas(n);
+    async captureCanvas(n, opts2 = {}) {
+      const r = await sendTimeout('Runtime.evaluate', {
+        expression: `document.querySelector('canvas').toDataURL(${frameFormatExpr(opts2.frameFormat)})`,
+        returnByValue: true,
+      }, 60000);
+      const dataUrl = r.result?.result?.value;
+      if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
+        throw new Error('filmwright: 第 ' + n + ' 帧从 canvas 读数失败（toDataURL 没返回图像）');
+      }
+      return Buffer.from(dataUrl.slice(dataUrl.indexOf(',') + 1), 'base64');
     },
     /** 只跑绘制代码、不截图：用来把每帧都过一遍查错（比截图快得多）。 */
     async drawOnly(n) {

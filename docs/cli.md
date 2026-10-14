@@ -197,6 +197,7 @@ filmwright render --project <项目目录> [--shards N|auto] [--resume] [--from 
 ```bash
 filmwright render --project <目录> [--out x.mp4] [--shards N|auto] [--from N --to M]
                   [--resume] [--incremental] [--proxy 0.5] [--seg-frames 300]
+                  [--frame-format jpeg|png] [--preset medium]
 ```
 
 | 开关 | 作用 |
@@ -206,6 +207,22 @@ filmwright render --project <目录> [--out x.mp4] [--shards N|auto] [--from N -
 | `--incremental` | **跨次**复用：按内容哈希切段，只重渲变化了的段。scene 项目按镜头归因——改一个镜头只重渲覆盖它的那几段 |
 | `--proxy 0.5` | 代理渲染：半分辨率（或任意 0–1 比例）快速预览。**只改输出尺寸，不改绘制逻辑**，构图与成片一致 |
 | `--seg-frames N` | `--incremental` 的段长（默认 300 帧 ≈ 10 秒） |
+| `--frame-format <fmt>` | 中间帧格式：`jpeg`（默认）/ `jpeg:92` / `png`。**jpeg 快约 3.75×**（实测 48.4 vs 181.3 ms/帧），代价是产物约大 24%；要逐像素比对时用 `png` |
+| `--preset <p>` | x264 编码预设（默认 `medium`）。越慢压得越小；渲染瓶颈通常不在这里 |
+
+**性能**：瓶颈是**取像素与搬运**，不是绘制。实测（1280×720）绘制只占 0.6ms，
+而 PNG 编码 50.1ms、载荷 1243KB/帧。所以中间帧默认改用 JPEG（载荷降到 87KB），
+并把每帧的**两次 CDP 往返合并成一次**：
+
+| 配置 | ms/帧 | 相对最初 |
+|---|---|---|
+| 最初（PNG + 每帧两次往返） | 217.3 | 1.0× |
+| 合并往返 + JPEG 中间帧 | 66.3 | **3.3×** |
+| 再加 4 片并行 | 30.5 | **7.1×** |
+
+画质代价：与 PNG 路线的成片 PSNR **48.45 dB**（>45dB 属视觉透明）。
+分片现在确实有效（4 片 2.17×）—— 之前「分片更慢」的根因正是 PNG 的 1.2MB/帧载荷
+把 node 主线程堵住了，详见 [LIMITATIONS 第 6 节](../LIMITATIONS.md)。
 
 `--incremental` 的键分**两层**，这样才能「改一处只重渲一小段」：
 

@@ -20,6 +20,7 @@ import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
 import {exportSrt, readTranslation} from '../media/srt.mjs';
 import {prepareClips} from '../media/clips.mjs';
+import {isValidFrameFormat} from '../browser/session.mjs';
 import {
   segmentDir, segmentKey, planSegments, findCached, recordSegment, pruneSegments,
   engineFingerprint, globalFingerprint, collectShotDeps, mergeDeps,
@@ -391,6 +392,38 @@ export function resolveShards(raw, total, {cores, freeBytes} = {}) {
   return want;
 }
 
+/**
+ * 中间帧格式（渲染成视频时用）。
+ *
+ * 默认 `jpeg`：实测 PNG 编码 50.1ms / 载荷 1243KB，JPEG q=0.92 编码 29.0ms / 载荷 87KB
+ * （1280×720，40 帧中位数），而这条路终点是 h264 有损编码 —— 中间用 JPEG 看不出差别。
+ * 想要逐帧无损（例如拿去做像素比对）就传 `--frame-format png`。
+ */
+export function frameFormatOf(ctx) {
+  const raw = ctx.args['frame-format'];
+  if (raw === undefined) return 'jpeg';
+  const s = String(raw);
+  // 用与 session.mjs 同一个白名单判定（避免两处规则漂移）
+  if (isValidFrameFormat(s)) return s.toLowerCase();
+  const e = new Error(`filmwright: 不认识的帧格式「${s}」；--frame-format 可用 png / jpeg / jpeg:92`);
+  e.code = 'BAD_FRAME_FORMAT';
+  e.hint = 'jpeg（默认，快）适合出视频；png（无损，慢）适合要逐像素比对的场合';
+  throw e;
+}
+
+/** x264 编码预设。默认 medium；慢机器上调快换来的是更短的总时长（文件略大）。 */
+export function presetOf(ctx) {
+  const s = str(ctx.args, 'preset', 'medium');
+  const ok = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
+  if (!ok.includes(s)) {
+    const e = new Error(`filmwright: --preset 不认识「${s}」；可用 ${ok.join(' / ')}`);
+    e.code = 'BAD_PRESET';
+    e.hint = '编码时间的旋钮：越慢压得越小。渲染瓶颈通常在编码帧，不在这里';
+    throw e;
+  }
+  return s;
+}
+
 /** 渲染。 */
 export async function render(ctx) {
   const say = makeSay(ctx.args);
@@ -478,9 +511,11 @@ export async function render(ctx) {
  * 一致（都是同一套设计坐标缩放），只是像素少。用途是快速看节奏与版式。
  */
 async function renderOneRange(ctx, {out, crf, say, from, to, proxy}) {
+  const frameFormat = frameFormatOf(ctx);
+  const preset = presetOf(ctx);
   if (!proxy || proxy === 1) {
     return renderRange(ctx.projectDir, ctx.proj, {
-      from, to, out, crf, opts: ctx.opts,
+      from, to, out, crf, opts: ctx.opts, frameFormat, preset,
       onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
     });
   }
@@ -491,7 +526,7 @@ async function renderOneRange(ctx, {out, crf, say, from, to, proxy}) {
   };
   const smallProj = {...ctx.proj, raw: small};
   return renderRange(ctx.projectDir, smallProj, {
-    from, to, out, crf, opts: ctx.opts,
+    from, to, out, crf, opts: ctx.opts, frameFormat, preset,
     onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
   });
 }

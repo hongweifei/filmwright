@@ -47,7 +47,7 @@ export async function withSession(projectDir, proj, opts, fn) {
 }
 
 /** 渲染一段帧到 mp4（或 PNG 序列）。 */
-export async function renderRange(projectDir, proj, {from, to, out, crf = '16', pngDir = null, onProgress, opts = {}}) {
+export async function renderRange(projectDir, proj, {from, to, out, crf = '16', pngDir = null, pngDirFormat = 'png', frameFormat, preset = 'medium', onProgress, opts = {}}) {
   if (!(to >= from)) throw new Error(`filmwright: 帧区间非法 ${from}–${to}`);
   return withSession(projectDir, proj, opts, async (sess) => {
     if (out) mkdirSync(dirname(out), {recursive: true});
@@ -55,18 +55,23 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
       rmSync(pngDir, {recursive: true, force: true});
       mkdirSync(pngDir, {recursive: true});
     }
+    // 渲染成视频时中间帧走 JPEG（见 session.mjs 里 frameFormatExpr 的实测表：
+    // 编码 50→29ms、载荷 1243→87KB，而终点是 h264 有损编码，看不出差别）；
+    // 落成 PNG 序列（pngDir）时必须用 PNG —— 那类产物是给人看/给工具比对的，
+    // 有损压缩会让像素回归失去意义。
+    const fmt = pngDir ? pngDirFormat : (frameFormat ?? 'jpeg');
     let ff = null;
     if (!pngDir) {
       ff = spawnTool(ffmpegPath(), ['-y', '-f', 'image2pipe', '-framerate', String(proj.raw.fps ?? 30), '-i', '-',
-        '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-crf', String(crf), out],
+        '-c:v', 'libx264', '-preset', preset, '-pix_fmt', 'yuv420p', '-crf', String(crf), out],
         {stdio: ['pipe', 'ignore', 'inherit']});
     }
     const total = to - from + 1;
     let written = 0;
     for (let n = from; n <= to; n++) {
-      const png = await sess.frame(n);
-      if (pngDir) writeFileSync(join(pngDir, `f${String(n).padStart(5, '0')}.png`), png);
-      else if (!ff.stdin.write(png)) await new Promise((r) => ff.stdin.once('drain', r));
+      const buf = await sess.frame(n, {frameFormat: fmt});
+      if (pngDir) writeFileSync(join(pngDir, `f${String(n).padStart(5, '0')}.png`), buf);
+      else if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
       written++;
       if (onProgress) onProgress(written, total);
     }
@@ -82,13 +87,13 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
   });
 }
 
-/** 出若干静帧（文件名带真实帧号，便于人读）。 */
+/** 出若干静帧（文件名带真实帧号，便于人读）。**用 PNG**（无损，便于逐像素比对）。 */
 export async function renderStills(projectDir, proj, frames, dir, opts = {}) {
   return withSession(projectDir, proj, opts, async (sess) => {
     mkdirSync(dir, {recursive: true});
     const outs = [];
     for (const n of frames) {
-      const png = await sess.frame(n);
+      const png = await sess.frame(n, {frameFormat: 'png'});
       const out = join(dir, `f${String(n).padStart(5, '0')}.png`);
       writeFileSync(out, png);
       outs.push(out);
@@ -107,7 +112,8 @@ export async function renderSequence(projectDir, proj, frames, dir, opts = {}) {
     mkdirSync(dir, {recursive: true});
     const outs = [];
     for (let i = 0; i < frames.length; i++) {
-      const png = await sess.frame(frames[i]);
+      // 联络表用 PNG：它是给人看/存档的，不该有损
+      const png = await sess.frame(frames[i], {frameFormat: 'png'});
       const out = join(dir, `s${String(i + 1).padStart(4, '0')}.png`);
       writeFileSync(out, png);
       outs.push(out);
