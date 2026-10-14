@@ -178,6 +178,36 @@ for (const file of DOC_FILES) {
   }
 }
 
+// ---------- 验收工具表：自己核，别让它漂 ----------
+// docs/qc.md 里那张「哪些验收工具会自动跑」的表是**"哪些守卫真的在跑"的唯一说明**，
+// 但它不在上面那几类句式里，所以能悄悄漂（实测漂过：新接进 CI 的工具没进表、
+// 计数还停在旧数字）。这里直接拿**实现**核它：工具数来自 tools/ 目录，
+// 接入数来自 ci.yml 里出现的文件名。
+{
+  const toolsDir = join(ROOT, 'tools');
+  const toolFiles = readdirSync(toolsDir).filter((f) => /^verify-.*\.mjs$/.test(f));
+  const ciText = readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const wired = toolFiles.filter((f) => ciText.includes(f));
+  const qc = readFileSync(join(ROOT, 'docs', 'qc.md'), 'utf8');
+  const m = qc.match(/\*\*(\d+) 个验收工具里 (\d+) 个自动跑/);
+  if (!m) {
+    problems.push({kind: 'claim', doc: 'docs/qc.md', line: '—', text: '（那句断言不见了）',
+      why: '找不到「N 个验收工具里 M 个自动跑」—— 那张表是守卫的唯一说明，不能没有'});
+  } else if (Number(m[1]) !== toolFiles.length || Number(m[2]) !== wired.length) {
+    problems.push({kind: 'number', doc: 'docs/qc.md', line: '—', text: m[0],
+      why: `说 ${m[1]} 个工具里 ${m[2]} 个自动跑，实际 ${toolFiles.length} 个里 ${wired.length} 个`});
+  }
+  // 接进 CI 的工具必须出现在表里（防漏写）。
+  // 按**去掉 .mjs 的名字**匹配：表里两种写法都有（`verify-docs` 与 `verify-effects.mjs`），
+  // 拿完整文件名去比会把 `verify-docs` 误报成"没写"。
+  for (const f of wired) {
+    if (!qc.includes(f.replace(/\.mjs$/, ''))) {
+      problems.push({kind: 'claim', doc: 'docs/qc.md', line: '—', text: f,
+        why: `${f} 已接进 CI，但那张表里没写它`});
+    }
+  }
+}
+
 // ---------- 报告 ----------
 console.log('实现事实（唯一真相源）：');
 console.log(`  模板 ${F.templateCount} 类 | 自检 ${F.checkCount} 道（静态 ${F.staticCheckCount}） | 命令 ${F.commands.length} 个`);
