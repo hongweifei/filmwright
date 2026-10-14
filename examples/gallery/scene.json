@@ -2,7 +2,7 @@
   "$schema": "filmwright/scene-v0",
   "shots": [
     {"type": "title", "at": 1, "kicker": "TEMPLATE GALLERY", "title": "gallery",
-     "sub": "13 类模板镜头", "en": "scene.json, zero shot code"},
+     "sub": "17 类模板镜头", "en": "scene.json, zero shot code"},
 
     {"type": "bullets", "at": "S01", "heading": "bullets · 要点列表",
      "items": [
@@ -27,9 +27,12 @@
      ]},
 
     {"type": "quote", "at": "S04",
-     "text": "质量下限不该依赖模型的自觉，而该由引擎保证。", "who": "filmwright"},
+     "text": "质量下限不该依赖模型的自觉，而该由引擎保证。", "who": "filmwright",
+     "effects": [{"type": "grade", "look": "filmic", "amount": 0.5},
+                 {"type": "vignette", "amount": 0.35}],
+     "animate": {"alpha": [{"frame": 1, "v": 0}, {"frame": 14, "v": 1, "ease": "out3"}]}},
 
-    {"type": "stat", "at": "S05", "value": 13, "unit": "类",
+    {"type": "stat", "at": "S05", "value": 17, "unit": "类",
      "label": "模板镜头", "label2": "title → bars，全部内建节奏"},
 
     {"type": "flow", "at": "S06", "heading": "flow · 流程盒",
