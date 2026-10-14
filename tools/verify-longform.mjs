@@ -29,7 +29,7 @@ const argOf = (name, def) => {
   const i = argv.indexOf('--' + name);
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : def;
 };
-const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
+const ROOT = resolve(argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
 const BIG_FRAMES = Number(argOf('frames', 18000));   // 10 分钟 @30fps
 const NO_BIG = argv.includes('--no-big');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');

@@ -8,9 +8,11 @@
 import {spawnSync} from 'node:child_process';
 import {existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, statSync} from 'node:fs';
 import {pathToFileURL} from 'node:url';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 
-const ROOT = process.argv[2].replace(/\\/g, '/');
+// resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
+// 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
+const ROOT = resolve(process.argv[2]).replace(/\\/g, '/');
 const imp = (rel) => import(pathToFileURL(`${ROOT}/${rel}`).href);
 const {prepareClips, prepareClip, clipKey, countFrames, isPrepared} = await imp('src/host/media/clips.mjs');
 

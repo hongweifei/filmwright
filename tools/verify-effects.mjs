@@ -15,9 +15,11 @@
 import {spawnSync} from 'node:child_process';
 import {cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 
-const ROOT = (process.argv[2] || process.cwd()).replace(/\\/g, '/');
+// resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
+// 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
+const ROOT = resolve(process.argv[2] || process.cwd()).replace(/\\/g, '/');
 const USE_GPU = process.argv.includes('--gpu');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
 const SRC = join(ROOT, 'examples', 'scenecast');

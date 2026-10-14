@@ -4,9 +4,11 @@
 // 中文注释变成了非法 UTF-8 —— 这类问题肉眼看不出来，必须用工具扫。
 // 同一批操作还留下了一处 CRLF（仓库统一 LF），所以顺带一起查。
 import {readdirSync, readFileSync} from 'node:fs';
-import {join, relative} from 'node:path';
+import {join, relative, resolve} from 'node:path';
 
-const ROOT = process.argv[2].replace(/\\/g, '/');
+// resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
+// 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
+const ROOT = resolve(process.argv[2]).replace(/\\/g, '/');
 const SKIP_DIRS = new Set(['node_modules', '.git', '.work', 'renders', '__pycache__', 'out', 'qc']);
 const TEXT_EXT = /\.(md|json|mjs|js|py|txt|yml|yaml|html|css|ts|ps1|gitignore|srt)$/i;
 const NAMES = new Set(['.gitignore', 'LICENSE']);

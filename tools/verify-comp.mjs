@@ -19,7 +19,9 @@ import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = (process.argv[2] ?? resolve(HERE, '..')).replace(/\\/g, '/');
+// resolve() 保证 ROOT 是**绝对路径**：下面会用 `pathToFileURL(`${ROOT}/…`)` 或
+// `file:///${ROOT}/…` 拼 URL，相对路径会直接抛 ERR_INVALID_FILE_URL_PATH。
+const ROOT = resolve(process.argv[2] ?? resolve(HERE, '..')).replace(/\\/g, '/');
 const imp = (rel) => import(pathToFileURL(`${ROOT}/${rel}`).href);
 const {serveProject} = await imp('src/host/project/server.mjs');
 const {openSession} = await imp('src/host/browser/session.mjs');

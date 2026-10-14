@@ -6,9 +6,11 @@
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {mkdirSync, rmSync, readFileSync} from 'node:fs';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 
-const ROOT = process.argv[2].replace(/\\/g, '/');
+// resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
+// 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
+const ROOT = resolve(process.argv[2]).replace(/\\/g, '/');
 const W = `${ROOT}/.work/layer-e2e`;
 rmSync(W, {recursive: true, force: true});
 mkdirSync(W, {recursive: true});

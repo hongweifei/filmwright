@@ -22,7 +22,7 @@ import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
-const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
+const ROOT = resolve(argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
 const USE_GPU = argv.includes('--gpu');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
 const SRC = join(ROOT, 'examples', 'scenecast');

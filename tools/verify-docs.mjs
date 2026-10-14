@@ -13,9 +13,11 @@
 // 所以数字不写死：这个工具从**实现里读事实**，再扫文档里的说法。
 // 数字变了而文档没跟上，CI 就会红。
 import {readFileSync, readdirSync, writeFileSync, existsSync} from 'node:fs';
-import {join, relative} from 'node:path';
+import {join, relative, resolve} from 'node:path';
 
-const ROOT = (process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : process.cwd())
+// resolve() 保证 ROOT 是绝对路径（与其它验收工具一致；相对路径在这里能工作，
+// 但统一成绝对路径少一类隐患）。
+const ROOT = resolve(process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : process.cwd())
   .replace(/\\/g, '/');
 const FIX = process.argv.includes('--fix');
 

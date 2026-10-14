@@ -50,13 +50,13 @@ jobs:
         # 抓肉眼看不见的问题：曾用 PowerShell 的 Add-Content 追加 .gitignore，
         # 它按系统默认编码（GBK）写，中文注释变成非法 UTF-8 —— 而 read 工具
         # 直接拒绝读取，才知道出事了。这类问题必须在 CI 上自动拦住。
-        run: node tools/verify-encoding.mjs .
+        run: node tools/verify-encoding.mjs
 
       - name: 文档与实现一致（模板数 / 自检道数 / 事实性说法）
         # 曾发现 26 处脱节：文档说「视频没有内建支持」而 clips 已实现、
         # 说「13 类模板」而实际 15 类、自检道数在七/八/九之间混用。
         # 数字从实现里读，文档跟不上就让 CI 红。
-        run: node tools/verify-docs.mjs .
+        run: node tools/verify-docs.mjs
 
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
@@ -146,12 +146,15 @@ jobs:
       # 刻意**不加 `--gpu`**：CI runner 拿不到可靠的 GPU，而且默认档（软件 WebGL）
       # 正是要守住"确定性"的那一档 —— 效果在这档下也必须正确。
       - name: 效果链（往返保真 / 各效果的量化判据 / 直通帧逐位相同）
-        run: node tools/verify-effects.mjs .
+        run: node tools/verify-effects.mjs
 
       - name: 命令式入口（与声明式同能力 / 写错当场报）
-        run: node tools/verify-imperative.mjs .
+        run: node tools/verify-imperative.mjs
 
       # ── 下面这批曾经**从不自动运行**（21 个验收工具里只有 7 个进了 CI）──
+      # 注意：**不要**给这些命令加 `.` 参数。工具默认的根就是仓库根（绝对路径），
+      # 而有些工具会用它拼 `pathToFileURL(`${ROOT}/…`)` —— 传相对路径会抛
+      # ERR_INVALID_FILE_URL_PATH。曾经因为加了 `.` 导致 6 个工具在 CI 里失败。
       # 逐个量过耗时，只把快的接进来（最慢 41s，合计约 133s）：
       #   comp 1.3s / mix 1.7s / clips 1.9s / clip-render 2.3s / reuse 5.0s /
       #   composite 8.9s / complex 31.5s / incremental 38.8s / determinism 41.3s
@@ -164,31 +167,31 @@ jobs:
       #     而该镜头已跨 2 段（重渲 2 段才是正确行为）
       # 两处都改成**从实现里推导期望**，不再硬编码数字。
       - name: 嵌套合成（页面内探针，不靠像素比对）
-        run: node tools/verify-comp.mjs .
+        run: node tools/verify-comp.mjs
 
       - name: 配乐混音（真跑混音，并直接测音乐那一路）
-        run: node tools/verify-mix.mjs .
+        run: node tools/verify-mix.mjs
 
       - name: 素材管线（host 侧：抽帧 / 缓存命中 / 断点安全）
-        run: node tools/verify-clips.mjs .
+        run: node tools/verify-clips.mjs
 
       - name: 片段在浏览器里真取到并画出
-        run: node tools/verify-clip-render.mjs .
+        run: node tools/verify-clip-render.mjs
 
       - name: 可复用性（换分辨率 / 换浏览器）
-        run: node tools/verify-reuse.mjs .
+        run: node tools/verify-reuse.mjs
 
       - name: 图层合成（无变换 / 位移 / 旋转 / 透明度 / 混合）
-        run: node tools/verify-composite.mjs .
+        run: node tools/verify-composite.mjs
 
       - name: 四项复杂能力协作（图层变换 + 嵌套循环 + 素材片段 + 增量）
-        run: node tools/verify-complex.mjs .
+        run: node tools/verify-complex.mjs
 
       - name: 增量重渲的安全性（复用段必须与重渲逐帧一致）
-        run: node tools/verify-incremental.mjs .
+        run: node tools/verify-incremental.mjs
 
       - name: 捕获确定性（多轮渲染同一区间逐字节一致）
-        run: node tools/verify-determinism.mjs .
+        run: node tools/verify-determinism.mjs
 
       # 这两条各要两三分钟（readme 148s / attribution 177s），但守的是**核心契约**：
       #   · readme 走一遍文档承诺的快速开始 —— 文档漂了就得有人管
@@ -200,13 +203,13 @@ jobs:
       # 跳帧与连渲一致、光照真的参与着色（只有环境光时物体应当是"平"的）、
       # 以及不用 3D 的规格**不会去加载 three**。
       - name: 3D 图层（内容入帧 / 确定性 / 光照真的生效 / 不用 3D 不加载 three）
-        run: node tools/verify-three.mjs .
+        run: node tools/verify-three.mjs
 
       - name: README 快速开始路径（文档承诺要真的走通）
-        run: node tools/verify-readme.mjs .
+        run: node tools/verify-readme.mjs
 
       - name: 增量重渲的按段归因（改一个镜头只重渲覆盖它的段）
-        run: node tools/verify-attribution.mjs .
+        run: node tools/verify-attribution.mjs
 
       - name: 预览页（拖动 / 播放 / 热重载）
         run: node tools/verify-preview.mjs
