@@ -22,6 +22,7 @@ export const SCENE_SCHEMA = 'filmwright/scene-v0';
 export const SHOT_TYPES = [
   'title', 'bullets', 'stat', 'flow', 'code', 'image', 'compare',
   'steps', 'table', 'quote', 'terminal', 'chips', 'bars',
+  'comp',   // 嵌套合成实例：引用 comps 里定义的一个子合成
 ];
 
 /** 每类的容量上限（版面算出来的，超了会挤/溢出）。 */
@@ -42,6 +43,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_UNKNOWN_TYPE', 'SCENE_MISSING_FIELD', 'SCENE_MISSING_AT', 'SCENE_BAD_FIELD',
   'SCENE_TOO_MANY', 'SCENE_TABLE_WIDTH', 'SCENE_NO_ASSET', 'SCENE_FIRST_NOT_1', 'SCENE_NOT_INCREASING',
   'SCENE_BAD_TRANSITION', 'SCENE_BAD_TRANSFORM',
+  'SCENE_BAD_COMP', 'SCENE_NO_COMP', 'SCENE_COMP_CYCLE', 'SCENE_COMP_LOCAL_AT',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
   'SCENE_NO_SENTENCE', 'SCENE_NO_BLOCK',
 ];
@@ -107,6 +109,7 @@ const FIELDS = {
   terminal: {heading: 'str?', title: 'str?', lines: 'arr<term>'},
   chips: {heading: 'str?', items: 'arr<chip>'},
   bars: {heading: 'str?', items: 'arr<bar>', unit: 'str?'},
+  comp: {comp: 'compName', loop: 'bool?', frames: 'num?'},
 };
 
 /** 每类的说明（schema 输出给 agent 看，一句话讲清"什么时候用它"）。 */
@@ -124,6 +127,7 @@ const TYPE_NOTES = {
   terminal: '终端窗口：标题栏 + 逐行输出，光标常闪',
   chips: '标签胶囊（≤12 个）：关键词平铺，自动折行',
   bars: '竖向条形图（2–6 根）：数值 + 标签，适合性能/占比对比',
+  comp: '嵌套合成实例：引用 comps 里定义的可复用子合成（可循环）',
 };
 
 /** 转场声明是否合法（与 runtime/stage/shots.js 的 normalizeTransition 同一套规则）。 */
@@ -155,6 +159,28 @@ export function isValidTransform(t) {
     if (!t.origin.every((v) => typeof v === 'number' && Number.isFinite(v))) return false;
   }
   return true;
+}
+
+/**
+ * 环检测（contract 层的一份实现）。
+ *
+ * 与 runtime/composite/comp.js 的 assertNoCycles 同规则 —— contract 不能 import
+ * runtime（分层规则），所以重写一份；tests 里有交叉一致性断言钉住两者。
+ * 环必须在**校验期**拦住：运行期递归遇到环会栈溢出，报错信息毫无用处。
+ */
+export function assertNoCyclesPlain(comps) {
+  const state = new Map();
+  const visit = (name, path) => {
+    const st = state.get(name);
+    if (st === 'done') return;
+    if (st === 'visiting') throw new Error('子合成循环引用：' + [...path, name].join(' → '));
+    state.set(name, 'visiting');
+    for (const sh of comps[name]?.shots ?? []) {
+      if (sh?.type === 'comp' && sh.comp && comps[sh.comp]) visit(sh.comp, [...path, name]);
+    }
+    state.set(name, 'done');
+  };
+  for (const name of Object.keys(comps ?? {})) visit(name, []);
 }
 
 /** 各种形状错误的说明（校验与 schema 共用）。 */
@@ -274,9 +300,71 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
     errors.push(err('SCENE_SCHEMA', '$schema', `不认识的结构版本 ${JSON.stringify(raw.$schema)}`,
       `用 "${SCENE_SCHEMA}"，或整个删掉`));
   }
-  const topUnknown = Object.keys(raw).filter((k) => k !== '$schema' && k !== 'shots');
+  const topUnknown = Object.keys(raw).filter((k) => k !== '$schema' && k !== 'shots' && k !== 'comps');
   if (topUnknown.length) {
-    errors.push(err('SCENE_UNKNOWN_FIELD', topUnknown[0], `顶层未知字段 ${topUnknown.join(', ')}`, '顶层只认 $schema 与 shots'));
+    errors.push(err('SCENE_UNKNOWN_FIELD', topUnknown[0], `顶层未知字段 ${topUnknown.join(', ')}`, '顶层只认 $schema / comps / shots'));
+  }
+  // comps：可复用的子合成定义。每个 comp 有自己的**本地时间轴**（shots 里的
+  // at 必须是本地帧号），实例化时用 comp 类型镜头引用它。
+  const comps = raw.comps ?? {};
+  if (typeof comps !== 'object' || Array.isArray(comps)) {
+    errors.push(err('SCENE_BAD_COMP', 'comps', 'comps 必须是对象：{名字: {frames?, shots:[...]}}', ''));
+  }
+  const compNames = new Set(Object.keys(comps ?? {}));
+  for (const [name, def] of Object.entries(comps ?? {})) {
+    const p = `comps.${name}`;
+    if (!def || typeof def !== 'object' || Array.isArray(def)) {
+      errors.push(err('SCENE_BAD_COMP', p, '子合成必须是对象', '要 {frames?, shots:[...]}'));
+      continue;
+    }
+    const unk = Object.keys(def).filter((k) => k !== 'frames' && k !== 'shots');
+    if (unk.length) errors.push(err('SCENE_UNKNOWN_FIELD', `${p}.${unk[0]}`, `子合成没有字段 ${unk.join(', ')}`, '只认 frames / shots'));
+    if (def.frames !== undefined && (!Number.isInteger(def.frames) || def.frames < 1)) {
+      errors.push(err('SCENE_BAD_COMP', `${p}.frames`, 'frames 必须是 ≥1 的整数', '不写就由子镜头串接推出长度'));
+    }
+    if (!Array.isArray(def.shots) || def.shots.length === 0) {
+      errors.push(err('SCENE_BAD_COMP', `${p}.shots`, '子合成里至少要有 1 个镜头', ''));
+      continue;
+    }
+    // 子镜头：只声明本地 start，串接规则与主镜头一致
+    const starts = [];
+    def.shots.forEach((sh, i) => {
+      const sp = `${p}.shots[${i}]`;
+      if (!sh || typeof sh !== 'object' || Array.isArray(sh)) {
+        errors.push(err('SCENE_BAD_SHOT', sp, '子镜头必须是对象', ''));
+        return;
+      }
+      if (sh.at !== undefined && typeof sh.at !== 'number') {
+        errors.push(err('SCENE_COMP_LOCAL_AT', `${sp}.at`,
+          '子合成里的 at 只能是**本地帧号**（数字），不能是句 id',
+          '本地时间轴与全局时间轴是两套坐标；要跟解说词对齐，在实例化那一层（外层 comp 镜头的 at）写句 id'));
+      } else if (typeof sh.at === 'number' && (!Number.isInteger(sh.at) || sh.at < 1)) {
+        errors.push(err('SCENE_BAD_FIELD', `${sp}.at`, '本地帧号必须是 ≥1 的整数，收到 ' + sh.at, ''));
+      }
+      if (sh.type === 'comp' && sh.comp && !compNames.has(sh.comp)) {
+        errors.push(err('SCENE_NO_COMP', `${sp}.comp`, `引用了不存在的子合成 ${JSON.stringify(sh.comp)}`,
+          `已定义：${[...compNames].join(' / ') || '（无）'}`));
+      }
+      if (typeof sh.at === 'number') starts.push({i, at: sh.at});
+    });
+    if (starts.length === def.shots.length && starts.length > 0) {
+      if (starts[0].at !== 1) {
+        errors.push(err('SCENE_FIRST_NOT_1', `${p}.shots[0].at`,
+          `子合成的第一个镜头必须从本地第 1 帧开始，收到 ${starts[0].at}`, ''));
+      }
+      for (let k = 1; k < starts.length; k++) {
+        if (starts[k].at <= starts[k - 1].at) {
+          errors.push(err('SCENE_NOT_INCREASING', `${p}.shots[${starts[k].i}].at`,
+            `本地帧号必须严格递增：${starts[k - 1].at} → ${starts[k].at}`, ''));
+        }
+      }
+    }
+  }
+  // 环检测（在 contract 层做：运行期递归遇到环会栈溢出，必须在校验期拦住）
+  try {
+    assertNoCyclesPlain(comps);
+  } catch (e) {
+    errors.push(err('SCENE_COMP_CYCLE', 'comps', e.message.replace('filmwright: ', ''), '子合成不能直接或间接引用自己'));
   }
   if (!Array.isArray(raw.shots) || raw.shots.length === 0) {
     errors.push(err('SCENE_NO_SHOTS', 'shots', 'shots 必须是非空数组', '至少一个镜头'));
@@ -335,6 +423,20 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
           const shape = kind.slice(4, -1);
           const min = shape === '{label, sub?}' ? 2 : 1;   // flow 至少两步
           validateArr(v, p, shape, errors, {min, maxName: {owner: type, key: k}, shot});
+        } else if (kind === 'bool?') {
+          if (v !== undefined && typeof v !== 'boolean') {
+            errors.push(err('SCENE_BAD_FIELD', p, `${k} 必须是 true/false，收到 ${JSON.stringify(v)}`, ''));
+          }
+        } else if (kind === 'compName') {
+          // comp 类型引用 comps 里定义的子合成；不存在就报错（否则运行期才炸）
+          if (v === undefined) {
+            errors.push(err('SCENE_MISSING_FIELD', p, 'comp 必填', '写 comps 里定义的子合成名，例如 "lowerThird"'));
+          } else if (typeof v !== 'string' || !v) {
+            errors.push(err('SCENE_BAD_FIELD', p, 'comp 必须是非空字符串', ''));
+          } else if (compNames && !compNames.has(v)) {
+            errors.push(err('SCENE_NO_COMP', p, `引用了不存在的子合成 ${JSON.stringify(v)}`,
+              `已定义：${[...compNames].join(' / ') || '（无，先在顶层 comps 里定义）'}`));
+          }
         }
       }
       // 表格的行列交叉检查（需要同时看到 columns 与 rows）

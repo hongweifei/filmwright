@@ -9,6 +9,7 @@
 // 注册表的键必须与 contract/scene.js 的 SHOT_TYPES 一致（tests/scene-templates.test.mjs 钉住）。
 import {S, BLK} from '../../contract/timeline.js';
 import {resolveAt} from '../../contract/scene.js';
+import {bindLocalShots, compLength, drawCompInstance, mapBeats} from '../composite/comp.js';
 import {theme as C, fonts as F, accentFor} from '../../contract/config.js';
 import {inv, easeOut3} from '../motion/ease.js';
 import {applyDesignScale, DESIGN_SAFE} from '../layout/design.js';
@@ -502,23 +503,114 @@ const barsT = {
   },
 };
 
-/** 模板注册表。键必须与 contract/scene.js 的 SHOT_TYPES 一致。 */
+/**
+ * 模板注册表。键必须与 contract/scene.js 的 SHOT_TYPES 一致 —— 但 `comp` 例外：
+ * 它不是模板（没有固定的 draw），而是「引用子合成」的实例化声明，由 compileScene
+ * 单独处理（同一份 comps 定义可被多处实例化，还可能带不同的 loop/frames）。
+ * 这里给它一个占位，只是为了让注册表键集与 SHOT_TYPES 保持一一对应、便于测试比对。
+ */
 export const TEMPLATES = {
   title, bullets, stat, flow: flowT, code, image, compare,
   steps, table, quote, terminal: terminalT, chips, bars: barsT,
+  // comp 由 compileScene 特判，不该走到这里；留着是为了键集一致 + 误用时明确报错
+  comp: {draw(ctx, n, shot) { void ctx; void n; void shot;
+    throw new Error('filmwright: comp 类型由 compileScene 特判，不应直接调用模板 draw'); }},
 };
 
 /**
- * 把校验过的 scene 编译成镜头数组（boot 的 SHOTS）。
- * 编译期只解析 at（需要时间轴数据）；字幕块查询留在 draw 里，运行时用已装载的时间轴。
+ * 编译 scene 规格 → 镜头数组。
  *
- * 每个镜头同时算出 **beats（节拍表，绝对帧号）**：模板画多少个错峰元素，就有
- * 多少拍。它交给画质自检当「入场/离场」的信号 —— 像素 diff 分不清一次变化是
- * 入场还是离场，而节拍是声明出来的事实（LIMITATIONS 里记的死结就靠它解开）。
- * 编译期与 draw 用同一个 staggerFrames，两边不会漂（有测试钉住）。
+ * `comp` 类型需要先编译子合成（它们是同一份规格里的 comps 定义），
+ * 所以这里做两趟：先递归编译所有 comps，再编译顶层 shots。
+ * 时间基换算与循环在 composite/comp.js 里，这里是「接线」。
  */
 export function compileScene(scene, tl) {
+  const comps = scene.comps ?? {};
+  const compiledComps = {};
+  // 递归编译：comp 里还能再引用 comp（环已在 contract 层拦住）
+  const compile = (name, depth = 0) => {
+    if (compiledComps[name]) return compiledComps[name];
+    if (depth > 16) throw new Error('filmwright: 子合成嵌套过深（>16 层）：' + name);
+    const def = comps[name];
+    if (!def) throw new Error('filmwright: 引用了不存在的子合成 ' + name);
+    const localShots = def.shots.map((raw) => {
+      if (raw.type === 'comp') {
+        // 嵌套实例：把子 comp 编译好，包成「一个本地镜头」
+        const inner = compile(raw.comp, depth + 1);
+        const start = raw.at ?? 1;
+        return {
+          start,
+          from: start,
+          to: raw.frames ? start + raw.frames - 1 : inner.len + start - 1,
+          draw(ctx, n, t, accent) {
+            drawCompInstance(ctx, {
+              localShots: inner.shots, len: raw.frames ?? inner.len,
+              from: start, loop: !!raw.loop,
+            }, n, t, accent);
+          },
+        };
+      }
+      const tpl = TEMPLATES[raw.type];
+      if (!tpl) throw new Error('filmwright: 子合成 ' + name + ' 用了没有模板的类型 ' + raw.type);
+      const start = raw.at;
+      const shot = {...raw, start, sid: null, beats: tpl.beats ? tpl.beats(raw, start, null) : [start]};
+      return {
+        start, from: start, to: start, beats: shot.beats,
+        ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
+        draw(ctx, n, t, accent) {
+          ctx.save();
+          applyDesignScale(ctx);
+          try {
+            tpl.draw.call(this, ctx, n, shot, accent ?? accentFor(1));
+          } finally {
+            ctx.restore();
+          }
+        },
+      };
+    });
+    const bound = bindLocalShots(localShots, def.frames);
+    const len = compLength(def, bound);
+    compiledComps[name] = {shots: bound, len, name};
+    return compiledComps[name];
+  };
+  for (const name of Object.keys(comps)) compile(name);
+
   return scene.shots.map((raw) => {
+    // comp 实例：把一条子合成放到时间轴上。
+    //
+    // **两个长度不能混**（这是实现时真踩过的坑）：
+    //   cycleLen = 子合成自身长度（inner.len）—— 循环的周期
+    //   spanLen  = 这个实例在时间轴上占多少帧（raw.frames ?? inner.len）
+    // 曾经把 spanLen 当 cycleLen 传给 drawCompInstance，于是「frames: 720 的实例」
+    // 里本地帧一路涨到 720，而子合成只有一个 30 帧的镜头 → 第 31 帧起什么都画不出来
+    // （表现为「循环实例只在前 30 帧有画面」）。
+    if (raw.type === 'comp') {
+      const inner = compiledComps[raw.comp];
+      if (!inner) throw new Error('filmwright: 引用了不存在的子合成 ' + raw.comp);
+      const start = resolveAt(raw.at, tl);
+      const loop = !!raw.loop;
+      const cycleLen = inner.len;                       // 循环周期
+      const spanLen = raw.frames ?? inner.len;          // 实例占用的帧数
+      const to = start + spanLen - 1;
+      return {
+        start,
+        beats: mapBeats(inner.shots[0]?.beats ?? [1], start, cycleLen, loop, to),
+        ...(raw.transition !== undefined ? {transition: raw.transition} : {}),
+        ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
+        scene: {...raw, start},
+        draw(ctx, n, t, accent) {
+          ctx.save();
+          applyDesignScale(ctx);
+          try {
+            drawCompInstance(ctx,
+              {localShots: inner.shots, len: cycleLen, from: start, loop},
+              n, t, accent ?? accentFor(1));
+          } finally {
+            ctx.restore();
+          }
+        },
+      };
+    }
     const tpl = TEMPLATES[raw.type];
     if (!tpl) throw new Error('filmwright: scene 用了没有模板的类型 ' + raw.type);
     const start = resolveAt(raw.at, tl);

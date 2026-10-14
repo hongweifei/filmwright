@@ -82,7 +82,7 @@ test('validateScene：最小合法规格通过', () => {
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
-test('validateScene：13 类模板的最小实例都合法', () => {
+test('validateScene：14 类模板的最小实例都合法', () => {
   // 每类单独成一个规格：单镜头规格里它就是第一个镜头，必须从第 1 帧起。
   const shots = {
     title: {type: 'title', at: 1, title: 't'},
@@ -98,12 +98,83 @@ test('validateScene：13 类模板的最小实例都合法', () => {
     terminal: {type: 'terminal', at: 1, title: 'demo', lines: ['$ ls', {text: 'out', color: '#fff'}]},
     chips: {type: 'chips', at: 1, items: ['关键词', {label: '另一个'}]},
     bars: {type: 'bars', at: 1, unit: 'ms', items: [{v: 81, label: 'a'}, {v: 120, label: 'b'}]},
+    comp: {type: 'comp', at: 1, comp: 'sub'},
   };
   assert.deepEqual(Object.keys(shots).sort(), [...SHOT_TYPES].sort(), '测试要覆盖全部类型');
   for (const s of Object.values(shots)) {
-    const r = validateScene({shots: [s]}, {timeline: tl, assetNames: ['a']});
+    const r = validateScene({comps: {sub: {shots: [{type: 'title', at: 1, title: 'x'}]}}, shots: [s]},
+      {timeline: tl, assetNames: ['a']});
     assert.equal(r.ok, true, s.type + ' → ' + JSON.stringify(r.errors));
   }
+});
+
+// ---------- 嵌套合成（comps / comp） ----------
+
+test('comps：定义子合成 + 用 comp 实例化，合法', () => {
+  const r = validateScene({
+    comps: {
+      lowerThird: {frames: 60, shots: [
+        {type: 'bullets', at: 1, items: [{t: '名字'}]},
+        {type: 'stat', at: 30, value: 1, label: 'l'},
+      ]},
+    },
+    shots: [
+      {type: 'title', at: 1, title: 't'},
+      {type: 'comp', at: 'S01', comp: 'lowerThird'},
+      {type: 'comp', at: 'S02', comp: 'lowerThird', loop: true, frames: 40},
+    ],
+  }, {timeline: tl});
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+});
+
+test('负面对照：comp 引用不存在的子合成要报 SCENE_NO_COMP 并列出已定义的', () => {
+  const r = validateScene({
+    comps: {a: {shots: [{type: 'title', at: 1, title: 'x'}]}},
+    shots: [{type: 'title', at: 1, title: 't'}, {type: 'comp', at: 2, comp: 'nope'}],
+  }, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_NO_COMP');
+  assert.ok(e, '应报 SCENE_NO_COMP：' + JSON.stringify(r.errors.map((x) => x.code)));
+  assert.ok(e.hint.includes('a'), 'hint 要列出已定义的子合成');
+});
+
+test('负面对照：子合成里的 at 写成句 id 要报 SCENE_COMP_LOCAL_AT（两套时间轴不能混）', () => {
+  const r = validateScene({
+    comps: {a: {shots: [{type: 'title', at: 'S01', title: 'x'}]}},
+    shots: [{type: 'title', at: 1, title: 't'}],
+  }, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_COMP_LOCAL_AT');
+  assert.ok(e, '应报：' + JSON.stringify(r.errors.map((x) => x.code)));
+  assert.ok(e.hint.includes('本地'), 'hint 要解释本地时间轴与全局时间轴的区别');
+});
+
+test('负面对照：子合成循环引用要报 SCENE_COMP_CYCLE 并指出链条', () => {
+  const r = validateScene({
+    comps: {
+      a: {shots: [{type: 'comp', at: 1, comp: 'b'}]},
+      b: {shots: [{type: 'comp', at: 1, comp: 'a'}]},
+    },
+    shots: [{type: 'title', at: 1, title: 't'}],
+  }, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_COMP_CYCLE');
+  assert.ok(e, '应报环：' + JSON.stringify(r.errors.map((x) => x.code)));
+  assert.ok(e.message.includes('a') && e.message.includes('b'), '要看得出是谁引用谁：' + e.message);
+});
+
+test('负面对照：子合成结构错误（空 shots / 首个不从本地 1 起 / frames 非法）', () => {
+  const r = validateScene({
+    comps: {
+      empty: {shots: []},
+      badFirst: {shots: [{type: 'title', at: 5, title: 'x'}]},
+      badFrames: {frames: 0, shots: [{type: 'title', at: 1, title: 'x'}]},
+      unkKey: {shots: [{type: 'title', at: 1, title: 'x'}], extra: 1},
+    },
+    shots: [{type: 'title', at: 1, title: 't'}],
+  }, {timeline: tl});
+  const codes = r.errors.map((x) => x.code);
+  assert.ok(codes.includes('SCENE_BAD_COMP'), '空 shots / frames 非法：' + JSON.stringify(codes));
+  assert.ok(codes.includes('SCENE_FIRST_NOT_1'), '首个不从本地 1 起：' + JSON.stringify(codes));
+  assert.ok(codes.includes('SCENE_UNKNOWN_FIELD'), '子合成未知字段：' + JSON.stringify(codes));
+  assert.ok(r.errors.some((x) => x.path.startsWith('comps.')), 'path 要指到 comps 里');
 });
 
 // ---------- validateScene：负面对照（每条守卫喂一个坏数据） ----------
