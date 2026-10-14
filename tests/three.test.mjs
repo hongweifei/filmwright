@@ -7,7 +7,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validateScene, needsThree, SHOT_TYPES, TEMPLATE_TYPES, SHOT_MAXES} from '../src/contract/scene.js';
-import {SHAPES, ANIM3D_PROPS, MAX_OBJECTS} from '../src/contract/three.js';
+import {SHAPES, ANIM3D_PROPS, MAX_OBJECTS, LIGHT_TYPES, MAX_LIGHTS} from '../src/contract/three.js';
 
 const tl = {
   fps: 30, total_frames: 200, chapters: [{n: 1, title: 'c', from: 1}],
@@ -108,4 +108,49 @@ test('needsThree：只在真有 3D 时才为真（决定要不要加载 2.2MB �
   assert.equal(needsThree({shots: [{type: 'comp', at: 1, comp: 'sub'}],
     comps: {sub: {shots: [T()]}}}), true);
   assert.equal(needsThree(null), false);
+});
+
+// ─────────────────────── 光照（有 lights 才切到受光材质）───────────────────────
+
+test('lights：三种光源的合法写法都通过，缺位置/多给位置都要报', () => {
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', intensity: 1.2}]})), []);
+  assert.deepEqual(codes(T({lights: [{type: 'directional', intensity: 2, position: [3, 4, 5]}]})), []);
+  assert.deepEqual(codes(T({lights: [{type: 'point', intensity: 3, position: [0, 0, 2]}]})), []);
+  // ambient 没有方向 ⇒ 不需要也不该给 position
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', position: [1, 2, 3]}]})), ['SCENE_3D_LIGHT']);
+  // 另两种必须有 position
+  assert.deepEqual(codes(T({lights: [{type: 'directional'}]})), ['SCENE_3D_LIGHT']);
+  assert.deepEqual(codes(T({lights: [{type: 'point', position: [1, 2]}]})), ['SCENE_3D_LIGHT']);
+});
+
+test('SCENE_3D_LIGHT：不认识的类型、越界强度、未知字段、空数组、超上限', () => {
+  const e = errs(T({lights: [{type: 'spot', position: [1, 2, 3]}]}));
+  assert.deepEqual(e.map((x) => x.code), ['SCENE_3D_LIGHT']);
+  for (const t of LIGHT_TYPES) assert.ok(e[0].hint.includes(t), `hint 要列出 ${t}`);
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', intensity: 99}]})), ['SCENE_3D_LIGHT']);
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', intensity: '亮'}]})), ['SCENE_3D_LIGHT']);
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', size: 2}]})), ['SCENE_3D_LIGHT']);
+  assert.deepEqual(codes(T({lights: []})), ['SCENE_3D_LIGHT'], '空数组要报（不想打光就别写这个字段）');
+  const many = Array.from({length: MAX_LIGHTS + 1}, () => ({type: 'ambient'}));
+  assert.deepEqual(codes(T({lights: many})), ['SCENE_3D_LIGHT']);
+});
+
+test('灯的颜色与对象的颜色走同一套规则（主题色名或 #rrggbb）', () => {
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', color: 'accent'}]})), []);
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', color: '#ff8800'}]})), []);
+  assert.deepEqual(codes(T({lights: [{type: 'ambient', color: 'warm'}]})), ['SCENE_3D_COLOR']);
+});
+
+test('对象的 material 可覆盖默认（basic / standard），写别的要报', () => {
+  assert.deepEqual(codes(T({objects: [{shape: 'box', material: 'basic'}]})), []);
+  assert.deepEqual(codes(T({objects: [{shape: 'box', material: 'standard'}]})), []);
+  assert.deepEqual(codes(T({objects: [{shape: 'box', material: 'matte'}]})), ['SCENE_3D_VALUE']);
+});
+
+test('不给 lights 时行为**完全不变**（老项目逐位不受影响）', () => {
+  // 这条是"加光是一个显式动作"的契约层保证：
+  // 没有 lights 字段 ⇒ 用无光照材质 ⇒ 与加光照之前逐位相同。
+  assert.deepEqual(codes(T()), [], '不写 lights 当然合法');
+  // 而"有 lights"是另一个世界（渲染期用受光材质），由 verify-three 的第七节验
+  assert.deepEqual(codes(T({lights: [{type: 'ambient'}]})), []);
 });

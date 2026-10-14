@@ -5,7 +5,8 @@
 // 规格是 AI 的落点：AI 只填内容与节拍，节奏（入场/呼吸/离场/配色）由模板镜头负责。
 // 因此校验必须**可行动**：每条错误带 code / path / hint，模型读完能直接改。
 import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES} from './effects.js';
-import {SHAPES, ANIM3D_PROPS, MAX_OBJECTS, THEME_COLOR_KEYS, THREE_ERROR_CODES} from './three.js';
+import {SHAPES, ANIM3D_PROPS, MAX_OBJECTS, THEME_COLOR_KEYS, THREE_ERROR_CODES,
+  LIGHT_TYPES, MAX_LIGHTS} from './three.js';
 // 容量上限也在这里钉死 —— AI 该被校验告知边界，而不是靠肉眼发现画面溢出。
 //
 // 对齐 token（at）：
@@ -127,7 +128,10 @@ const FIELDS = {
   layers: {layers: 'arr<layer>'},
   // 声明式 3D：形状/相机是有界词汇表，动画走关键帧轨道（见 validate3D）。
   // 键级检查走 SHAPE_KEYS.threeobj / threecam，语义检查在 validate3D。
-  three: {camera: 'obj?', objects: 'arr<threeobj>'},
+  // lights 用 'obj?' 而不是 'arr<threelight>?'：通用校验器**不认带 ? 的数组 kind**
+  // （它会把元素字段当成未知字段误报）。数组形状与元素字段全部在 validate3D 里查，
+  // 那里本来就已经在做（键级 + 语义）。
+  three: {camera: 'obj?', objects: 'arr<threeobj>', lights: 'obj?'},
   title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?'},
   bullets: {heading: 'str?', items: 'arr<{t, d?}>'},
   stat: {value: 'num', label: 'str', unit: 'str?', label2: 'str?'},
@@ -343,9 +347,9 @@ export function validate3D(spec, path = 'three') {
   // "three 没有字段 type/at"，等于所有合法写法都过不了。
   const COMMON = ['type', 'at', 'transition', 'transform', 'animate', 'effects'];
   for (const k of Object.keys(spec)) {
-    if (k === 'camera' || k === 'objects' || COMMON.includes(k)) continue;
+    if (k === 'camera' || k === 'objects' || k === 'lights' || COMMON.includes(k)) continue;
     push('SCENE_3D_SHAPE', `${path}.${k}`, `three 没有字段 ${JSON.stringify(k)}`,
-      '可用：camera / objects（3D 动画写在每个对象的 animate 里）');
+      '可用：camera / objects / lights（3D 动画写在每个对象的 animate 里）');
   }
 
   // ── camera ──
@@ -383,6 +387,65 @@ export function validate3D(spec, path = 'three') {
     }
   }
 
+  // ── lights（可选；给了才切到受光材质）──
+  const LIGHT_KEYS = ['type', 'color', 'intensity', 'position'];
+  if (spec.lights !== undefined) {
+    if (!Array.isArray(spec.lights) || !spec.lights.length) {
+      push('SCENE_3D_LIGHT', `${path}.lights`, 'lights 必须是非空数组（不想打光就别写这个字段）',
+        '形如 [{"type":"directional","intensity":2,"position":[3,4,5]}]');
+    } else if (spec.lights.length > MAX_LIGHTS) {
+      push('SCENE_3D_LIGHT', `${path}.lights`, `最多 ${MAX_LIGHTS} 盏灯，收到 ${spec.lights.length} 盏`,
+        '受光材质的着色成本随灯数上升；够用就好');
+    } else {
+      spec.lights.forEach((L, i) => {
+        const lp = `${path}.lights[${i}]`;
+        if (!L || typeof L !== 'object' || Array.isArray(L)) {
+          push('SCENE_3D_LIGHT', lp, '每盏灯必须是对象', '形如 {"type":"point","position":[2,3,4]}');
+          return;
+        }
+        for (const k of Object.keys(L)) {
+          if (!LIGHT_KEYS.includes(k)) {
+            push('SCENE_3D_LIGHT', `${lp}.${k}`, `灯没有字段 ${JSON.stringify(k)}`,
+              `可用：${LIGHT_KEYS.join(' / ')}`);
+          }
+        }
+        if (!LIGHT_TYPES.includes(L.type)) {
+          push('SCENE_3D_LIGHT', `${lp}.type`, `不认识的光源类型 ${JSON.stringify(L.type)}`,
+            `可用：${LIGHT_TYPES.join(' / ')}（ambient 铺底、directional 像太阳、point 像灯泡）`);
+        }
+        if (L.intensity !== undefined && (typeof L.intensity !== 'number' || !Number.isFinite(L.intensity))) {
+          push('SCENE_3D_LIGHT', `${lp}.intensity`, `intensity 必须是数值，收到 ${JSON.stringify(L.intensity)}`,
+            'intensity：强度，常用 0.5–3（点光源随距离衰减，需要更大）');
+        } else if (L.intensity !== undefined && (L.intensity < 0 || L.intensity > 20)) {
+          push('SCENE_3D_LIGHT', `${lp}.intensity`, `intensity 超出范围：${L.intensity}`,
+            'intensity：允许 0–20');
+        }
+        if (L.color !== undefined) {
+          const okTheme = THEME_COLOR_KEYS.includes(L.color);
+          const okHex = typeof L.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(L.color);
+          if (!okTheme && !okHex) {
+            push('SCENE_3D_COLOR', `${lp}.color`, `灯的颜色 ${JSON.stringify(L.color)} 不认识`,
+              `可用主题色：${THEME_COLOR_KEYS.join(' / ')}；或 #rrggbb`);
+          }
+        }
+        // 位置：ambient 不需要（它没有方向），另两种需要
+        if (L.type !== 'ambient') {
+          if (L.position === undefined) {
+            push('SCENE_3D_LIGHT', `${lp}.position`, `${L.type} 光源需要 position`,
+              '形如 [3, 4, 5]（世界坐标）');
+          } else if (!Array.isArray(L.position) || L.position.length !== 3
+            || L.position.some((x) => typeof x !== 'number' || !Number.isFinite(x))) {
+            push('SCENE_3D_LIGHT', `${lp}.position`, 'position 必须是三个数值的数组',
+              '形如 [3, 4, 5]');
+          }
+        } else if (L.position !== undefined) {
+          push('SCENE_3D_LIGHT', `${lp}.position`, 'ambient 光源不需要 position（它没有方向）',
+            '要方向就换 directional 或 point');
+        }
+      });
+    }
+  }
+
   // ── objects ──
   // 空数组/非数组由**通用字段校验**报（它现在会带上这个形状的示例）——
   // 这里只提前返回，不再重复报一遍（两处报同一件事是噪声）。
@@ -393,7 +456,7 @@ export function validate3D(spec, path = 'three') {
       '每个对象是一次 draw call；要更多就走命令式，或拆成几个镜头');
   }
 
-  const OBJ_KEYS = ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate'];
+  const OBJ_KEYS = ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate', 'material'];
   spec.objects.forEach((o, i) => {
     const op = `${path}.objects[${i}]`;
     if (!o || typeof o !== 'object' || Array.isArray(o)) {
@@ -424,6 +487,10 @@ export function validate3D(spec, path = 'three') {
     }
     if (o.wireframe !== undefined && typeof o.wireframe !== 'boolean') {
       push('SCENE_3D_VALUE', `${op}.wireframe`, 'wireframe 必须是 true/false', '例：true 只画线框');
+    }
+    if (o.material !== undefined && o.material !== 'basic' && o.material !== 'standard') {
+      push('SCENE_3D_VALUE', `${op}.material`, `material 只能是 basic 或 standard，收到 ${JSON.stringify(o.material)}`,
+        'basic=不受光（平涂）；standard=受光（有明暗）。默认：有 lights 时 standard，否则 basic');
     }
     if (o.color !== undefined) {
       const okTheme = THEME_COLOR_KEYS.includes(o.color);
@@ -817,7 +884,8 @@ const SHAPE_KEYS = {
   // （content 必须是模板调用且不带 at、from/to 范围、z 类型、嵌套容器禁用）。
   layer: ['content', 'z', 'from', 'to', 'transform', 'animate', 'effects'],
   // 声明式 3D 的一个对象。键级检查走这里，语义检查在 validate3D。
-  threeobj: ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate'],
+  threeobj: ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate', 'material'],
+  threelight: ['type', 'color', 'intensity', 'position'],
   threecam: ['x', 'y', 'z', 'fov', 'lookAt'],
   '{t, d?}': ['t', 'd'],
   step: ['t', 'd'],
@@ -831,6 +899,7 @@ const SHAPE_KEYS = {
 const SHAPE_HINT = {
   layer: '每层形如 {"content":{"type":"bullets","items":[…]},"z":1,"from":1,"to":60}',
   threeobj: '例：{"shape":"box","size":1.6,"color":"accent","animate":{"ry":[{"beat":1,"v":0},{"beat":3,"v":360}]}}',
+  threelight: '例：{"type":"directional","color":"#ffffff","intensity":2,"position":[3,4,5]}',
   threecam: '例：{"z":4.2,"fov":50,"lookAt":[0,0,0]}',
   '{t, d?}': '例：{"t": "要点", "d": "说明"}',
   step: '例：{"t": "步骤名", "d": "说明"}',

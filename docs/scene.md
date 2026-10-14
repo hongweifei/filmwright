@@ -340,8 +340,27 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | `wireframe` / `opacity` | `true/false`；0–1 |
 | `position` / `rotate` | `{x,y,z}`（rotate 是**角度制**） |
 | `animate` | 属性：`x` `y` `z` `rx` `ry` `rz` `scale`；值是关键帧轨道 |
+| `material` | `basic`（不受光/平涂）或 `standard`（受光）。默认：**有 `lights` 时 standard，否则 basic** |
 | `camera` | `x` `y` `z` `fov`（1–179）`lookAt`（`[x,y,z]`） |
+| `lights` | 最多 6 盏。`ambient`（铺底，不产生明暗）/ `directional`（像太阳）/ `point`（像灯泡，随距离衰减）；各有 `color` `intensity` 0–20，后两种还要 `position`（`[x,y,z]`） |
 | 上限 | 一个镜头最多 **24** 个对象（每个是一次 draw call） |
+
+**打光是显式动作**：不写 `lights` 就用无光照材质，画面与加光照之前**逐位相同**；
+写了才切到受光材质（PBR，`roughness 0.55 / metalness 0.15`）。
+
+```json
+{"type": "three", "at": "S04",
+ "camera": {"z": 4.2},
+ "lights": [
+   {"type": "ambient", "intensity": 0.6},
+   {"type": "directional", "intensity": 2.4, "position": [4, 3, 5]}
+ ],
+ "objects": [{"shape": "sphere", "size": 2.2, "color": "accent"}]}
+```
+
+实测判据（`tools/verify-three.mjs`）：**只有环境光时物体是"平"的**（中央亮度标准差 **0.00**），
+加上平行光才出现明暗梯度（**20.29**）—— 这一条证明光真的在参与着色，
+而不只是"材质换了所以画面变了"。受光场景同一帧两次渲染仍**逐字节一致**。
 
 **写错在静态自检就报**（`scene.json` 是静态校验的）：不认识的形状、越界数值、
 不认识的动画属性都会带可用值报出来。`filmwright schema` 里能查到这份词汇表。

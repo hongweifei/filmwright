@@ -24,9 +24,25 @@ export const ANIM3D_PROPS = ['x', 'y', 'z', 'rx', 'ry', 'rz', 'scale'];
 /** 一个镜头里最多几个 3D 对象：每个都是一次 draw call，太多会拖垮帧时间。 */
 export const MAX_OBJECTS = 24;
 
+/**
+ * 可用的光源类型（有界词汇表，与形状同一原则）。
+ *
+ *   · `ambient`     环境光：均匀铺底，不产生明暗（没有它，背光面全黑）
+ *   · `directional` 平行光：像太阳，有方向无位置衰减 —— 立体感主要靠它
+ *   · `point`       点光源：有位置、随距离衰减 —— 像灯泡
+ *
+ * **不给 lights 时对象用无光照材质**（`MeshBasicMaterial`），画面与之前**逐位相同**；
+ * 给了 lights 才切到受光材质（`MeshStandardMaterial`）。这样"加光"是一个显式动作，
+ * 老项目不受影响。
+ */
+export const LIGHT_TYPES = ['ambient', 'directional', 'point'];
+
+/** 一个镜头里最多几盏灯（受光材质的着色成本随灯数上升）。 */
+export const MAX_LIGHTS = 6;
+
 export const THREE_ERROR_CODES = [
   'SCENE_3D_SHAPE', 'SCENE_3D_CAMERA', 'SCENE_3D_OBJECTS', 'SCENE_3D_SHAPE_KIND',
-  'SCENE_3D_VALUE', 'SCENE_3D_COLOR', 'SCENE_3D_ANIM',
+  'SCENE_3D_VALUE', 'SCENE_3D_COLOR', 'SCENE_3D_ANIM', 'SCENE_3D_LIGHT',
 ];
 
 /** 颜色可以是主题色名（accent/text/…）或 #rrggbb。 */

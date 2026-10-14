@@ -27,6 +27,8 @@ const USE_GPU = argv.includes('--gpu');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
 const SRC = join(ROOT, 'examples', 'scenecast');
 const P = join(ROOT, '.work', 'three-e2e');
+// 帧尺寸（渲染页按项目配置出图；下面用到尺寸时会顺带校验一次）
+const W = 1280, H = 720;
 
 let bad = 0;
 const ok = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
@@ -242,6 +244,73 @@ line();
   writeScene([{type: 'title', at: 1, title: 'no 3d'}]);
   const plain = stills([30], 'declPlain');
   ok(plain.code === 0, '没有 3D 的规格照常渲染（不会去加载 three）');
+}
+
+line('═');
+console.log('七、3D 光照（有 lights 才切到受光材质）');
+line();
+{
+  const {writeFileSync: wf} = await import('node:fs');
+  const sphere = (extra) => ({
+    type: 'three', at: 1, camera: {z: 4.2},
+    objects: [{shape: 'sphere', size: 2.2, color: 'accent', ...extra.obj}],
+    ...(extra.lights ? {lights: extra.lights} : {}),
+  });
+  const writeScene3 = (s) => wf(join(P, 'scene.json'), JSON.stringify({shots: [s]}, null, 2) + '\n', 'utf8');
+  writeFileSync(join(P, 'shots', 'index.js'),
+    'import {view} from \'filmwright\';\nexport const SHOTS = [];\n', 'utf8');
+
+  /** 画面中央一块区域内的亮度标准差：受光有明暗 ⇒ 标准差大；只有环境光 ⇒ 接近 0。 */
+  const centerStd = (gray, w = W, h = H, box = 160) => {
+    const x0 = Math.floor(w / 2 - box / 2), y0 = Math.floor(h / 2 - box / 2);
+    const vals = [];
+    for (let y = y0; y < y0 + box; y++) for (let x = x0; x < x0 + box; x++) vals.push(gray[y * w + x]);
+    const m = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return Math.sqrt(vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length);
+  };
+
+  writeScene3(sphere({}));
+  const unlit = stills([40], 'lit-none');
+  ok(unlit.code === 0, '无 lights 的 3D 镜头照常渲染（材质仍是 MeshBasicMaterial）');
+  const hUnlit = Object.values(unlit.out)[0]?.hash;
+
+  writeScene3(sphere({lights: [{type: 'ambient', intensity: 1.6}]}));
+  const amb = stills([40], 'lit-amb');
+  const hAmb = Object.values(amb.out)[0]?.hash;
+  ok(amb.code === 0 && hAmb !== hUnlit, `加 ambient 后画面变了（${hUnlit} → ${hAmb}）⇒ 确实切到了受光材质`);
+
+  writeScene3(sphere({lights: [{type: 'ambient', intensity: 0.6}, {type: 'directional', intensity: 2.4, position: [4, 3, 5]}]}));
+  const dir = stills([40], 'lit-dir');
+  const hDir = Object.values(dir.out)[0]?.hash;
+  ok(dir.code === 0 && hDir !== hAmb, `加 directional 后画面又变了（${hAmb} → ${hDir}）`);
+
+  // **锋利判据**：只有环境光时，物体各面受光相同 ⇒ 中央区域几乎是平的（标准差≈0）；
+  // 有平行光才有明暗梯度 ⇒ 标准差明显更大。这一条能证明"光真的在参与着色"，
+  // 而不只是"画面变了"（材质换成 standard 本身就会让画面变）。
+  const {execFileSync} = await import('node:child_process');
+  const toGray = (p) => {
+    const raw = execFileSync('ffmpeg', ['-v', 'error', '-i', p, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+      {maxBuffer: 64 * 1024 * 1024});
+    return raw;
+  };
+  const gAmb = toGray(join(P, '.work', 'lit-amb', 'f00040.png'));
+  const gDir = toGray(join(P, '.work', 'lit-dir', 'f00040.png'));
+  ok(gAmb.length === W * H, `帧尺寸是 ${W}×${H}（灰度缓冲 ${gAmb.length} 字节）`);
+  const stdAmb = centerStd(gAmb), stdDir = centerStd(gDir);
+  console.log(`  中央区域亮度标准差：只有 ambient ${stdAmb.toFixed(2)}；ambient+directional ${stdDir.toFixed(2)}`);
+  ok(stdAmb < 3, `只有环境光时物体是**平的**（标准差 ${stdAmb.toFixed(2)} < 3）⇒ ambient 不产生明暗，符合物理`);
+  ok(stdDir > stdAmb + 8, `加平行光后出现明暗梯度（${stdDir.toFixed(2)} > ${stdAmb.toFixed(2)} + 8）⇒ 光真的在参与着色`);
+
+  // 光的位置要真的有用
+  writeScene3(sphere({lights: [{type: 'ambient', intensity: 0.6}, {type: 'directional', intensity: 2.4, position: [-5, -3, 2]}]}));
+  const dir2 = stills([40], 'lit-dir2');
+  ok(Object.values(dir2.out)[0]?.hash !== hDir, '把光换个方向，明暗随之改变 ⇒ position 不是摆设');
+
+  // 受光材质也不能破坏核心不变量
+  const d1 = stills([40], 'lit-det1');
+  const d2 = stills([40], 'lit-det2');
+  ok(Object.values(d1.out)[0]?.hash === Object.values(d2.out)[0]?.hash,
+    '受光场景同一帧两次渲染**逐字节一致**（光照不破坏"第 N 帧只是 N 的函数"）');
 }
 
 rmSync(P, {recursive: true, force: true});

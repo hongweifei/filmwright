@@ -58,15 +58,39 @@ function compile(shot, theme) {
   camera.lookAt(...(cam.lookAt ?? [0, 0, 0]));
   camera.updateProjectionMatrix();
 
+  // ── 灯 ──
+  // 位置与强度都是**静态**的（v1 不支持灯的关键帧）：它们不影响纯函数性，
+  // 但要动就得每帧完整写一遍，那是另一件事（对象属性已经这么做了）。
+  const lights = (shot.lights ?? []).map((L) => {
+    const color = resolveColor(L.color, theme);
+    const intensity = L.intensity ?? 1;
+    let light;
+    if (L.type === 'ambient') light = new T.AmbientLight(color, intensity);
+    else if (L.type === 'directional') light = new T.DirectionalLight(color, intensity);
+    else light = new T.PointLight(color, intensity);
+    if (L.type !== 'ambient') light.position.set(...(L.position ?? [1, 1, 1]));
+    scene.add(light);
+    return light;
+  });
+  // 有灯 ⇒ 默认用受光材质；没有 ⇒ 保持无光照（**老项目逐位不变**）。
+  // 单个对象可以用 material 覆盖这个默认。
+  const litByDefault = lights.length > 0;
+
   const node = {beats: shot.beats ?? [], from: this.from};
   const objects = (shot.objects ?? []).map((o) => {
     const size = o.size ?? 1;
-    const mat = new T.MeshBasicMaterial({
+    const common = {
       color: resolveColor(o.color, theme),
       wireframe: !!o.wireframe,
       transparent: o.opacity !== undefined && o.opacity < 1,
       opacity: o.opacity ?? 1,
-    });
+    };
+    const useLit = (o.material ?? (litByDefault ? 'standard' : 'basic')) === 'standard';
+    // MeshStandardMaterial 是 PBR：要有立体感还得给点粗糙度/金属度，
+    // 否则默认全镜面、看着像塑料。0.55/0.15 是"哑光塑料/陶瓷"的常见起点。
+    const mat = useLit
+      ? new T.MeshStandardMaterial({...common, roughness: 0.55, metalness: 0.15})
+      : new T.MeshBasicMaterial(common);
     const mesh = new T.Mesh(geometryFor(T, o.shape, size), mat);
     scene.add(mesh);
     const tracks = o.animate ? compileAnimate(o.animate, node) : null;

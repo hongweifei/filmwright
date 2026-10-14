@@ -232,10 +232,13 @@ PNG 时代每帧 1.2MB 的 base64 要塞进**同一个 node 主线程**再写进
 有界词汇表）与**命令式**（`shots/index.js` 里 `await loadThree()`，不受限）。
 如实记下三点：
 
-- **声明式是有界词汇表**：5 种形状、最多 24 个对象、动画只支持
-  `x/y/z/rx/ry/rz/scale` 七个属性。要自定义几何/材质/光照/后处理就走命令式
-  （那条路引擎不背书、也不进 schema）。声明式**没有**光照与后处理 ——
-  材质固定用 `MeshBasicMaterial`（无光照，因此确定性最好）。
+- **声明式是有界词汇表**：5 种形状、最多 24 个对象、最多 6 盏灯、动画只支持
+  `x/y/z/rx/ry/rz/scale` 七个属性。要自定义几何/后处理就走命令式
+  （那条路引擎不背书、也不进 schema）。**光照有了**（ambient / directional / point，
+  位置与强度是**静态**的，不支持灯的关键帧）；**后处理没有** —— 但那不是缺口：
+  泛光/暗角/调色这些在**帧级效果链**里已经有了（`glow` / `vignette` / `color`），
+  在 3D 层里再叠一套后处理会重复，也会让确定性更难守。
+  不写 `lights` 时材质仍是 `MeshBasicMaterial`（无光照，确定性最好，且老项目逐位不变）。
 - **实测用的后端是 WebGL，不是 WebGPU**：本机无头环境里 `navigator.gpu` 为 `true`，
   但 three 实际解析到 `WebGLBackend`（探针里读了 `renderer.backend`）。
   `create3D().render()` 是**同步**提交 —— WebGL 下正确；WebGPU 后端的渲染是异步的，
