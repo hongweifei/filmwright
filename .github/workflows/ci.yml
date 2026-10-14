@@ -205,6 +205,12 @@ jobs:
       - name: 3D 图层（内容入帧 / 确定性 / 光照真的生效 / 不用 3D 不加载 three）
         run: node tools/verify-three.mjs
 
+      # 页面侧 H.264 编码器（WebCodecs）：性能方向的地基。
+      # 判据不止"没报错"—— 要用 ffprobe 证明**产出的是一段有效视频**、帧数对得上、
+      # 背压生效（队列不超上限）、并报出实际用的编码配置。
+      - name: H.264 编码器（WebCodecs：有效视频 / 帧数一致 / 背压 / 报出编码配置）
+        run: node tools/verify-h264.mjs
+
       - name: README 快速开始路径（文档承诺要真的走通）
         run: node tools/verify-readme.mjs
 
