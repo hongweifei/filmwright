@@ -3,12 +3,13 @@
 // 渲染页只需要 import 这个文件，不必知道内部怎么分层。
 import {install as installConfig, config, view} from '../../contract/config.js';
 import {setTimeline, timeline, cardRange, tailFrom} from '../../contract/timeline.js';
-import {validateScene} from '../../contract/scene.js';
+import {validateScene, needsThree} from '../../contract/scene.js';
 import {setShots, bindShots, shotAt, shots} from './shots.js';
 import {setChapterCards, chapterCards} from '../chrome/chapterCard.js';
 import {loadAssets} from '../assets.js';
 import {setClips, preloadClipFrames} from '../clips.js';
 import {compileScene} from '../scene/templates.js';
+import {ensureThree} from '../three/stage.js';
 import {drawFrame} from './drawFrame.js';
 
 /**
@@ -140,6 +141,10 @@ export async function boot(p, resize) {
         + v.errors.map((e) => `  [${e.code}] ${e.path}：${e.message}${e.hint ? '（' + e.hint + '）' : ''}`).join('\n'));
     }
     list.push(...compileScene(p.scene, timeline));
+    // 声明式 3D 的模板 draw 是**同步**的，而 three 的加载是异步的 ——
+    // 所以在这里（boot 本身是 async）预加载一次。
+    // 只有规格里真有 3D 才拉：不用 3D 的项目一个字节都不加载（three 有 2.2MB）。
+    if (needsThree(p.scene)) await ensureThree();
   }
   if (p.shots || p.loadShots) {
     const mod = p.shots ?? await p.loadShots();

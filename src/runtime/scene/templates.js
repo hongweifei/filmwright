@@ -22,6 +22,7 @@ import {compileAnimate, mergeAnimate} from './animate.js';
 import {withLayer} from '../composite/layer.js';
 import {compileEffects, isNoopEffects} from '../fx/compile.js';
 import {paintWithEffects} from '../fx/gpu.js';
+import {threeT} from '../three/scene3d.js';
 
 const W = () => 1280;
 
@@ -686,6 +687,7 @@ export const TEMPLATES = {
   title, bullets, stat, flow: flowT, code, image, compare,
   steps, table, quote, terminal: terminalT, chips, bars: barsT, line: lineT,
   clip: clipT,
+  three: threeT,
   // comp 由 compileScene 特判，不该走到这里；留着是为了键集一致 + 误用时明确报错
   comp: {draw(ctx, n, shot) { void ctx; void n; void shot;
     throw new Error('filmwright: comp 类型由 compileScene 特判，不应直接调用模板 draw'); }},

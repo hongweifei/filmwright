@@ -5,6 +5,7 @@
 // 规格是 AI 的落点：AI 只填内容与节拍，节奏（入场/呼吸/离场/配色）由模板镜头负责。
 // 因此校验必须**可行动**：每条错误带 code / path / hint，模型读完能直接改。
 import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES} from './effects.js';
+import {SHAPES, ANIM3D_PROPS, MAX_OBJECTS, THEME_COLOR_KEYS, THREE_ERROR_CODES} from './three.js';
 // 容量上限也在这里钉死 —— AI 该被校验告知边界，而不是靠肉眼发现画面溢出。
 //
 // 对齐 token（at）：
@@ -26,6 +27,7 @@ export const SHOT_TYPES = [
   'comp',   // 嵌套合成实例：引用 comps 里定义的一个子合成
   'clip',   // 视频/图片序列片段：按源帧号取图（见配置的 clips）
   'line',   // 折线图：逐段绘制 + 数值滚动（适合随时间的趋势）
+  'three',  // 声明式 3D：形状/相机/关键帧动画（需要可选的 three，见 contract/three.js）
   'layers', // **容器**（不是模板）：同一个镜头区间里并发多层，各有 z 序与时间窗
 ];
 
@@ -42,6 +44,7 @@ export const TEMPLATE_TYPES = SHOT_TYPES.filter((t) => !CONTAINER_TYPES.includes
 /** 每类的容量上限（版面算出来的，超了会挤/溢出）。 */
 export const SHOT_MAXES = {
   layers: {layers: 8},   // 并发层上限：每层都是一次完整绘制，太多会拖垮帧时间
+  three: {objects: 24},  // 每个 3D 对象是一次 draw call，上限同 contract/three.js 的 MAX_OBJECTS
   bullets: {items: 6},
   steps: {steps: 6},
   flow: {boxes: 5},
@@ -64,6 +67,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_ANIM_RANGE', 'SCENE_ANIM_NO_BEATS',
   'SCENE_LAYER_SHAPE', 'SCENE_LAYER_CONTENT', 'SCENE_LAYER_RANGE', 'SCENE_LAYER_NEST',
   ...EFFECT_ERROR_CODES,
+  ...THREE_ERROR_CODES,
   'SCENE_BAD_COMP', 'SCENE_NO_COMP', 'SCENE_COMP_CYCLE', 'SCENE_COMP_LOCAL_AT',
   'SCENE_NO_CLIP',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
@@ -121,6 +125,9 @@ const FIELDS = {
   // **容器**：同一镜头区间里并发多层。每层自己有 z 序、时间窗、变换与关键帧。
   // 它没有"自己的内容"—— 内容全在 layers 里，所以不存在"镜头自身算不算一层"的歧义。
   layers: {layers: 'arr<layer>'},
+  // 声明式 3D：形状/相机是有界词汇表，动画走关键帧轨道（见 validate3D）。
+  // 键级检查走 SHAPE_KEYS.threeobj / threecam，语义检查在 validate3D。
+  three: {camera: 'obj?', objects: 'arr<threeobj>'},
   title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?'},
   bullets: {heading: 'str?', items: 'arr<{t, d?}>'},
   stat: {value: 'num', label: 'str', unit: 'str?', label2: 'str?'},
@@ -138,7 +145,6 @@ const FIELDS = {
   clip: {clip: 'clipName', heading: 'str?', note: 'str?', fit: 'fit?', from: 'num?', fps: 'num?'},
   line: {heading: 'str?', points: 'arr<point>', unit: 'str?', baseline: 'num?'},
 };
-
 /** 每类的说明（schema 输出给 agent 看，一句话讲清"什么时候用它"）。 */
 const TYPE_NOTES = {
   layers: '容器：同一镜头区间里**并发多层**，每层有 z 序（数值大在上）、时间窗（from/to，是相对本镜头起点的偏移，1 起）、以及自己的 transform 与 animate',
@@ -158,6 +164,7 @@ const TYPE_NOTES = {
   line: '折线图（2–8 个点）：逐段绘制 + 数值滚动，适合随时间的趋势',
   comp: '嵌套合成实例：引用 comps 里定义的可复用子合成（可循环）',
   clip: '视频/图片序列片段：按源帧号取图，随时间播放（片段在配置的 clips 里声明）',
+  three: '声明式 3D：形状/相机是有界词汇表，动画走关键帧轨道（需要可选的 three）',
 };
 
 /** 转场类型与方向（与 runtime/stage/shots.js 同一份名单，有交叉测试钉住）。 */
@@ -314,6 +321,186 @@ export function validateEffects(effects, path = 'effects') {
     }
   });
   return out;
+}
+
+/**
+ * 校验一个声明式 3D 镜头（`{"type": "three", "camera": …, "objects": […]}`）。
+ *
+ * 形状是**有界词汇表**（见 contract/three.js）。动画只走关键帧轨道 ——
+ * 复用 `validateKeyTrack`，所以 `beat`/`frame` 锚点、缓动白名单、键序递增
+ * 与 `animate` 是**同一套规则**，不复制第二份。
+ */
+export function validate3D(spec, path = 'three') {
+  const out = [];
+  const push = (code, where, message, hint) => out.push(err(code, where, message, hint));
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
+    push('SCENE_3D_SHAPE', path, 'three 镜头必须是对象',
+      '形如 {"camera":{"z":4.2},"objects":[{"shape":"box","size":1.6,"color":"accent"}]}');
+    return out;
+  }
+  // 通用字段（type/at/transition/transform/animate/effects）由外层统一处理，
+  // 这里只管 three 自己的两个。**漏掉通用字段会误报** —— 第一版就报出
+  // "three 没有字段 type/at"，等于所有合法写法都过不了。
+  const COMMON = ['type', 'at', 'transition', 'transform', 'animate', 'effects'];
+  for (const k of Object.keys(spec)) {
+    if (k === 'camera' || k === 'objects' || COMMON.includes(k)) continue;
+    push('SCENE_3D_SHAPE', `${path}.${k}`, `three 没有字段 ${JSON.stringify(k)}`,
+      '可用：camera / objects（3D 动画写在每个对象的 animate 里）');
+  }
+
+  // ── camera ──
+  const CAM = ['x', 'y', 'z', 'fov', 'lookAt'];
+  if (spec.camera !== undefined) {
+    const c = spec.camera;
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      push('SCENE_3D_CAMERA', `${path}.camera`, 'camera 必须是对象',
+        '形如 {"x":0,"y":0,"z":4.2,"fov":50}；lookAt 是 [x,y,z]');
+    } else {
+      for (const k of Object.keys(c)) {
+        if (!CAM.includes(k)) {
+          push('SCENE_3D_CAMERA', `${path}.camera.${k}`, `camera 没有字段 ${JSON.stringify(k)}`,
+            `可用：${CAM.join(' / ')}`);
+        }
+      }
+      for (const k of ['x', 'y', 'z', 'fov']) {
+        const v = c[k];
+        if (v === undefined) continue;
+        if (typeof v !== 'number' || !Number.isFinite(v)) {
+          push('SCENE_3D_CAMERA', `${path}.camera.${k}`, `camera.${k} 必须是数值，收到 ${JSON.stringify(v)}`,
+            k === 'fov' ? 'fov：视场角（度），常用 30–70' : `${k}：相机位置（世界单位）`);
+        } else if (k === 'fov' && (v <= 1 || v >= 179)) {
+          push('SCENE_3D_CAMERA', `${path}.camera.fov`, `fov 超出范围：${v}`,
+            'fov：视场角，允许 1–179（常用 30–70）');
+        }
+      }
+      if (c.lookAt !== undefined) {
+        const l = c.lookAt;
+        if (!Array.isArray(l) || l.length !== 3 || l.some((x) => typeof x !== 'number')) {
+          push('SCENE_3D_CAMERA', `${path}.camera.lookAt`, 'lookAt 必须是三个数值的数组',
+            '形如 [0, 0, 0]（相机看向的点）');
+        }
+      }
+    }
+  }
+
+  // ── objects ──
+  // 空数组/非数组由**通用字段校验**报（它现在会带上这个形状的示例）——
+  // 这里只提前返回，不再重复报一遍（两处报同一件事是噪声）。
+  if (!Array.isArray(spec.objects) || !spec.objects.length) return out;
+  if (spec.objects.length > MAX_OBJECTS) {
+    push('SCENE_3D_OBJECTS', `${path}.objects`,
+      `最多 ${MAX_OBJECTS} 个对象，收到 ${spec.objects.length} 个`,
+      '每个对象是一次 draw call；要更多就走命令式，或拆成几个镜头');
+  }
+
+  const OBJ_KEYS = ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate'];
+  spec.objects.forEach((o, i) => {
+    const op = `${path}.objects[${i}]`;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) {
+      push('SCENE_3D_SHAPE', op, '每个对象必须是对象', '形如 {"shape":"box","size":1.6}');
+      return;
+    }
+    for (const k of Object.keys(o)) {
+      if (!OBJ_KEYS.includes(k)) {
+        push('SCENE_3D_SHAPE', `${op}.${k}`, `对象没有字段 ${JSON.stringify(k)}`,
+          `可用：${OBJ_KEYS.join(' / ')}`);
+      }
+    }
+    if (!SHAPES.includes(o.shape)) {
+      push('SCENE_3D_SHAPE_KIND', `${op}.shape`, `不认识的形状 ${JSON.stringify(o.shape)}`,
+        `可用：${SHAPES.join(' / ')}`);
+    }
+    for (const k of ['size', 'opacity']) {
+      const v = o[k];
+      if (v === undefined) continue;
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        push('SCENE_3D_VALUE', `${op}.${k}`, `${k} 必须是数值，收到 ${JSON.stringify(v)}`,
+          k === 'size' ? 'size：尺寸（世界单位），常用 0.2–5' : 'opacity：不透明度 0–1');
+      } else if (k === 'size' && (v <= 0 || v > 20)) {
+        push('SCENE_3D_VALUE', `${op}.size`, `size 超出范围：${v}`, 'size：允许 0–20（世界单位）');
+      } else if (k === 'opacity' && (v < 0 || v > 1)) {
+        push('SCENE_3D_VALUE', `${op}.opacity`, `opacity 超出范围：${v}`, 'opacity：允许 0–1');
+      }
+    }
+    if (o.wireframe !== undefined && typeof o.wireframe !== 'boolean') {
+      push('SCENE_3D_VALUE', `${op}.wireframe`, 'wireframe 必须是 true/false', '例：true 只画线框');
+    }
+    if (o.color !== undefined) {
+      const okTheme = THEME_COLOR_KEYS.includes(o.color);
+      const okHex = typeof o.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(o.color);
+      if (!okTheme && !okHex) {
+        push('SCENE_3D_COLOR', `${op}.color`, `颜色 ${JSON.stringify(o.color)} 不认识`,
+          `可用主题色：${THEME_COLOR_KEYS.join(' / ')}；或 #rrggbb`);
+      }
+    }
+    for (const k of ['position', 'rotate']) {
+      const v = o[k];
+      if (v === undefined) continue;
+      if (!v || typeof v !== 'object' || Array.isArray(v)) {
+        push('SCENE_3D_VALUE', `${op}.${k}`, `${k} 必须是 {x,y,z} 对象`,
+          '例：{"x":0,"y":0,"z":0}' + (k === 'rotate' ? '（角度制）' : '（世界单位）'));
+      } else {
+        for (const ax of Object.keys(v)) {
+          if (!['x', 'y', 'z'].includes(ax)) {
+            push('SCENE_3D_VALUE', `${op}.${k}.${ax}`, `${k} 没有轴 ${JSON.stringify(ax)}`, '可用：x / y / z');
+          } else if (typeof v[ax] !== 'number' || !Number.isFinite(v[ax])) {
+            push('SCENE_3D_VALUE', `${op}.${k}.${ax}`, `${k}.${ax} 必须是数值`, `例：{"${ax}": 1.5}`);
+          }
+        }
+      }
+    }
+    // 动画：走**同一套**轨道校验（beat/frame 锚点、缓动白名单、键序递增）
+    if (o.animate !== undefined) {
+      const an = o.animate;
+      if (!an || typeof an !== 'object' || Array.isArray(an)) {
+        push('SCENE_3D_ANIM', `${op}.animate`, 'animate 必须是对象：{属性: [关键帧…]}',
+          `可用属性：${ANIM3D_PROPS.join(' / ')}`);
+      } else {
+        for (const prop of Object.keys(an)) {
+          if (!ANIM3D_PROPS.includes(prop)) {
+            push('SCENE_3D_ANIM', `${op}.animate.${prop}`, `3D 动画不支持属性 ${JSON.stringify(prop)}`,
+              `可用：${ANIM3D_PROPS.join(' / ')}（rx/ry/rz 是绕各轴的角度，度）`);
+            continue;
+          }
+          out.push(...validateKeyTrack(an[prop], `${op}.animate.${prop}`, {
+            valueNote: prop === 'scale' ? 'scale：倍数，1 为原大' : undefined,
+            checkValue: prop === 'scale'
+              ? (v, kp, p) => {
+                if (v <= 0) p('SCENE_3D_ANIM', kp, `scale 的关键帧值必须 > 0，收到 ${v}`, 'scale 是倍数，1 为原大');
+              }
+              : null,
+          }));
+        }
+      }
+    }
+  });
+  return out;
+}
+
+/**
+ * 这个规格里有没有声明式 3D？—— 引擎据此决定**要不要预加载 three**。
+ *
+ * 为什么需要一个显式判断：three 有 2.2MB，**不用 3D 的项目一个字节都不该加载**。
+ * 判断要在**原始规格**上做（在编译成镜头之前），这样图层容器里的 3D 也能被发现。
+ */
+export function needsThree(scene) {
+  if (!scene || typeof scene !== 'object') return false;
+  const hits = (shots) => (Array.isArray(shots) ? shots.some((s) => {
+    if (!s || typeof s !== 'object') return false;
+    if (s.type === 'three') return true;
+    if (s.type === 'layers' && Array.isArray(s.layers)) {
+      return s.layers.some((l) => l && l.content && l.content.type === 'three');
+    }
+    return false;
+  }) : false);
+  if (hits(scene.shots)) return true;
+  // comps 是可以被复用的子合成，也要算上
+  if (scene.comps) {
+    for (const v of Object.values(scene.comps)) {
+      if (v && hits(v.shots)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -561,7 +748,11 @@ function checkStr(v, path, name, errors, required, kind = 'str') {
 /** 数组元素形状逐个校验；返回元素个数（用于容量上限）。 */
 function validateArr(v, path, shape, errors, {min = 1, maxName, shot} = {}) {
   if (!Array.isArray(v) || v.length < min) {
-    errors.push(err('SCENE_BAD_FIELD', path, `必须是至少 ${min} 项的数组`, ''));
+    // hint 要**可行动**：带上这个形状的示例。空 hint 等于让模型自己猜 ——
+    // 实测 3D 的 objects 为空时只得到"必须是至少 1 项的数组"（hint 空），
+    // 而同一件事 validate3D 能给一条带完整示例的提示。这里把通用的那条也补上。
+    errors.push(err('SCENE_BAD_FIELD', path, `必须是至少 ${min} 项的数组`,
+      SHAPE_HINT[shape] || (Array.isArray(v) ? '把数组填上至少一项' : '这里要写数组，例如 [ … ]')));
     return 0;
   }
   const max = maxName && shot ? SHOT_MAXES[maxName.owner]?.[maxName.key] : undefined;
@@ -625,6 +816,9 @@ const SHAPE_KEYS = {
   // 容器里的一层。**键级**检查走这里（未知字段），**语义**检查在 validateLayers
   // （content 必须是模板调用且不带 at、from/to 范围、z 类型、嵌套容器禁用）。
   layer: ['content', 'z', 'from', 'to', 'transform', 'animate', 'effects'],
+  // 声明式 3D 的一个对象。键级检查走这里，语义检查在 validate3D。
+  threeobj: ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate'],
+  threecam: ['x', 'y', 'z', 'fov', 'lookAt'],
   '{t, d?}': ['t', 'd'],
   step: ['t', 'd'],
   '{label, sub?}': ['label', 'sub'],
@@ -636,6 +830,8 @@ const SHAPE_KEYS = {
 };
 const SHAPE_HINT = {
   layer: '每层形如 {"content":{"type":"bullets","items":[…]},"z":1,"from":1,"to":60}',
+  threeobj: '例：{"shape":"box","size":1.6,"color":"accent","animate":{"ry":[{"beat":1,"v":0},{"beat":3,"v":360}]}}',
+  threecam: '例：{"z":4.2,"fov":50,"lookAt":[0,0,0]}',
   '{t, d?}': '例：{"t": "要点", "d": "说明"}',
   step: '例：{"t": "步骤名", "d": "说明"}',
   '{label, sub?}': '例：{"label": "环节"}',
@@ -771,6 +967,9 @@ export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
     }
     if (shot.effects !== undefined) {
       errors.push(...validateEffects(shot.effects, `${path}.effects`));
+    }
+    if (shot.type === 'three') {
+      errors.push(...validate3D(shot, path));
     }
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {

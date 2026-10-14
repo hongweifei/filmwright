@@ -200,6 +200,50 @@ line();
   }
 }
 
+line('═');
+console.log('六、声明式 3D（scene.json 里的 `three` 镜头）');
+line();
+{
+  const {writeFileSync: wf} = await import('node:fs');
+  const writeScene = (shots) => wf(join(P, 'scene.json'), JSON.stringify({shots}, null, 2) + '\n', 'utf8');
+  const T3 = (anim) => ({
+    type: 'three', at: 1,
+    camera: {z: 4.2, fov: 50},
+    objects: [{shape: 'box', size: 1.6, color: 'accent', ...(anim ? {animate: anim} : {})}],
+  });
+  // 有 3D 时只用 scene.json（把 shots/index.js 挪开，避免两边混）
+  writeFileSync(join(P, 'shots', 'index.js'),
+    'import {view} from \'filmwright\';\nexport const SHOTS = [];\n', 'utf8');
+
+  writeScene([T3({ry: [{frame: 1, v: 0}, {frame: 60, v: 180}]})]);
+  const d1 = stills([30], 'decl30');
+  ok(d1.code === 0, '声明式 three 镜头能渲染（' + (d1.code === 0 ? '没报错' : String(d1.raw).slice(-260)) + '）');
+  const d2 = stills([60], 'decl60');
+  ok(Object.values(d1.out)[0]?.hash !== Object.values(d2.out)[0]?.hash,
+    '关键帧让 3D 真的在动（第 30 帧 ≠ 第 60 帧）');
+
+  // 纯函数性：同一帧两次一致 + **乱序**渲染同一帧也一致
+  const seq = stills([30, 60], 'declSeq');
+  const alone = stills([60], 'declAlone');
+  ok(Object.values(seq.out)[1]?.hash === Object.values(alone.out)[0]?.hash,
+    '声明式 3D 也是帧号的纯函数（单独渲第 60 帧 == 连渲的第 60 帧）');
+
+  // 静态自检应当**抓得住**写错的声明式 3D（scene.json 是静态校验的，比命令式强）
+  writeScene([{type: 'three', at: 1, objects: [{shape: 'pyramid'}]}]);
+  const bad = spawnSync('node', [KIT, 'check', '--project', P, '--static-only', '--json'],
+    {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024});
+  let bj = null;
+  try { bj = JSON.parse(bad.stdout); } catch { /* ignore */ }
+  const codes = (bj?.errors ?? []).map((e) => e.code);
+  ok(bad.status !== 0 && codes.includes('SCENE_3D_SHAPE_KIND'),
+    `写错的形状在**静态自检**就报出来（${codes.join('/') || '没报'}）—— 不用等到渲染`);
+
+  // 不用 3D 的规格不该触发 three 加载（靠 needsThree 门控）
+  writeScene([{type: 'title', at: 1, title: 'no 3d'}]);
+  const plain = stills([30], 'declPlain');
+  ok(plain.code === 0, '没有 3D 的规格照常渲染（不会去加载 three）');
+}
+
 rmSync(P, {recursive: true, force: true});
 line('═');
 console.log(bad === 0 ? '✓ 3D 图层可用且守住核心不变量' : `✗ ${bad} 项失败`);

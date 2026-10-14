@@ -52,7 +52,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | 命令 | 作用 |
 |---|---|
 | `new` | 新建项目骨架（scene / shots 两种模板） |
-| `schema` | 输出 scene 规格的机器可读 schema（16 类模板、字段、上限、错误码） |
+| `schema` | 输出 scene 规格的机器可读 schema（17 类模板、字段、上限、错误码） |
 | `mcp` | MCP 服务器（stdio），把工具链暴露给 agent |
 | `check` | 十道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
@@ -85,7 +85,7 @@ filmwright mcp       # stdio 服务器，日志走 stderr，Ctrl+C 结束
 ## `schema`
 
 ```bash
-filmwright schema          # 人读：16 类模板的用途、字段、上限、对齐语法、错误码
+filmwright schema          # 人读：17 类模板的用途、字段、上限、对齐语法、错误码
 filmwright schema --json   # 机读：同一份数据的 JSON（agent 写 scene 前先拿它）
 ```
 

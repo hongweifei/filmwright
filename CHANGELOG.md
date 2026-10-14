@@ -134,7 +134,7 @@
 
 **AI 自动化**
 
-- **场景规格 `scene.json`**：声明式镜头（现含 16 类模板），AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。
+- **场景规格 `scene.json`**：声明式镜头（现含 17 类模板），AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。
 - **`filmwright schema`**：机器可读的规格说明书（模板 / 字段 / 上限 / 对齐语法 / 错误码），agent 写 scene 前先拿它，不必先读文档。
 - **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致。
 - **`filmwright mcp`：MCP 服务器（stdio）**，把工具链暴露给 agent，返回值与 `--json` 同形状。唯一需要 npm 依赖的子命令（SDK 惰性加载：没装依赖时其余命令照常跑）。其中 `filmwright_stills` 把 PNG 作为 MCP image content 直接回给多模态模型；`filmwright_review` 一轮完成「改 → 验 → 看」（scene 校验 → 静态自检 → 各镜头代表帧回图）。

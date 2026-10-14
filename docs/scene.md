@@ -37,9 +37,9 @@
 
 句 id 与字幕块来自 `script/timeline.json`（`filmwright tts` 生成，人读版在 `script/timeline.md`）。**改解说词不用改规格**：句 id 稳定，帧号自动跟着变。
 
-## 模板一览（16 类模板 + 1 个容器 `layers`）
+## 模板一览（17 类模板 + 1 个容器 `layers`）
 
-> 写成「16 类模板」是刻意的：`tools/verify-docs.mjs` 会用这个句式核数字，
+> 写成「17 类模板」是刻意的：`tools/verify-docs.mjs` 会用这个句式核数字，
 > 而**容器不算模板**（它没有自己的内容，是把别的东西组合起来）。
 > 早先这里写「共 13 类」，那是个检查器抓不到的过时说法 —— 现在改成它能核的句式。
 
@@ -306,6 +306,43 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
   要那种效果就把它拆成独立的一层（`layers` 容器的每层都能挂自己的 `effects`）。
 
 ## 3D 图层（现成的 three，**可选**依赖）
+
+3D 用现成的 [three](https://threejs.org/)，不自己封一套 GL。**两条路都能走**：
+
+### 声明式：`scene.json` 里的 `three` 镜头
+
+形状与相机是**有界词汇表**（与效果链同一原则）：形状是枚举、数值有范围、
+**动画只走关键帧轨道**（与 `animate` 同一套时间基，`beat`/`frame` 锚点都能用）。
+
+```json
+{"type": "three", "at": "S03",
+ "camera": {"z": 4.2, "fov": 50, "lookAt": [0, 0, 0]},
+ "objects": [
+   {"shape": "box", "size": 1.6, "color": "accent",
+    "animate": {"ry": [{"beat": 1, "v": 0}, {"beat": 3, "v": 360, "ease": "out3"}]}},
+   {"shape": "torus", "size": 1.0, "color": "#4f9dff", "wireframe": true, "opacity": 0.6,
+    "position": {"x": 1.6, "y": 0.2, "z": 0},
+    "animate": {"rz": [{"frame": 1, "v": 0}, {"frame": 90, "v": 180}]}}
+ ]}
+```
+
+| 字段 | 可用值 |
+|---|---|
+| `shape` | `box` / `sphere` / `torus` / `plane` / `icosahedron` |
+| `size` | 0–20（世界单位） |
+| `color` | 主题色名（`accent` / `text` / `muted` / …）或 `#rrggbb` |
+| `wireframe` / `opacity` | `true/false`；0–1 |
+| `position` / `rotate` | `{x,y,z}`（rotate 是**角度制**） |
+| `animate` | 属性：`x` `y` `z` `rx` `ry` `rz` `scale`；值是关键帧轨道 |
+| `camera` | `x` `y` `z` `fov`（1–179）`lookAt`（`[x,y,z]`） |
+| 上限 | 一个镜头最多 **24** 个对象（每个是一次 draw call） |
+
+**写错在静态自检就报**（`scene.json` 是静态校验的）：不认识的形状、越界数值、
+不认识的动画属性都会带可用值报出来。`filmwright schema` 里能查到这份词汇表。
+
+### 命令式：`shots/index.js` 里自由发挥
+
+要词汇表覆盖不了的（自定义几何、材质、光照、后处理），走命令式：
 
 3D 用现成的 [three](https://threejs.org/)，不自己封一套 GL。因为**渲染页的 `draw` 是同步的**，
 而 three 的加载与渲染器初始化是异步的，所以形状是「**模块顶层 await 一次，之后每帧同步渲**」：

@@ -31,8 +31,8 @@ test('容器与模板在契约里是分开的两类（「N 类模板」的判据
   assert.deepEqual(CONTAINER_TYPES, ['layers']);
   assert.ok(SHOT_TYPES.includes('layers'), '容器也要在 SHOT_TYPES 里，否则校验认不出');
   assert.ok(!TEMPLATE_TYPES.includes('layers'), '容器不是模板');
-  assert.equal(TEMPLATE_TYPES.length, 16, '模板仍是 16 类');
-  assert.equal(SHOT_TYPES.length, 17, 'SHOT_TYPES = 16 模板 + 1 容器');
+  assert.equal(TEMPLATE_TYPES.length, 17, '模板现在是 17 类（多了声明式 3D 的 three）');
+  assert.equal(SHOT_TYPES.length, 18, 'SHOT_TYPES = 17 模板 + 1 容器');
 });
 
 // ─────────────────────── 校验：每个错误码一条负面对照 ───────────────────────

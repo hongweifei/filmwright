@@ -82,7 +82,7 @@ test('validateScene：最小合法规格通过', () => {
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
-test('validateScene：16 类模板的最小实例都合法', () => {
+test('validateScene：17 类模板的最小实例都合法', () => {
   // 每类单独成一个规格：单镜头规格里它就是第一个镜头，必须从第 1 帧起。
   const shots = {
     title: {type: 'title', at: 1, title: 't'},
@@ -101,6 +101,8 @@ test('validateScene：16 类模板的最小实例都合法', () => {
     comp: {type: 'comp', at: 1, comp: 'sub'},
     clip: {type: 'clip', at: 1, clip: 'broll'},
     line: {type: 'line', at: 1, unit: 'ms', points: [{v: 10, label: '一月'}, {v: 40, label: '二月'}]},
+    // 声明式 3D：最小实例就是一个对象 + 形状
+    three: {type: 'three', at: 1, objects: [{shape: 'box', size: 1.6, color: 'accent'}]},
     // 容器：不是模板，但同样要有最小合法实例（它也是 SHOT_TYPES 的一员）
     layers: {type: 'layers', at: 1, layers: [{content: {type: 'title', title: 'x'}}]},
   };
