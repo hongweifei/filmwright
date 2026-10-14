@@ -413,9 +413,13 @@ def run(project_dir):
           'chapters': chapters, 'sentences': sentences,
           'subs': all_subs, 'chars': total_chars, 'speech_sec': round(speech_sec, 2)}
     os.makedirs(os.path.join(project_dir, 'script'), exist_ok=True)
-    with open(os.path.join(project_dir, 'script', 'timeline.json'), 'w', encoding='utf-8') as fh:
+    # newline='\n'：python 在 Windows 上默认把 '\n' 翻成 CRLF，而仓库统一 LF ——
+    # 否则每次生成 timeline.md 都会在 git diff 里显示「整个文件都改了」。
+    with open(os.path.join(project_dir, 'script', 'timeline.json'), 'w',
+              encoding='utf-8', newline='\n') as fh:
         json.dump(tl, fh, ensure_ascii=False, indent=1)
-    with open(os.path.join(project_dir, 'script', 'timeline.md'), 'w', encoding='utf-8') as fh:
+    with open(os.path.join(project_dir, 'script', 'timeline.md'), 'w',
+              encoding='utf-8', newline='\n') as fh:
         fh.write('# 时间轴（%s · %s %s，共 %d 帧 = %.1fs，%d 字，语速 %.2f 字/秒）\n\n'
                  % (t.engine_name, t.cfg.get('voice', '') or '(默认)', t.cfg.get('rate', '+0%'),
                     total, total / t.fps, total_chars,
