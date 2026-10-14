@@ -7,6 +7,7 @@ import {config, accentFor, view} from '../../contract/config.js';
 import {isReady, chapterAt, timeline, tailFrom} from '../../contract/timeline.js';
 import {shotAt, shots, normalizeTransition} from './shots.js';
 import {withLayer} from '../composite/layer.js';
+import {mergeAnimate} from '../scene/animate.js';
 import {drawBackdrop} from '../chrome/backdrop.js';
 import {drawHud} from '../chrome/hud.js';
 import {drawChapterCard} from '../chrome/chapterCard.js';
@@ -135,7 +136,9 @@ function withClip(ctx, clip, fn) {
 /** 用给定 alpha 画一个镜头（含各自的 this 绑定、图层变换与混合模式）。 */
 function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
   if (!shot || fadeAlpha <= 0.001) return;
-  const tr = shot.transform ?? null;
+  // 有 animate 才求值合并；没有就**沿用 shot.transform 本身**（同一个引用、不分配）
+  // —— 这是保住快路径与像素回归的关键：没写 animate 的项目必须逐字节与之前相同。
+  const tr = shot.anim ? mergeAnimate(shot.transform, shot.anim, n) : (shot.transform ?? null);
   // 图层自身透明度与转场淡入**相乘**：两者是独立的语义
   // （转场是「这一帧该露多少」，transform.alpha 是「这个图层半透明」）。
   // 曾把转场 alpha 直接当图层的 alpha 传，把 transform.alpha 覆盖掉了 ——

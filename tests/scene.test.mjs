@@ -398,11 +398,22 @@ test('sceneSchema()：13 类齐、每类有 note/fields/max，错误码表完整
 
 test('错误码登记表与源码一致：用了没登记、登记了没用，都算错', async () => {
   const {readFileSync} = await import('node:fs');
-  const src = readFileSync(new URL('../src/contract/scene.js', import.meta.url), 'utf8');
-  // 去掉登记表本身再扫，避免自引用
-  const body = src.replace(/export const SCENE_ERROR_CODES[\s\S]*?\];/, '');
-  // 码名可含数字（SCENE_FIRST_NOT_1）；标识符 SCENE_ERROR_CODES 本身不是码
-  const used = new Set([...body.matchAll(/\bSCENE_[A-Z0-9_]+\b/g)].map((m) => m[0]).filter((c) => c !== 'SCENE_ERROR_CODES'));
+  // 登记表在 contract/scene.js，但**并非所有码都在那里抛**：
+  // `SCENE_ANIM_RANGE` / `SCENE_ANIM_NO_BEATS` 要知道该节点的**节拍表**才能判，
+  // 而节拍表到绑定期才齐（scene 镜头在编译期算、手写镜头自己声明），
+  // 所以校验逻辑在 runtime/stage/shots.js。登记仍是单一表。
+  // ⇒ 扫描范围要覆盖**所有会抛 scene 码的文件**，否则会把合法用法误报成"登记了没用"。
+  const SRC_WITH_CODES = ['../src/contract/scene.js', '../src/runtime/stage/shots.js'];
+  const used = new Set();
+  for (const rel of SRC_WITH_CODES) {
+    const src = readFileSync(new URL(rel, import.meta.url), 'utf8');
+    // 去掉登记表本身再扫，避免自引用
+    const body = src.replace(/export const SCENE_ERROR_CODES[\s\S]*?\];/, '');
+    // 码名可含数字（SCENE_FIRST_NOT_1）；标识符 SCENE_ERROR_CODES 本身不是码
+    for (const m of body.matchAll(/\bSCENE_[A-Z0-9_]+\b/g)) {
+      if (m[0] !== 'SCENE_ERROR_CODES') used.add(m[0]);
+    }
+  }
   const declared = new Set(SCENE_ERROR_CODES);
   const undeclared = [...used].filter((c) => !declared.has(c));
   const unused = [...declared].filter((c) => !used.has(c));

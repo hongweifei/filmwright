@@ -23,13 +23,53 @@ export const rnd = (seed) => {
   return x - Math.floor(x);
 };
 
-/** 分段关键帧；t 小于首帧返回首值。 */
+/** 硬切：u < 1 时保持前一键的值，到 u == 1 才跳变。给"无过渡"的状态切换用。 */
+export const step = (t) => (clamp(t) >= 1 ? 1 : 0);
+
+/**
+ * 缓动词汇表：**名字 → 函数**。
+ *
+ * 这是给 `scene.json` 的 `animate` 用的**有界**词汇（AI 要能写对、校验要能拦住）。
+ * 名字取现有导出名去掉 `ease` 前缀，让代码与 JSON 的名字对得上、能 grep。
+ *
+ * 为什么只给词汇表、不给自定义贝塞尔：贝塞尔是 4 个数字，**AI 无法推理**，
+ * 产出会变成"随手填的参数"，也无法静态判断好坏。观感的差异主要来自
+ * **时机与层次**，不来自曲线的精细形状。
+ */
+export const EASES = {
+  linear: (t) => clamp(t),
+  out3: easeOut3,
+  out4: easeOut4,
+  in3: easeIn3,
+  inout3: easeInOut,
+  back: easeOutBack,
+  step,
+};
+
+/** 缓动名白名单（校验与错误提示共用，避免两处规则漂移）。 */
+export const EASE_NAMES = Object.keys(EASES);
+
+/** 分段关键帧；t 小于首帧返回首值，大于末帧返回末值（**夹紧，不外推**）。
+ *
+ * `keys` 是 `[[t, value], [t, value, easeFn], ...]`：
+ * 第 3 项是「**走到这一键**所用的缓动」，不传即线性。
+ *
+ * 两个刻意的设计：
+ *   · **夹紧不外推** —— 外推（"y 从 40 到 0 继续往负走"）是"元素无声飞出画面"
+ *     的主要来源，且很难查；
+ *   · **缓动作用在归一化进度 u 上**，不作用在值差上 —— 保证 ease(0)=0、ease(1)=1，
+ *     关键帧处的值**精确落位**，不因缓动而有微小偏差。
+ *
+ * 扩展方式保持向后兼容：原来只传 `[t, v]` 的调用方行为**不变**（默认线性）。
+ */
 export const kf = (t, keys) => {
   if (t <= keys[0][0]) return keys[0][1];
   for (let i = 1; i < keys.length; i++) {
     if (t <= keys[i][0]) {
-      const [t0, v0] = keys[i - 1], [t1, v1] = keys[i];
-      return lerp(v0, v1, inv(t, t0, t1));
+      const [t0, v0] = keys[i - 1];
+      const [t1, v1, e] = keys[i];
+      const u = inv(t, t0, t1);
+      return lerp(v0, v1, e ? e(u) : u);
     }
   }
   return keys[keys.length - 1][1];

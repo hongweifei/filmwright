@@ -46,6 +46,9 @@ export const SCENE_ERROR_CODES = [
   'SCENE_UNKNOWN_TYPE', 'SCENE_MISSING_FIELD', 'SCENE_MISSING_AT', 'SCENE_BAD_FIELD',
   'SCENE_TOO_MANY', 'SCENE_TABLE_WIDTH', 'SCENE_NO_ASSET', 'SCENE_FIRST_NOT_1', 'SCENE_NOT_INCREASING',
   'SCENE_BAD_TRANSITION', 'SCENE_BAD_TRANSFORM',
+  'SCENE_ANIM_SHAPE', 'SCENE_ANIM_PROP', 'SCENE_ANIM_KEY', 'SCENE_ANIM_EASE',
+  'SCENE_ANIM_ORDER', 'SCENE_ANIM_CONFLICT', 'SCENE_ANIM_VALUE',
+  'SCENE_ANIM_RANGE', 'SCENE_ANIM_NO_BEATS',
   'SCENE_BAD_COMP', 'SCENE_NO_COMP', 'SCENE_COMP_CYCLE', 'SCENE_COMP_LOCAL_AT',
   'SCENE_NO_CLIP',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
@@ -174,6 +177,131 @@ export function isValidTransform(t) {
     if (!t.origin.every((v) => typeof v === 'number' && Number.isFinite(v))) return false;
   }
   return true;
+}
+
+/**
+ * 可动画属性。与 `transform` 的字段一一对应（**不引入新概念**）。
+ * `blend` / `origin` 刻意不在列：混合模式是枚举不是连续量，变换中心动画很罕见。
+ */
+export const ANIM_PROPS = ['x', 'y', 'scale', 'rotate', 'alpha'];
+
+/**
+ * 缓动名白名单 —— **这里只有名字**。
+ *
+ * 实现放在 `runtime/motion/ease.js` 的 `EASES`，而 contract 不能 import runtime
+ * （依赖只能向下），所以两份规则分开写、由**交叉一致性测试**钉住
+ * （tests/animate.test.mjs 断言「名字集合」与「实现集合」一一对应）。
+ *
+ * 为什么只给词汇表、不做自定义贝塞尔：贝塞尔是 4 个数字，**AI 无法推理**，
+ * 产出会变成"随手填的参数"，也无法静态判断好坏 —— 观感差异主要来自时机与层次。
+ */
+export const EASE_NAMES = ['linear', 'out3', 'out4', 'in3', 'inout3', 'back', 'step'];
+
+/**
+ * 校验一处 `animate`（形状层，不需要节拍表）。**导出**是为了让手写镜头
+ * （shots/index.js，不走 scene 校验）也能用同一套规则 —— 规则只能有一份。
+ *
+ * 拍数相关的两条（`beat` 超范围、节点没有节拍表）**必须等到绑定期**才知道，
+ * 所以不在这里 —— 见 runtime/stage/shots.js。
+ *
+ * @returns {Array} 错误数组（可能为空）
+ */
+export function validateAnimate(animate, transform, path = 'animate') {
+  const out = [];
+  const push = (code, where, message, hint) => out.push(err(code, where, message, hint));
+
+  if (animate === null || typeof animate !== 'object' || Array.isArray(animate)) {
+    push('SCENE_ANIM_SHAPE', path, 'animate 必须是对象：{属性: [关键帧…]}',
+      `可用属性：${ANIM_PROPS.join(' / ')}`);
+    return out;
+  }
+  const props = Object.keys(animate);
+  if (!props.length) {
+    push('SCENE_ANIM_SHAPE', path, 'animate 是空对象', '要么删掉它，要么至少写一个属性');
+    return out;
+  }
+
+  for (const prop of props) {
+    const where = `${path}.${prop}`;
+    if (!ANIM_PROPS.includes(prop)) {
+      push('SCENE_ANIM_PROP', where, `animate 不支持属性 ${JSON.stringify(prop)}`,
+        `可用：${ANIM_PROPS.join(' / ')}（它们与 transform 的字段一一对应）`);
+      continue;
+    }
+    if (transform && Object.prototype.hasOwnProperty.call(transform, prop)) {
+      push('SCENE_ANIM_CONFLICT', where,
+        `${prop} 同时出现在 transform 与 animate 里（有歧义）`,
+        '二选一：要静态值就写在 transform，要动画就只留在 animate');
+    }
+    const keys = animate[prop];
+    if (!Array.isArray(keys) || !keys.length) {
+      push('SCENE_ANIM_SHAPE', where, `${prop} 的关键帧必须是非空数组`,
+        '形如 [{"beat":1,"v":0},{"beat":2,"v":40,"ease":"out3"}]');
+      continue;
+    }
+
+    const times = [];
+    let base = null;
+    keys.forEach((k, i) => {
+      const kw = `${where}[${i}]`;
+      if (!k || typeof k !== 'object' || Array.isArray(k)) {
+        push('SCENE_ANIM_KEY', kw, '关键帧必须是对象', '形如 {"beat":1,"v":0,"ease":"out3"}');
+        return;
+      }
+      if (typeof k.v !== 'number' || !Number.isFinite(k.v)) {
+        push('SCENE_ANIM_KEY', `${kw}.v`, `关键帧缺少数值 v，收到 ${JSON.stringify(k.v)}`,
+          'v 是要到达的值，例如 40');
+        return;   // 没有合法的 v 就没法继续判取值
+      }
+      const hasBeat = k.beat !== undefined;
+      const hasFrame = k.frame !== undefined;
+      if (hasBeat === hasFrame) {
+        push('SCENE_ANIM_KEY', kw,
+          hasBeat ? 'beat 与 frame 只能给一个' : '关键帧必须给 beat 或 frame',
+          'beat 是第几拍（1 起），frame 是节点内第几帧（1 起）');
+      } else {
+        const name = hasBeat ? 'beat' : 'frame';
+        const t = hasBeat ? k.beat : k.frame;
+        // 同一属性内**不允许混用两种时间基** —— 两者的序数不可比，
+        // 混用几乎必然是写错，且"递增"检查会变成无意义的比较。
+        if (base === null) base = name;
+        else if (base !== name) {
+          push('SCENE_ANIM_KEY', kw,
+            `同一属性里混用了 ${base} 与 ${name} 两种时间基`,
+            '一个属性内只用一种：要么全 beat（跟着节拍走），要么全 frame（跟绝对帧走）');
+        }
+        if (!Number.isInteger(t) || t < 1) {
+          push('SCENE_ANIM_KEY', `${kw}.${name}`,
+            `${name} 必须是 ≥1 的整数，收到 ${JSON.stringify(t)}`,
+            name === 'beat' ? 'beat: 1 表示第一拍（1 起序数）' : 'frame: 1 表示该节点的第一帧（1 起序数）');
+        } else {
+          times.push(t);
+        }
+      }
+      if (k.ease !== undefined && !EASE_NAMES.includes(k.ease)) {
+        push('SCENE_ANIM_EASE', `${kw}.ease`, `不认识的缓动 ${JSON.stringify(k.ease)}`,
+          `可用：${EASE_NAMES.join(' / ')}`);
+      }
+      if (prop === 'alpha' && (k.v < 0 || k.v > 1)) {
+        push('SCENE_ANIM_VALUE', `${kw}.v`, `alpha 的关键帧值必须在 0–1，收到 ${k.v}`,
+          'alpha: 0 全透明、1 不透明');
+      }
+      if (prop === 'scale' && k.v <= 0) {
+        push('SCENE_ANIM_VALUE', `${kw}.v`, `scale 的关键帧值必须 > 0，收到 ${k.v}`,
+          'scale 是倍数，1 为原大');
+      }
+    });
+
+    for (let i = 1; i < times.length; i++) {
+      if (times[i] <= times[i - 1]) {
+        push('SCENE_ANIM_ORDER', `${where}[${i}]`,
+          `关键帧时间必须严格递增，收到 ${times[i - 1]} → ${times[i]}`,
+          '每个关键帧都要比前一个晚；同一时间点上不能有两个值');
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -413,13 +541,16 @@ export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
         `图层变换形状不对：${JSON.stringify(shot.transform)}`,
         '可用字段：x / y（设计坐标位移）、scale（>0）、rotate（度）、alpha（0–1）、blend（混合模式名）、origin（[x,y] 旋转缩放中心）'));
     }
+    if (shot.animate !== undefined) {
+      errors.push(...validateAnimate(shot.animate, shot.transform, `${path}.animate`));
+    }
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {
       errors.push(err('SCENE_UNKNOWN_TYPE', `${path}.type`, `不认识的镜头类型 ${JSON.stringify(type)}`,
         `可用：${SHOT_TYPES.join(' / ')}`));
     } else {
       const spec = FIELDS[type];
-      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && k !== 'transform' && !(k in spec));
+      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && k !== 'transform' && k !== 'animate' && !(k in spec));
       if (unknown.length) {
         errors.push(err('SCENE_UNKNOWN_FIELD', `${path}.${unknown[0]}`,
           `${type} 没有字段 ${unknown.join(', ')}`, `可用：${Object.keys(spec).map((k) => k.replace(/\?$/, '')).join(' / ')}`));

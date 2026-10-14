@@ -795,6 +795,8 @@ export function compileScene(scene, tl) {
       ...(raw.transition !== undefined ? {transition: raw.transition} : {}),
       // 图层变换（位移/缩放/旋转/透明度/混合模式）同样透传。
       ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
+      // 关键帧动画也透传（否则 scene.json 里写了 animate 到不了镜头 —— 这一步漏过）
+      ...(raw.animate !== undefined ? {animate: raw.animate} : {}),
       scene: shot,
       draw(ctx, n, t, accent) {
         ctx.save();

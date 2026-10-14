@@ -1,10 +1,48 @@
 // 镜头注册与串接。只声明 start，区间由这里算 —— 手算 from/to 会让区间重叠。
 import {isValidTransform} from '../composite/layer.js';
+import {compileAnimate} from '../scene/animate.js';
+import {validateAnimate} from '../../contract/scene.js';
 
 let SHOTS = [];
 
 /**
- * 装上镜头表。每个镜头声明 `start`（从哪一帧接管画面），后面串接。
+ * 编译一个镜头的 `animate`，并做**两条只有绑定期才能查的校验**。
+ *
+ * 为什么这两条不能放在 contract 里：它们都要知道**该节点的节拍表**，
+ * 而节拍表是编译期（templates.js）或手写镜头自己声明的 —— 到绑定这一步才齐。
+ * 好消息是绑定发生在任何绘制之前，所以它仍是"绘制前就报"，不是渲染期崩。
+ *
+ * 形状层的校验（属性名/键序/缓动名/取值）已在 contract 里做过，这里不重复。
+ */
+function compileShotAnimate(s) {
+  if (!s.animate || typeof s.animate !== 'object') return null;
+  const beats = Array.isArray(s.beats) ? s.beats : [];
+  for (const [prop, keys] of Object.entries(s.animate)) {
+    if (!Array.isArray(keys)) continue;              // contract 已报，这里跳过
+    for (const k of keys) {
+      if (!k || typeof k !== 'object' || k.beat === undefined) continue;
+      if (!beats.length) {
+        const e = new Error(
+          `filmwright: 关键帧用了 beat 锚点，但这个镜头没有节拍表（属性 ${prop}，start=${s.start}）`);
+        e.code = 'SCENE_ANIM_NO_BEATS';
+        e.hint = '两条出路：改用 frame 锚点（节点内第几帧），或给这个镜头声明 beats';
+        throw e;
+      }
+      if (k.beat > beats.length) {
+        const e = new Error(
+          `filmwright: 关键帧用了第 ${k.beat} 拍，但这个镜头只有 ${beats.length} 拍` +
+          `（属性 ${prop}，start=${s.start}）`);
+        e.code = 'SCENE_ANIM_RANGE';
+        e.hint = `这个镜头的拍号是 1–${beats.length}`;
+        throw e;
+      }
+    }
+  }
+  return compileAnimate(s.animate, {beats, from: s.start});
+}
+
+/**
+ * 装上镜头表。每个镜头声明 `start`（从哪一帧接管画面）。
  * 覆盖自检：没有镜头接管的帧直接报错，而不是静默画空帧。
  */
 export function setShots(list) {
@@ -22,6 +60,18 @@ export function setShots(list) {
     if (s.beats !== undefined) {
       if (!Array.isArray(s.beats) || s.beats.some((b) => !Number.isInteger(b) || b < 1)) {
         throw new Error('filmwright: 镜头 beats 必须是 ≥1 的整数帧号数组（start=' + s.start + '）');
+      }
+    }
+    // 关键帧动画：形状校验与 scene.json 走**同一套规则**（手写镜头不走 scene 校验，
+    // 所以在这里补上）。拍数相关的两条要到绑定期才知道，见 compileShotAnimate。
+    if (s.animate !== undefined) {
+      const errs = validateAnimate(s.animate, s.transform);
+      if (errs.length) {
+        const first = errs[0];
+        const e = new Error(`filmwright: 镜头 animate 形状不对（start=${s.start}）：${first.message}`);
+        e.code = first.code;
+        e.hint = first.hint;
+        throw e;
       }
     }
     // 可选的入场转场。**不破坏核心不变量**：两个镜头的 draw 都是只依赖 N 的纯函数，
@@ -95,11 +145,11 @@ export function normalizeTransition(v) {
  * 与 setShots 分开，是因为总帧数要等时间轴装好才知道。
  */
 export function bindShots(declared, totalFrames) {
-  SHOTS = declared.map((s, i) => ({
-    ...s,
-    from: s.start,
-    to: i + 1 < declared.length ? declared[i + 1].start - 1 : totalFrames,
-  }));
+  SHOTS = declared.map((s, i) => {
+    const from = s.start;
+    const to = i + 1 < declared.length ? declared[i + 1].start - 1 : totalFrames;
+    return {...s, from, to, anim: compileShotAnimate(s)};
+  });
   let cursor = 1;
   for (const s of SHOTS) {
     if (s.from !== cursor) throw new Error(`filmwright: 第 ${cursor}–${s.from - 1} 帧没有镜头接管`);
