@@ -30,7 +30,7 @@ const MIME = {
   '.mp4': 'video/mp4',
 };
 
-export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null, clips = null, watch: doWatch = false}) {
+export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null, clips = null, watch: doWatch = false, frameSink = null}) {
   // SSE 订阅者：文件变化时推 reload
   const clients = new Set();
   let watchers = [];
@@ -65,6 +65,47 @@ export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null,
     try {
       const url = new URL(req.url, 'http://x');
       const p = decodeURIComponent(url.pathname);
+
+      // 帧直传：页面把编码好的帧**以二进制 POST 上来**，由这里写进 ffmpeg。
+      //
+      // 为什么不用「CDP 取回 base64」那条路（实测数据）：
+      //   - base64 让载荷多 33%，且浏览器编码 + node 解码都要花 CPU；
+      //   - 每帧一次 CDP 往返，而实测往返固定开销约 20ms（与载荷大小几乎无关）。
+      // 这条路让页面**自己循环**渲染并 POST，整段渲染只发一次 CDP 调用。
+      //
+      // **背压**：写 ffmpeg stdin 遇到 drain 就先等，等完再回响应 ——
+      // 页面在 `await fetch` 处自然停住，不会把内存堆满。
+      if (p === '/__filmwright/frame' && req.method === 'POST') {
+        if (!frameSink || typeof frameSink.write !== 'function') {
+          res.writeHead(409, {'Content-Type': 'text/plain; charset=utf-8'}).end('没有接收端（不是渲染模式）');
+          return;
+        }
+        const chunks = [];
+        let tooBig = false;
+        req.on('data', (c) => {
+          if (tooBig) return;
+          chunks.push(c);
+          // 单帧超过 64MB 一定是哪里错了（正常一帧几十 KB 到 2MB）
+          if (chunks.reduce((a, b) => a + b.length, 0) > 64 * 1024 * 1024) tooBig = true;
+        });
+        req.on('end', async () => {
+          if (tooBig) {
+            res.writeHead(413).end('单帧过大');
+            return;
+          }
+          const body = Buffer.concat(chunks);
+          const n = Number(url.searchParams.get('n')) || 0;
+          try {
+            await frameSink.write(body, n);
+            res.writeHead(200, {'Content-Type': 'text/plain; charset=utf-8'}).end('ok');
+          } catch (e) {
+            // 写失败（ffmpeg 死了 / 已收工）→ 明确回错，页面会中断循环并把消息带回来
+            res.writeHead(500, {'Content-Type': 'text/plain; charset=utf-8'})
+              .end('接收帧失败：' + (e && e.message ? e.message : String(e)));
+          }
+        });
+        return;
+      }
 
       // 热重载通道
       if (p === '/__filmwright/watch') {

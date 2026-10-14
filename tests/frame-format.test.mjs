@@ -8,7 +8,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {frameFormatExpr, isValidFrameFormat} from '../src/host/browser/session.mjs';
-import {frameFormatOf, presetOf} from '../src/host/cli/commands.mjs';
+import {frameFormatOf, presetOf, transportOf} from '../src/host/cli/commands.mjs';
 
 test('默认是 PNG（无损）—— 既有调用方不受优化影响', () => {
   assert.equal(frameFormatExpr(undefined), `'image/png'`);
@@ -80,5 +80,19 @@ test('CLI 的 --preset：合法列表通过，非法报错并列出可用值', (
   } catch (e) {
     assert.equal(e.code, 'BAD_PRESET');
     assert.ok(e.hint.includes('编码'), 'hint 要说明这是编码时间的旋钮');
+  }
+});
+
+test('CLI 的 --frame-transport：默认 stream（快），cdp 可回退用于排查', () => {
+  assert.equal(transportOf({args: {}}), 'stream', '默认走二进制流式上传');
+  assert.equal(transportOf({args: {'frame-transport': 'cdp'}}), 'cdp', 'cdp 是保留的回退路径');
+  assert.equal(transportOf({args: {'frame-transport': 'stream'}}), 'stream');
+  assert.throws(() => transportOf({args: {'frame-transport': 'websocket'}}), /stream \/ cdp/);
+  try {
+    transportOf({args: {'frame-transport': 'websocket'}});
+    assert.fail('应抛错');
+  } catch (e) {
+    assert.equal(e.code, 'BAD_TRANSPORT');
+    assert.ok(e.hint.includes('cdp'), 'hint 要说明 cdp 什么时候用（排查卡死）');
   }
 });

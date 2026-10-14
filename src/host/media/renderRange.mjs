@@ -29,6 +29,8 @@ export async function openProjectSession(projectDir, proj, opts = {}) {
     shotsRel: shotsRelOrNull(proj),
     scene: proj.scene ?? null,
     clips,
+    // 帧直传的接收端（只流式渲染时才有）：页面 POST 二进制帧上来
+    frameSink: opts.frameSink ?? null,
   });
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/`;
@@ -47,9 +49,13 @@ export async function withSession(projectDir, proj, opts, fn) {
 }
 
 /** 渲染一段帧到 mp4（或 PNG 序列）。 */
-export async function renderRange(projectDir, proj, {from, to, out, crf = '16', pngDir = null, pngDirFormat = 'png', frameFormat, preset = 'medium', onProgress, opts = {}}) {
+export async function renderRange(projectDir, proj, {from, to, out, crf = '16', pngDir = null, pngDirFormat = 'png', frameFormat, preset = 'medium', transport = 'stream', onProgress, opts = {}}) {
   if (!(to >= from)) throw new Error(`filmwright: 帧区间非法 ${from}–${to}`);
-  return withSession(projectDir, proj, opts, async (sess) => {
+  // 帧接收端：页面 POST 上来的二进制帧由这里写进 ffmpeg。
+  // ffmpeg 要在会话建立之后才创建，所以先用一个可后置赋值的壳
+  // （服务端在收到帧时才读 sink.write，那时已经赋值了）。
+  const sink = {};
+  return withSession(projectDir, proj, {...opts, frameSink: sink}, async (sess) => {
     if (out) mkdirSync(dirname(out), {recursive: true});
     if (pngDir) {
       rmSync(pngDir, {recursive: true, force: true});
@@ -60,21 +66,45 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
     // 落成 PNG 序列（pngDir）时必须用 PNG —— 那类产物是给人看/给工具比对的，
     // 有损压缩会让像素回归失去意义。
     const fmt = pngDir ? pngDirFormat : (frameFormat ?? 'jpeg');
+    const total = to - from + 1;
+    let written = 0;
+
     let ff = null;
     if (!pngDir) {
       ff = spawnTool(ffmpegPath(), ['-y', '-f', 'image2pipe', '-framerate', String(proj.raw.fps ?? 30), '-i', '-',
         '-c:v', 'libx264', '-preset', preset, '-pix_fmt', 'yuv420p', '-crf', String(crf), out],
         {stdio: ['pipe', 'ignore', 'inherit']});
+      // 帧直接落地：写完（必要时等 drain）再返回，page 的 await fetch 就成了背压。
+      sink.write = async (buf) => {
+        if (ff.stdin.destroyed || !ff.stdin.writable) {
+          throw new Error('ffmpeg 已停止接收（可能已退出）');
+        }
+        if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
+        written++;
+        if (onProgress) onProgress(written, total);
+      };
     }
-    const total = to - from + 1;
-    let written = 0;
-    for (let n = from; n <= to; n++) {
-      const buf = await sess.frame(n, {frameFormat: fmt});
-      if (pngDir) writeFileSync(join(pngDir, `f${String(n).padStart(5, '0')}.png`), buf);
-      else if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
-      written++;
-      if (onProgress) onProgress(written, total);
+
+    // 两条传输路径：
+    //   stream —— 页面自己循环、二进制 POST（默认；无逐帧 CDP 往返、无 base64）
+    //   cdp    —— 逐帧 Runtime.evaluate 取回（旧路径；出静帧与个别排查时用）
+    // 落 PNG 序列必须逐帧取回（每帧要写一个文件），所以 pngDir 强制走 cdp。
+    const useStream = !pngDir && transport === 'stream';
+    if (useStream) {
+      await sess.streamFrames({from, to, frameFormat: fmt});
+      if (written !== total) {
+        throw new Error(`filmwright: 传输帧数不符（页面写了 ${written}，应为 ${total}）`);
+      }
+    } else {
+      for (let n = from; n <= to; n++) {
+        const buf = await sess.frame(n, {frameFormat: fmt});
+        if (pngDir) writeFileSync(join(pngDir, `f${String(n).padStart(5, '0')}.png`), buf);
+        else if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once('drain', r));
+        written++;
+        if (onProgress) onProgress(written, total);
+      }
     }
+
     if (ff) {
       ff.stdin.end();
       const code = await new Promise((r) => ff.on('close', r));

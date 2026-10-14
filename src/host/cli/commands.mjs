@@ -411,6 +411,27 @@ export function frameFormatOf(ctx) {
   throw e;
 }
 
+/**
+ * 帧传输方式。
+ *
+ *   stream —— 页面自己循环、二进制 POST 上来（默认；无逐帧 CDP 往返、无 base64）
+ *   cdp    —— 逐帧 Runtime.evaluate 取回（旧路径；出静帧必须用这条）
+ *
+ * 留 cdp 这条路不只是为了兼容：stream 是**页面在跑循环**，一旦页面卡住，
+ * 从 node 侧只能等到超时；cdp 每帧一次往返，卡在哪一帧立刻看得出来。
+ * 排查渲染卡死时用 cdp。
+ */
+export function transportOf(ctx) {
+  const s = str(ctx.args, 'frame-transport', 'stream');
+  if (s !== 'stream' && s !== 'cdp') {
+    const e = new Error(`filmwright: --frame-transport 要是 stream / cdp，收到「${s}」`);
+    e.code = 'BAD_TRANSPORT';
+    e.hint = 'stream（默认，快）让页面自己循环并二进制上传；cdp 逐帧取回，排查卡死时用';
+    throw e;
+  }
+  return s;
+}
+
 /** x264 编码预设。默认 medium；慢机器上调快换来的是更短的总时长（文件略大）。 */
 export function presetOf(ctx) {
   const s = str(ctx.args, 'preset', 'medium');
@@ -513,9 +534,10 @@ export async function render(ctx) {
 async function renderOneRange(ctx, {out, crf, say, from, to, proxy}) {
   const frameFormat = frameFormatOf(ctx);
   const preset = presetOf(ctx);
+  const transport = transportOf(ctx);
   if (!proxy || proxy === 1) {
     return renderRange(ctx.projectDir, ctx.proj, {
-      from, to, out, crf, opts: ctx.opts, frameFormat, preset,
+      from, to, out, crf, opts: ctx.opts, frameFormat, preset, transport,
       onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
     });
   }
@@ -526,7 +548,7 @@ async function renderOneRange(ctx, {out, crf, say, from, to, proxy}) {
   };
   const smallProj = {...ctx.proj, raw: small};
   return renderRange(ctx.projectDir, smallProj, {
-    from, to, out, crf, opts: ctx.opts, frameFormat, preset,
+    from, to, out, crf, opts: ctx.opts, frameFormat, preset, transport,
     onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
   });
 }

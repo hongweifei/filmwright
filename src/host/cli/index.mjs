@@ -18,7 +18,7 @@ const COMMANDS = [
   ['clips', '片段素材抽帧（视频 → 图片序列，内容寻址缓存）', 'clips'],
   ['stills', '出静帧        --frames 1,300  --dir <目录>', 'stills'],
   ['sheet', '抽帧联络表    --from 1 --to 900 --step 150 --out <png>', 'sheet'],
-  ['render', '渲染          [--out <mp4>] [--shards N|auto] [--resume] [--incremental] [--proxy 0.5] [--frame-format jpeg|png] [--preset medium]', 'render'],
+  ['render', '渲染          [--out <mp4>] [--shards N|auto] [--resume] [--incremental] [--proxy 0.5] [--frame-format jpeg|png] [--frame-transport stream|cdp] [--preset medium]', 'render'],
   ['mux', '画面配音合流  --video <mp4> [--out <mp4>]', 'mux'],
   ['srt', '导出字幕      [--out <srt>] [--translation <json>]（双语轨）', 'srt'],
   ['all', '一条龙：check → render → mux', 'all'],

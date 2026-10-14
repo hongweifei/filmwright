@@ -335,6 +335,52 @@ export async function openSession(url, size, opts = {}) {
     },
 
     /**
+     * 流式渲染一段帧：**页面自己循环**，每帧编码后以二进制 POST 给本地服务。
+     *
+     * ## 为什么这条比「逐帧 CDP 取回」快
+     *
+     * 逐帧那条路每帧要一次 `Runtime.evaluate` 往返（实测固定开销约 20ms，
+     * 与载荷大小几乎无关），而且图片要以 base64 走 JSON（多 33% 体积 + 两端编解码）。
+     * 这条路：
+     *   - **整段只有一次 CDP 调用**（启动页面循环），没有逐帧往返；
+     *   - 帧以**二进制** POST，不走 base64 也不走 JSON 序列化；
+     *   - 服务端写完 ffmpeg 才回响应 → 页面在 `await fetch` 处自然限速（背压）。
+     *
+     * 不变量不受影响：每个 n 仍只依赖 n，页面循环只是「换个地方顺序调用」。
+     *
+     * @param {{from:number,to:number,frameFormat?:string,onPage?:Function,timeoutMs?:number}} o
+     * @returns {Promise<number>} 页面报告写完的帧数
+     */
+    async streamFrames({from, to, frameFormat = 'jpeg', timeoutMs}) {
+      const fmt = frameFormatExpr(frameFormat);
+      const total = to - from + 1;
+      if (total <= 0) return 0;
+      // 逐帧超时预算：正常一帧几十毫秒，给 3s/帧 + 120s 余量；上限 6 小时。
+      // 不用固定 60s —— 长片一段几千帧，固定超时必挂（旧代码的隐患）。
+      const budget = Math.min(6 * 3600 * 1000, total * 3000 + 120000);
+      const expr = `(async () => {
+        const canvas = document.querySelector('canvas');
+        for (let n = ${from}; n <= ${to}; n++) {
+          window.__renderFrame(n);
+          const blob = await new Promise((res, rej) => canvas.toBlob(
+            (b) => (b ? res(b) : rej(new Error('toBlob 返回空'))),
+            ${fmt}));
+          const resp = await fetch('/__filmwright/frame?n=' + n, {method: 'POST', body: blob});
+          if (!resp.ok) throw new Error('第 ' + n + ' 帧上传被拒：' + (await resp.text()));
+        }
+        return ${total};
+      })()`;
+      const r = await sendTimeout('Runtime.evaluate',
+        {expression: expr, returnByValue: true, awaitPromise: true}, timeoutMs ?? budget);
+      if (r.result?.exceptionDetails) {
+        const d = r.result.exceptionDetails;
+        const msg = d.exception?.description || d.text || JSON.stringify(d);
+        throw new Error('filmwright: 页面流式渲染中断：' + String(msg).slice(0, 400));
+      }
+      return Number(r.result?.result?.value) || total;
+    },
+
+    /**
      * 只取当前画布（不重新渲染）——给「渲染完再额外存一份」的场景用。
      * 常规渲染请用 frame(n)，它把两步合并成一次往返。
      */
