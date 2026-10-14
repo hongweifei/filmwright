@@ -201,6 +201,26 @@ export function mergeDeps(deps) {
 }
 
 /**
+ * 手写镜头项目（`shots/index.js`）的指纹。
+ *
+ * 手写镜头的 `start` 是代码里算出来的（可能调 `cutBefore()` 等查询），
+ * host 侧无法在不求值该模块的情况下知道「哪个镜头覆盖哪些帧」——
+ * 而求值它需要 DOM（绘制原语）。所以这里**整个文件算全局**：
+ * 改一行就让所有段失效。保守但正确（宁可多渲，不可复用旧画面）。
+ * 返回 null 表示没有手写镜头文件。
+ */
+export function manualShotsFingerprint(shotsPath) {
+  if (!shotsPath || !existsSync(shotsPath)) return null;
+  return createHash('sha1').update(readFileSync(shotsPath)).digest('hex').slice(0, 12);
+}
+
+/** 把全局指纹与手写镜头指纹合成最终全局键。 */
+export function combineGlobal(global, manualShots) {
+  if (!manualShots) return global;
+  return createHash('sha1').update(global + '|' + manualShots).digest('hex').slice(0, 12);
+}
+
+/**
  * 把帧区间切成段。
  * @param {number} total 总帧数
  * @param {number} segFrames 每段多少帧（默认 300 —— 约 10 秒 @30fps）

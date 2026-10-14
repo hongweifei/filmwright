@@ -4,8 +4,9 @@
 //   {code, data, warnings, errors}（退出码 0 成功）。
 // data/warnings/errors 只在 --json 时打印（见 cli/output.mjs）；
 // 人模式的进度一律走 say()，json 模式自动静默。
-import {existsSync, mkdirSync, rmSync, writeFileSync, statSync} from 'node:fs';
+import {existsSync, mkdirSync, rmSync, writeFileSync, statSync, readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import os from 'node:os';
 import {dirname, join, resolve, basename} from 'node:path';
 import {requireTimeline} from '../project/load.mjs';
@@ -22,6 +23,7 @@ import {prepareClips} from '../media/clips.mjs';
 import {
   segmentDir, segmentKey, planSegments, findCached, recordSegment, pruneSegments,
   engineFingerprint, globalFingerprint, collectShotDeps, mergeDeps,
+  manualShotsFingerprint, combineGlobal,
 } from '../media/incremental.mjs';
 import {sceneSchema, resolveAt} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
@@ -446,13 +448,10 @@ async function renderIncremental(ctx, {from, to, out, crf, say, segFrames, width
 
   const engine = engineFingerprint(RUNTIME_ROOT);
   const global = globalFingerprint(ctx.proj, ctx.projectDir);
-  // 手写镜头项目：整个镜头文件算全局（无法按帧归因）
-  const manualShots = !ctx.proj.scene && ctx.proj.paths.shots && existsSync(ctx.proj.paths.shots)
-    ? createHash('sha1').update(readFileSync(ctx.proj.paths.shots)).digest('hex').slice(0, 12)
-    : null;
-  const globalWithShots = manualShots
-    ? createHash('sha1').update(global + '|' + manualShots).digest('hex').slice(0, 12)
-    : global;
+  // 手写镜头项目：整个镜头文件算全局（无法按帧归因）—— 见 incremental.mjs 的注释。
+  // 有 scene 时按 scene 归因（scene 与手写镜头混用的项目里，scene 覆盖的帧
+  // 能精确归因，手写那部分无法 —— 这里选保守：只要有手写文件就把它算全局）。
+  const globalWithShots = combineGlobal(global, manualShotsFingerprint(ctx.proj.paths.shots));
 
   const outW = proxy ? Math.max(2, Math.round(width * proxy)) : width;
   const outH = proxy ? Math.max(2, Math.round(height * proxy)) : height;

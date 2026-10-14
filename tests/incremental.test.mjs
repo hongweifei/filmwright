@@ -10,6 +10,7 @@ import {join} from 'node:path';
 import {
   segmentKey, planSegments, findCached, recordSegment, pruneSegments, engineFingerprint,
   globalFingerprint, sceneShotFingerprint, compFingerprint, collectShotDeps, mergeDeps,
+  manualShotsFingerprint, combineGlobal,
 } from '../src/host/media/incremental.mjs';
 
 const base = {engine: 'e1', global: 'p1', shotsHash: 's1', from: 1, to: 300, width: 1280, height: 720, fps: 30, crf: '16'};
@@ -107,6 +108,53 @@ test('mergeDeps：顺序无关（镜头依赖的顺序不该影响键）', () =>
   assert.notEqual(mergeDeps(['a', 'b']), mergeDeps(['a', 'c']));
   assert.equal(mergeDeps([]), 'none', '空依赖有确定的表示');
   assert.equal(mergeDeps([undefined, 'a'].filter(Boolean)), mergeDeps(['a']));
+});
+
+test('manualShotsFingerprint / combineGlobal：手写镜头项目整文件归因', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'fw-manual-'));
+  const f = join(dir, 'index.js');
+  assert.equal(manualShotsFingerprint(f), null, '文件不存在 → null（表示没有手写镜头）');
+  assert.equal(manualShotsFingerprint(null), null);
+  assert.equal(manualShotsFingerprint(undefined), null);
+
+  writeFileSync(f, 'export const SHOTS = [];\n');
+  const a = manualShotsFingerprint(f);
+  assert.match(a, /^[0-9a-f]{12}$/);
+  assert.equal(manualShotsFingerprint(f), a, '同内容 → 同指纹');
+  writeFileSync(f, 'export const SHOTS = [1];\n');
+  assert.notEqual(manualShotsFingerprint(f), a, '改一行 → 指纹变（整个文件算全局）');
+
+  // combineGlobal：没有手写镜头时全局键不变（scene 项目走这条）
+  assert.equal(combineGlobal('g1', null), 'g1', '无手写镜头 → 全局键就是原值');
+  assert.notEqual(combineGlobal('g1', 'm1'), 'g1', '有手写镜头 → 混入');
+  assert.equal(combineGlobal('g1', 'm1'), combineGlobal('g1', 'm1'), '确定性');
+  assert.notEqual(combineGlobal('g1', 'm1'), combineGlobal('g1', 'm2'), '手写镜头变了全局键要变');
+  assert.notEqual(combineGlobal('g1', 'm1'), combineGlobal('g2', 'm1'), '全局变了要变');
+});
+
+test('命令层回归：手写镜头项目的增量渲染不能崩在未导入的标识符上', async () => {
+  // 这条是为一个真实缺陷写的：renderIncremental 的手写镜头分支里用了
+  // `createHash` 却忘了 import，只有**手写镜头项目 + --incremental** 才会炸
+  // （scene 项目走另一条分支，所以 CI 的 scenecast 冒烟测不到）。
+  // 修法是把那段逻辑移进 incremental.mjs（那里本来就有 crypto），
+  // 这条测试钉住「该模块导出的函数确实可用、且能算出确定的键」。
+  const dir = mkdtempSync(join(tmpdir(), 'fw-cmd-'));
+  const shots = join(dir, 'index.js');
+  writeFileSync(shots, 'export const SHOTS = [{start: 1, draw() {}}];\n');
+  const m = manualShotsFingerprint(shots);
+  const g = combineGlobal('global-key', m);
+  assert.match(g, /^[0-9a-f]{12}$/, '合成后的全局键应是 12 位十六进制');
+  const key = segmentKey({
+    engine: 'e', global: g, shotsHash: 'none', from: 1, to: 300,
+    width: 1280, height: 720, fps: 30, crf: '16',
+  });
+  assert.match(key, /^[0-9a-f]{16}$/);
+  // 改手写镜头 → 全局键变 → 段键变（所有段失效，保守但正确）
+  writeFileSync(shots, 'export const SHOTS = [{start: 1, draw() { /* x */ }}];\n');
+  const g2 = combineGlobal('global-key', manualShotsFingerprint(shots));
+  assert.notEqual(g2, g);
+  assert.notEqual(segmentKey({engine: 'e', global: g2, shotsHash: 'none', from: 1, to: 300, width: 1280, height: 720, fps: 30, crf: '16'}), key,
+    '手写镜头变了 → 段键必须变');
 });
 
 test('planSegments：切成不重叠、首尾相接的段，覆盖整个区间', () => {
