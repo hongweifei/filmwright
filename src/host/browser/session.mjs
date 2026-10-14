@@ -184,7 +184,14 @@ export async function openSession(url, size, opts = {}) {
   let info = null;
   let bootError = null;
   let ready = false;
-  for (let i = 0; i < 400; i++) {
+  // 就绪预算：默认 120s。为什么这么长 —— 分片渲染时多个浏览器**同时冷启**，
+  // 在内存吃紧的机器上（实测 16 核但只剩 5GB）单个实例的 boot 可以慢到几十秒。
+  // 40s 的旧预算会把「慢」误报成「坏」，而错误信息还指向字体与 import ——
+  // 使用者会去查一个根本没问题的地方。
+  const tries = Number(process.env.FILMWRIGHT_BOOT_TRIES) || 1200;
+  const t0 = Date.now();
+  let lastSeen = null;
+  for (let i = 0; i < tries; i++) {
     const expr = opts.readyExpr
       ? `Boolean(${opts.readyExpr})`
       : '({ready: window.__ready === true, info: window.__info || null, err: window.__bootError || null})';
@@ -192,20 +199,29 @@ export async function openSession(url, size, opts = {}) {
     const v = r.result?.result?.value;
     if (opts.readyExpr) {
       if (v === true) { ready = true; break; }
+      lastSeen = String(v);
     } else {
       if (v?.err) { bootError = v.err; break; }
       if (v?.ready) { ready = true; info = v.info; break; }
+      lastSeen = v ? `ready=${v.ready}（页面已连上但 boot 未完成）` : '页面还没响应';
     }
     await sleep(100);
   }
   if (!ready) {
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
     try { ws.close(); } catch {}
     try { chrome.kill(); } catch {}
     try { rmSync(profile, {recursive: true, force: true}); } catch {}
     if (bootError) throw new Error('filmwright: 渲染页启动失败\n' + bootError);
-    throw new Error(opts.readyExpr
-      ? 'filmwright: 页面一直没就绪（' + opts.readyExpr + ' 没变 true）'
-      : 'filmwright: 渲染页一直没就绪（检查字体路径与模块 import）');
+    // 如实说「等了多久 + 最后看到什么」，而不是猜一个原因。
+    // 慢（机器忙/内存不足）与坏（字体路径错、import 错）的排查方向完全不同。
+    throw new Error(`filmwright: 渲染页 ${secs}s 内没就绪（最后状态：${lastSeen ?? '未知'}）\n` +
+      '  两种可能，按这个顺序排：\n' +
+      '    1) 机器忙或内存不足：减小 --shards（每个分片是一个独立浏览器实例，' +
+      '约需 500MB），或等负载降下来\n' +
+      '    2) 项目本身有问题：字体路径、模块 import、镜头代码抛错 —— ' +
+      '用 filmwright preview 打开页面能直接看到 boot 错误\n' +
+      `  要放宽预算：FILMWRIGHT_BOOT_TRIES=${tries * 2}（每轮 100ms）`);
   }
 
   let lastErr = null;

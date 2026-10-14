@@ -345,21 +345,50 @@ export async function sheet(ctx) {
   return {code: 0, data: {out, frames: frames.length}};
 }
 
-/** 分片数解析：数字，或 auto（按 CPU 核数，留一核给主进程）。 */
-function resolveShards(raw, total) {
-  if (raw === undefined || raw === null || raw === '' || raw === 'auto') {
-    if (raw === undefined || raw === null || raw === '') return 1;   // 默认不分片
-    const cores = Math.max(1, (os.cpus?.() ?? []).length - 1);
-    return Math.max(1, Math.min(cores, Math.ceil(total / 60)));      // 每片至少 ~60 帧
-  }
+/**
+ * 分片数解析：数字，或 auto。
+ *
+ * ## auto 为什么不能只看 CPU 核数
+ *
+ * 每个分片是**一个独立浏览器实例**，实测各占数百 MB。只看核数的话，
+ * 16 核的机器会一次开 15 个实例 —— 内存不够就换页，结果**比分片前更慢**。
+ * 实测（16 核 / 剩 5GB 的笔记本）：单片 96s、2 片 181s、4 片 133s。
+ * 所以这里同时受三个上限约束，取最小值：
+ *   - CPU 核数（留一核给主进程）
+ *   - 可用内存（每片预留 PER_SHARD_MB，并给系统留 SYSTEM_MB）
+ *   - 帧数（每片至少 ~60 帧，否则启动开销盖过收益）
+ *
+ * 导出为纯函数（接受 {cores, freeBytes}）以便单测 —— 判据不能只在真机上验。
+ */
+export const PER_SHARD_MB = 500;    // 一个浏览器实例的经验预留量
+export const SYSTEM_MB = 1500;      // 留给系统 + node 主进程的量
+
+export function resolveShards(raw, total, {cores, freeBytes} = {}) {
+  const nCores = cores ?? Math.max(1, (os.cpus?.() ?? []).length);
+  const free = freeBytes ?? os.freemem?.() ?? 0;
+  const byCpu = Math.max(1, nCores - 1);
+  const byMem = Math.max(1, Math.floor((free / 1048576 - SYSTEM_MB) / PER_SHARD_MB));
+  const byFrames = Math.max(1, Math.ceil(total / 60));
+  const cap = Math.max(1, Math.min(byCpu, byMem, byFrames));
+
+  if (raw === undefined || raw === null || raw === '') return 1;   // 默认不分片
+  if (raw === 'auto') return cap;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 1) {
     const e = new Error(`filmwright: --shards 要是正整数或 auto，收到 ${raw}`);
     e.code = 'BAD_SHARDS';
-    e.hint = 'auto = 按 CPU 核数自动定（每片至少约 60 帧）';
+    e.hint = 'auto = 按 CPU 核数与可用内存自动定（每片至少约 60 帧）';
     throw e;
   }
-  return Math.floor(n);
+  const want = Math.floor(n);
+  // 显式指定的片数**照办**（用户可能知道自己在做什么），但如果明显超出内存，
+  // 在 stderr 上提醒一句 —— 静默变慢比报错更难查。
+  if (want > byMem) {
+    process.stderr.write(`filmwright: 注意：--shards ${want} 超出可用内存能支撑的量` +
+      `（约 ${byMem} 片；每片约需 ${PER_SHARD_MB}MB，当前可用 ${(free / 1048576).toFixed(0)}MB）` +
+      '—— 可能因换页而更慢。用 --shards auto 或减小片数。\n');
+  }
+  return want;
 }
 
 /** 渲染。 */
@@ -585,7 +614,10 @@ export async function mux(ctx) {
   if (!existsSync(audio)) {
     const e = new Error('filmwright: 找不到配音 ' + audio);
     e.code = 'NO_AUDIO';
-    e.hint = '先跑 filmwright tts';
+    // 说清「为什么会缺」：配音是产物、不入库（时间轴入库，所以 check 与渲染
+    // 在没有音频时也能跑）。clone 下来第一次合流必然遇到这条。
+    e.hint = '配音是产物、不随仓库分发。跑 filmwright tts --project ' + ctx.projectDir
+      + ' 生成（没有 edge-tts 时 tts.engine 设为 \'auto\' 会自动降级到离线引擎）';
     throw e;
   }
   const video = resolve(str(ctx.args, 'video'));

@@ -24,6 +24,7 @@ export const SHOT_TYPES = [
   'steps', 'table', 'quote', 'terminal', 'chips', 'bars',
   'comp',   // 嵌套合成实例：引用 comps 里定义的一个子合成
   'clip',   // 视频/图片序列片段：按源帧号取图（见配置的 clips）
+  'line',   // 折线图：逐段绘制 + 数值滚动（适合随时间的趋势）
 ];
 
 /** 每类的容量上限（版面算出来的，超了会挤/溢出）。 */
@@ -35,6 +36,7 @@ export const SHOT_MAXES = {
   table: {columns: 4, rows: 8},
   chips: {items: 12},
   bars: {items: 6},
+  line: {points: 8},
   compare: {items: 5},   // left.items / right.items 各
 };
 
@@ -113,6 +115,7 @@ const FIELDS = {
   bars: {heading: 'str?', items: 'arr<bar>', unit: 'str?'},
   comp: {comp: 'compName', loop: 'bool?', frames: 'num?'},
   clip: {clip: 'clipName', heading: 'str?', note: 'str?', fit: 'fit?', from: 'num?', fps: 'num?'},
+  line: {heading: 'str?', points: 'arr<point>', unit: 'str?', baseline: 'num?'},
 };
 
 /** 每类的说明（schema 输出给 agent 看，一句话讲清"什么时候用它"）。 */
@@ -130,17 +133,25 @@ const TYPE_NOTES = {
   terminal: '终端窗口：标题栏 + 逐行输出，光标常闪',
   chips: '标签胶囊（≤12 个）：关键词平铺，自动折行',
   bars: '竖向条形图（2–6 根）：数值 + 标签，适合性能/占比对比',
+  line: '折线图（2–8 个点）：逐段绘制 + 数值滚动，适合随时间的趋势',
   comp: '嵌套合成实例：引用 comps 里定义的可复用子合成（可循环）',
   clip: '视频/图片序列片段：按源帧号取图，随时间播放（片段在配置的 clips 里声明）',
 };
+
+/** 转场类型与方向（与 runtime/stage/shots.js 同一份名单，有交叉测试钉住）。 */
+export const TRANSITION_TYPES = ['crossfade', 'fade', 'slide', 'wipe', 'zoom'];
+export const TRANSITION_DIRECTIONS = ['left', 'right', 'up', 'down'];
 
 /** 转场声明是否合法（与 runtime/stage/shots.js 的 normalizeTransition 同一套规则）。 */
 export function isValidTransition(v) {
   if (typeof v === 'number') return Number.isInteger(v) && v >= 1;
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const type = v.type ?? 'crossfade';
-  if (type !== 'crossfade' && type !== 'fade') return false;
-  return Number.isInteger(v.frames) && v.frames >= 1;
+  if (!TRANSITION_TYPES.includes(type)) return false;
+  if (!Number.isInteger(v.frames) || v.frames < 1) return false;
+  // direction 只对 slide / wipe 有意义；给了别的类型也不报错（运行时忽略它）
+  if (v.direction !== undefined && !TRANSITION_DIRECTIONS.includes(v.direction)) return false;
+  return true;
 }
 
 /**
@@ -253,6 +264,12 @@ function validateArr(v, path, shape, errors, {min = 1, maxName, shot} = {}) {
       }
       checkStr(it.label, `${p}.label`, 'label', errors, true);
       if (it.unit !== undefined) checkStr(it.unit, `${p}.unit`, 'unit', errors, false);
+    } else if (shape === 'point') {
+      // 折线图的点：v 必填，label 可选（X 轴标签，不写就不显示）
+      if (typeof it.v !== 'number' || !Number.isFinite(it.v)) {
+        errors.push(err('SCENE_BAD_FIELD', `${p}.v`, 'v 必须是数字', '折线图的数据点值'));
+      }
+      if (it.label !== undefined) checkStr(it.label, `${p}.label`, 'label', errors, false);
     }
   });
   return v.length;
@@ -266,6 +283,7 @@ const SHAPE_KEYS = {
   term: ['text', 'color'],
   chip: ['label'],
   bar: ['v', 'label', 'unit'],
+  point: ['v', 'label'],
 };
 const SHAPE_HINT = {
   '{t, d?}': '例：{"t": "要点", "d": "说明"}',
@@ -275,6 +293,7 @@ const SHAPE_HINT = {
   term: '字符串或 {"text": "…", "color": "#…"}',
   chip: '字符串或 {"label": "关键词"}',
   bar: '例：{"v": 81, "label": "Chrome", "unit": "ms"}',
+  point: '例：{"v": 81, "label": "一月"}（label 可选，作为 X 轴标签）',
 };
 
 function validateSide(v, path, errors, owner) {
@@ -386,7 +405,8 @@ export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
     if (shot.transition !== undefined && !isValidTransition(shot.transition)) {
       errors.push(err('SCENE_BAD_TRANSITION', `${path}.transition`,
         `转场形状不对：${JSON.stringify(shot.transition)}`,
-        '要 {type:"crossfade"|"fade", frames:N}（N≥1），或直接给帧数；第一个镜头不能用 crossfade'));
+        `要 {type:"${TRANSITION_TYPES.join('"|"')}", frames:N}（N≥1），或直接给帧数；` +
+        `slide/wipe 可加 direction: ${TRANSITION_DIRECTIONS.join('/')}；第一个镜头只能用 fade`));
     }
     if (shot.transform !== undefined && !isValidTransform(shot.transform)) {
       errors.push(err('SCENE_BAD_TRANSFORM', `${path}.transform`,

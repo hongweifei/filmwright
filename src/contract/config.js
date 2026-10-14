@@ -130,6 +130,50 @@ export function normalizeConfig(raw) {
     clips: normClips(raw.clips),
     endingFade: raw.endingFade ?? 30,
     music: normMusic(raw.music),
+    subtitle: normSubtitle(raw.subtitle),
+  };
+}
+
+/**
+ * 字幕排版（可选）。双语字幕的排版都在这里调。
+ *
+ *   subtitle: {
+ *     primary: 'first',   // 'first' = 原文大字、译文小字；'second' = 反过来
+ *     size: 42, size2: 26, gap: 8, lift: 14,
+ *   }
+ *
+ * 为什么这些要可配：不同语言的**行高与字宽差别很大**（中文 1 字≈1 em，
+ * 英文 1 词≈5 em），同一套尺寸不可能对所有语言都好看。
+ * 默认值是按中文原文 + 英文译文调的。
+ */
+function normSubtitle(raw) {
+  if (raw === undefined || raw === null) return {primary: 'first', size: 42, size2: 26, gap: 8, lift: 14};
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('filmwright: subtitle 必须是对象，收到 ' + JSON.stringify(raw));
+  }
+  const allowed = ['primary', 'size', 'size2', 'gap', 'lift'];
+  const unknown = Object.keys(raw).filter((k) => !allowed.includes(k));
+  if (unknown.length) {
+    throw new Error(`filmwright: subtitle 没有字段 ${unknown.join(', ')}；可用：${allowed.join(' / ')}`);
+  }
+  if (raw.primary !== undefined && !['first', 'second'].includes(raw.primary)) {
+    throw new Error(`filmwright: subtitle.primary 只能是 first / second，收到 ${JSON.stringify(raw.primary)}`);
+  }
+  const numOr = (v, def, key, {min = 0, max}) => {
+    if (v === undefined) return def;
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(`filmwright: subtitle.${key} 要是数字，收到 ${JSON.stringify(v)}`);
+    }
+    if (v < min) throw new Error(`filmwright: subtitle.${key} 不能小于 ${min}，收到 ${v}`);
+    if (max !== undefined && v > max) throw new Error(`filmwright: subtitle.${key} 不能大于 ${max}，收到 ${v}`);
+    return v;
+  };
+  return {
+    primary: raw.primary ?? 'first',
+    size: numOr(raw.size, 42, 'size', {min: 8, max: 120}),
+    size2: numOr(raw.size2, 26, 'size2', {min: 6, max: 120}),
+    gap: numOr(raw.gap, 8, 'gap', {min: 0, max: 60}),
+    lift: numOr(raw.lift, 14, 'lift', {min: 0, max: 200}),
   };
 }
 

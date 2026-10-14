@@ -37,6 +37,9 @@ export function buildSrt(tl, opt = {}) {
   }
   const tr = opt.translation ?? null;
   const lookup = (block, i) => {
+    // 优先用时间轴里自带的译文（subs[i].text2）—— 那是**画面内也用的同一份数据**。
+    // 画面与字幕文件用同一份，才不会出现「画面双语、导出单语」的不一致。
+    if (typeof block.text2 === 'string' && block.text2) return block.text2;
     if (!tr) return null;
     if (tr instanceof Map) return tr.get(i + 1) ?? null;
     const hit = tr.find((t) => t.from === block.from);

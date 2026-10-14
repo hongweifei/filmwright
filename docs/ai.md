@@ -49,7 +49,7 @@ filmwright mcp                     # stdio 服务器
 | 工具 | 用途 |
 |---|---|
 | `filmwright_new` | 建项目骨架（scene / shots 模板） |
-| `filmwright_schema` | **写 scene 前先拿它**：15 类模板、字段、容量上限、错误码 |
+| `filmwright_schema` | **写 scene 前先拿它**：16 类模板、字段、容量上限、错误码 |
 | `filmwright_timeline` | 读句 id / 帧区间 / 字幕块数——写 `at` 之前看这个 |
 | `filmwright_scene_validate` | 只查 scene.json，秒级，不启浏览器 |
 | `filmwright_tts` | 解说词 → 配音 + 时间轴 |
@@ -63,7 +63,7 @@ filmwright mcp                     # stdio 服务器
 ## 推荐的 agent 工作回路
 
 ```
-filmwright_schema（拿 15 类模板与上限）→ filmwright_new → 写 narration.txt → filmwright_tts
+filmwright_schema（拿 16 类模板与上限）→ filmwright_new → 写 narration.txt → filmwright_tts
   → filmwright_timeline（拿准句 id 与块数）→ 写 scene.json
   → filmwright_review（一轮搞定：校验 + 静态自检 + 代表帧回图，直接看图改）
   → 满意后 filmwright_all

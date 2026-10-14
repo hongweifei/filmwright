@@ -474,6 +474,115 @@ const chips = {
   },
 };
 
+/**
+ * `line` 模板：折线图，带**逐点绘制**动画与数值增长。
+ *
+ * 与 `bars` 的分工：bars 适合「几个离散项比大小」，line 适合「随时间的趋势」。
+ *
+ * 动画（都是 n 的纯函数）：
+ *   - 折线从起点开始**逐段画出**（进度 p 控制画到第几个点）
+ *   - 每个点落位后有一个高亮点（循环脉动，作为落位后的持续动作）
+ *   - 末端点带数值标签，数字随绘制进度滚动
+ *
+ * 字段：`heading?`、`points`（[{v, label?}]，2–8 个）、`unit?`、`baseline?`（Y 轴起点，默认 0）
+ */
+const lineT = {
+  beats: (shot, start, sid) => {
+    const f0 = staggerFrames(sid, 1, start)[0];
+    // 绘制 40 帧 + 每个点落位各一拍（最多 3 拍，避免节拍过多挤压停留期）
+    const n = Math.min(3, (shot.points ?? []).length);
+    const out = [f0];
+    for (let i = 1; i <= n; i++) out.push(beatEnd(sid, f0, 40 + i * 6));
+    return out;
+  },
+  draw(ctx, n, shot, accent) {
+    const pts = shot.points ?? [];
+    if (pts.length < 2) return;
+    const frames = staggerFrames(shot.sid, 1, this.from);
+    if (shot.heading) {
+      section(ctx, 190, 150, 900, shot.heading, enterAt(n, Math.max(this.from, frames[0] - 12)), {color: accent});
+    }
+    // 绘制进度：0..1 线性走完（用 easeOut3 让收尾更柔）
+    const p = easeOut3(inv(n, frames[0], beatEnd(shot.sid, frames[0], 40)));
+
+    const x0 = 260, y0 = 230, w = 760, h = 300;
+    const base = shot.baseline ?? 0;
+    const mx = Math.max(...pts.map((q) => q.v), base + 1e-6);
+    const mn = Math.min(...pts.map((q) => q.v), base);
+    const span = (mx - mn) || 1;
+    const X = (i) => x0 + (w * i) / (pts.length - 1);
+    const Y = (v) => y0 + h - ((v - mn) / span) * h;
+
+    // 坐标轴：底边 + 左侧
+    rule(ctx, x0, y0 + h, w, 1, {color: C.line});
+    rule(ctx, x0, y0, 1, h, {color: C.line});
+
+    // 折线：按进度画到第 k 段（最后一段按小数插值，画面连续）
+    const total = pts.length - 1;
+    const drawn = p * total;
+    const k = Math.min(total, Math.floor(drawn));
+    ctx.save();
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 3;
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = hexA(accent, 0.5);
+    ctx.shadowBlur = 18;
+    ctx.beginPath();
+    ctx.moveTo(X(0), Y(pts[0].v));
+    for (let i = 1; i <= k; i++) ctx.lineTo(X(i), Y(pts[i].v));
+    if (k < total) {
+      const frac = drawn - k;
+      const x = X(k) + (X(k + 1) - X(k)) * frac;
+      const y = Y(pts[k].v) + (Y(pts[k + 1].v) - Y(pts[k].v)) * frac;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+
+    // 数据点：已画到的点才显示（每个点的出现时刻由它在折线上的位置决定）
+    pts.forEach((q, i) => {
+      const arrive = i / total;
+      if (p + 1e-9 < arrive) return;
+      const landed = Math.min(1, (p - arrive) * 6 + 0.001);
+      const x = X(i), y = Y(q.v);
+      // 点：外圈发光 + 内芯
+      ctx.save();
+      ctx.globalAlpha = landed;
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = C.bg;
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = accent;
+      ctx.stroke();
+      // 落位后的持续动作：高亮环脉动（幅度按画质自检的静止阈值口径给足）
+      const pulse = 0.25 + 0.3 * (0.5 + 0.5 * Math.sin((n - this.from) / 11 + i));
+      ctx.beginPath();
+      ctx.arc(x, y, 11 + 3 * pulse, 0, Math.PI * 2);
+      ctx.strokeStyle = hexA(accent, pulse);
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+
+      // 标签：X 轴
+      if (q.label) {
+        text(ctx, q.label, x, y0 + h + 26, {
+          size: 18, family: F.mono, color: C.faint, align: 'center', baseline: 'middle',
+          alpha: landed,
+        });
+      }
+      // 末端点的数值：数字随进度滚到目标值
+      if (i === pts.length - 1) {
+        const shown = Math.round(q.v * p);
+        text(ctx, String(shown) + (shot.unit ?? ''), x, y - 30, {
+          size: 24, weight: 700, family: F.mono, color: accent, align: 'center', baseline: 'middle',
+          alpha: landed,
+        });
+      }
+    });
+  },
+};
+
 const barsT = {
   beats: (shot, start, sid) => {
     const f0 = staggerFrames(sid, 1, start)[0];
@@ -571,7 +680,7 @@ function drawImageFit(ctx, im, box, fit, accent) {
  */
 export const TEMPLATES = {
   title, bullets, stat, flow: flowT, code, image, compare,
-  steps, table, quote, terminal: terminalT, chips, bars: barsT,
+  steps, table, quote, terminal: terminalT, chips, bars: barsT, line: lineT,
   clip: clipT,
   // comp 由 compileScene 特判，不该走到这里；留着是为了键集一致 + 误用时明确报错
   comp: {draw(ctx, n, shot) { void ctx; void n; void shot;

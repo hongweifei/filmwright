@@ -82,7 +82,7 @@ test('validateScene：最小合法规格通过', () => {
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
-test('validateScene：15 类模板的最小实例都合法', () => {
+test('validateScene：16 类模板的最小实例都合法', () => {
   // 每类单独成一个规格：单镜头规格里它就是第一个镜头，必须从第 1 帧起。
   const shots = {
     title: {type: 'title', at: 1, title: 't'},
@@ -100,6 +100,7 @@ test('validateScene：15 类模板的最小实例都合法', () => {
     bars: {type: 'bars', at: 1, unit: 'ms', items: [{v: 81, label: 'a'}, {v: 120, label: 'b'}]},
     comp: {type: 'comp', at: 1, comp: 'sub'},
     clip: {type: 'clip', at: 1, clip: 'broll'},
+    line: {type: 'line', at: 1, unit: 'ms', points: [{v: 10, label: '一月'}, {v: 40, label: '二月'}]},
   };
   assert.deepEqual(Object.keys(shots).sort(), [...SHOT_TYPES].sort(), '测试要覆盖全部类型');
   for (const s of Object.values(shots)) {
@@ -329,7 +330,10 @@ test('scene 支持 transition：合法形状通过，且不破坏其它字段校
 });
 
 test('负面对照：transition 形状不对报 SCENE_BAD_TRANSITION', () => {
-  for (const bad of [0, -1, 1.5, 'fade', {frames: 0}, {type: 'wipe', frames: 5}, [], {}]) {
+  // 注意 `{type:'wipe',frames:5}` 现在**是合法的**（扩展转场已支持 wipe），
+  // 所以从非法集合里去掉它，换成真正非法的：不认识的类型、非法方向。
+  for (const bad of [0, -1, 1.5, 'fade', {frames: 0}, {type: 'nope', frames: 5},
+    {type: 'slide', frames: 5, direction: '斜着'}, [], {}]) {
     const r = validateScene({shots: [
       {type: 'title', at: 1, title: 't'},
       {type: 'bullets', at: 2, items: [{t: 'a'}], transition: bad},
@@ -338,6 +342,36 @@ test('负面对照：transition 形状不对报 SCENE_BAD_TRANSITION', () => {
     assert.ok(e, `应报转场错：${JSON.stringify(bad)}（实际 ${JSON.stringify(r.errors.map((x) => x.code))}）`);
     assert.equal(e.path, 'shots[1].transition', 'path 要指到具体镜头');
   }
+});
+
+test('五种转场类型与四个方向都合法（扩展转场）', () => {
+  for (const type of ['crossfade', 'fade', 'slide', 'wipe', 'zoom']) {
+    const r = validateScene({shots: [
+      {type: 'title', at: 1, title: 't'},
+      {type: 'bullets', at: 2, items: [{t: 'a'}], transition: {type, frames: 12, direction: 'left'}},
+    ]}, {timeline: tl});
+    assert.equal(r.ok, true, `${type} 应合法：${JSON.stringify(r.errors)}`);
+  }
+  for (const direction of ['left', 'right', 'up', 'down']) {
+    const r = validateScene({shots: [
+      {type: 'title', at: 1, title: 't'},
+      {type: 'bullets', at: 2, items: [{t: 'a'}], transition: {type: 'slide', frames: 12, direction}},
+    ]}, {timeline: tl});
+    assert.equal(r.ok, true, `direction=${direction} 应合法：${JSON.stringify(r.errors)}`);
+  }
+});
+
+test('line 模板：points 的 v 必填且是数字，label 可选', () => {
+  const good = validateScene({shots: [{type: 'line', at: 1, points: [{v: 1}, {v: 2, label: 'x'}]}]},
+    {timeline: tl});
+  assert.equal(good.ok, true, JSON.stringify(good.errors));
+  const bad = validateScene({shots: [{type: 'line', at: 1, points: [{v: 'x'}, {v: 2}]}]}, {timeline: tl});
+  assert.ok(bad.errors.some((e) => e.code === 'SCENE_BAD_FIELD' && e.path.includes('.v')),
+    'v 不是数字应报错：' + JSON.stringify(bad.errors));
+  const tooMany = validateScene({shots: [{type: 'line', at: 1,
+    points: Array.from({length: 9}, (_, i) => ({v: i}))}]}, {timeline: tl});
+  assert.ok(tooMany.errors.some((e) => e.code === 'SCENE_TOO_MANY'),
+    '超过 8 个点应报 SCENE_TOO_MANY：' + JSON.stringify(tooMany.errors.map((e) => e.code)));
 });
 
 test('transition 是通用字段：不会因「未知字段」被误报', () => {

@@ -48,24 +48,46 @@ export function setShots(list) {
   if (declared[0].start !== 1) {
     throw new Error('filmwright: 第一个镜头必须从第 1 帧开始，收到 ' + declared[0].start);
   }
-  // crossfade 需要「上一个镜头」才有东西可混；第一个镜头只能用 fade
+  // 需要「上一个镜头」才有东西可混/可推的转场，第一个镜头不能用：
+  // crossfade（没东西淡出）、slide（没东西被推走）、wipe（没东西被盖住）、
+  // zoom（没东西淡出）。只有 fade 是从背景色淡入，第一个镜头可以用。
   const first = declared[0];
-  if (first.transition && normalizeTransition(first.transition).type === 'crossfade') {
-    throw new Error('filmwright: 第一个镜头不能用 crossfade（前面没有镜头可混合）；用 fade');
+  if (first.transition) {
+    const ft = normalizeTransition(first.transition);
+    if (ft && ft.type !== 'fade') {
+      throw new Error(`filmwright: 第一个镜头不能用 ${ft.type}（前面没有镜头可混合/推挤）；用 fade`);
+    }
   }
   return declared;
 }
 
-/** 转场声明归一化：数字 = crossfade 帧数；对象 = {type, frames}。非法返回 null。 */
+/** 转场类型与方向（contract 层的校验用同一份名单）。 */
+export const TRANSITION_TYPES = ['crossfade', 'fade', 'slide', 'wipe', 'zoom'];
+export const DIRECTIONS = ['left', 'right', 'up', 'down'];
+
+/**
+ * 转场声明归一化。接受三种写法，统一成 `{type, frames, direction}`：
+ *   `12`                                          → {type:'crossfade', frames:12, direction:null}
+ *   `{type:'crossfade', frames:12}`               → 原样
+ *   `{type:'slide', frames:20, direction:'left'}` → 带方向
+ *
+ * 非法返回 null（调用方报错，不静默忽略）。
+ */
 export function normalizeTransition(v) {
+  if (v === undefined || v === null) return null;
   if (typeof v === 'number') {
-    return Number.isInteger(v) && v >= 1 ? {type: 'crossfade', frames: v} : null;
+    return Number.isInteger(v) && v >= 1 ? {type: 'crossfade', frames: v, direction: null} : null;
   }
-  if (!v || typeof v !== 'object') return null;
+  if (typeof v !== 'object' || Array.isArray(v)) return null;
   const type = v.type ?? 'crossfade';
-  if (type !== 'crossfade' && type !== 'fade') return null;
+  if (!TRANSITION_TYPES.includes(type)) return null;
   if (!Number.isInteger(v.frames) || v.frames < 1) return null;
-  return {type, frames: v.frames};
+  let direction = v.direction ?? null;
+  if (direction !== null && !DIRECTIONS.includes(direction)) return null;
+  // 方向只对 slide / wipe 有意义：别的类型给了也**忽略**而不报错 ——
+  // 报错会让「统一写 direction 的生成器」很难用，而忽略是无害的。
+  if (type !== 'slide' && type !== 'wipe') direction = null;
+  return {type, frames: v.frames, direction};
 }
 
 /**
