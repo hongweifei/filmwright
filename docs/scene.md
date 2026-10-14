@@ -267,7 +267,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 - **参数不能用关键帧**（`"radius": [{beat:1,v:0},…]`）—— 设计里要有，但需要先把
   "单条轨道"的校验从 `animate` 里抽出来共用，而不是复制规则。本版参数只接受数值。
 - **其余 10 个效果**（`glow` / `color` / `chromatic` / `distort` / `grain` / `vignette` /
-  `pixelate` / `radialBlur` / `grade` / `displace`）按 [DESIGN-effects.md](design/DESIGN-effects.md) 逐个加。
+  `pixelate` / `radialBlur` / `grade` / `displace`）逐个加。
 - **自定义着色器**：命令式入口（`shots/index.js`）将来可以写，但引擎不背书、不进 schema。
 
 ## 并发多层（`layers` 容器）
