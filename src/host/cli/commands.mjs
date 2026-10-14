@@ -21,9 +21,9 @@ import {exportSrt, readTranslation} from '../media/srt.mjs';
 import {prepareClips} from '../media/clips.mjs';
 import {
   segmentDir, segmentKey, planSegments, findCached, recordSegment, pruneSegments,
-  engineFingerprint, projectFingerprint,
+  engineFingerprint, globalFingerprint, collectShotDeps, mergeDeps,
 } from '../media/incremental.mjs';
-import {sceneSchema} from '../../contract/scene.js';
+import {sceneSchema, resolveAt} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
 import {num, str} from './args.mjs';
@@ -368,6 +368,8 @@ export async function render(ctx) {
         incremental: true, segments: r.segments,
         reusedSegments: r.reused, renderedSegments: r.rendered,
         proxy: proxy ?? null,
+        // 归因粒度：scene 项目能按镜头归因，手写镜头项目只能整文件
+        attribution: ctx.proj.scene ? 'per-shot' : 'whole-file',
       },
     };
   }
@@ -426,7 +428,16 @@ async function renderOneRange(ctx, {out, crf, say, from, to, proxy}) {
  * 增量重渲：切成段 → 按内容哈希复用 → 只渲变化了的段 → 拼接。
  *
  * 安全性的根据：引擎是确定性的（第 N 帧只依赖 N），所以「输入指纹 + 段区间」
- * 相同就一定能复用。指纹覆盖引擎源码、项目全部参与绘制的文件、输出参数。
+ * 相同就一定能复用。
+ *
+ * ## 指纹为什么分两层（这是「改一个镜头只重渲几段」能成立的关键）
+ *
+ *   - **全局**：配置、时间轴、字体与素材文件、clips 声明、引擎源码 —— 影响每一段
+ *   - **局部**：与该段区间重叠的 scene 镜头（以及它引用的 comps）
+ *
+ * 如果只用一份全局指纹（把整份 scene.json 也算进去），改任何一个镜头都会让
+ * **所有段**失效 —— 那就等于每次都全渲，增量重渲毫无意义。
+ * 手写镜头项目（shots/index.js）无法按镜头归因，整个文件算全局（保守但正确）。
  */
 async function renderIncremental(ctx, {from, to, out, crf, say, segFrames, width, height, fps, proxy, shards}) {
   const workDir = ctx.proj.paths.workDir;
@@ -434,25 +445,41 @@ async function renderIncremental(ctx, {from, to, out, crf, say, segFrames, width
   mkdirSync(dir, {recursive: true});
 
   const engine = engineFingerprint(RUNTIME_ROOT);
-  const project = projectFingerprint(ctx.proj, ctx.projectDir);
+  const global = globalFingerprint(ctx.proj, ctx.projectDir);
+  // 手写镜头项目：整个镜头文件算全局（无法按帧归因）
+  const manualShots = !ctx.proj.scene && ctx.proj.paths.shots && existsSync(ctx.proj.paths.shots)
+    ? createHash('sha1').update(readFileSync(ctx.proj.paths.shots)).digest('hex').slice(0, 12)
+    : null;
+  const globalWithShots = manualShots
+    ? createHash('sha1').update(global + '|' + manualShots).digest('hex').slice(0, 12)
+    : global;
+
   const outW = proxy ? Math.max(2, Math.round(width * proxy)) : width;
   const outH = proxy ? Math.max(2, Math.round(height * proxy)) : height;
 
   const segs = planSegments(to - from + 1, segFrames, from, to);
   const liveKeys = new Set();
+  // 每个段收集「与它重叠的镜头依赖」，据此算键
+  const sceneForRanges = sceneWithNumericAt(ctx.proj);
   const jobs = segs.map((s) => {
-    const key = segmentKey({engine, project, from: s.from, to: s.to, width: outW, height: outH, fps, crf});
+    const deps = collectShotDeps(sceneForRanges, s);
+    const shotsHash = mergeDeps(deps);
+    const key = segmentKey({
+      engine, global: globalWithShots, shotsHash,
+      from: s.from, to: s.to, width: outW, height: outH, fps, crf,
+    });
     liveKeys.add(key);
     const hit = findCached(dir, s.index, key);
-    return {...s, key, hit};
+    return {...s, key, hit, shotCount: deps.length};
   });
 
   const reused = jobs.filter((j) => j.hit).length;
   const todo = jobs.filter((j) => !j.hit);
   say(`增量：${segs.length} 段（每段 ${segFrames} 帧），复用 ${reused}，需渲 ${todo.length}` +
-    (proxy ? `（代理 ${outW}×${outH}）` : ''));
+    (proxy ? `（代理 ${outW}×${outH}）` : '') +
+    (ctx.proj.scene ? '' : '（手写镜头项目：镜头文件变化会让所有段失效）'));
 
-  // 需要渲的段：用 renderSharded 的并发能力逐段渲（每段内部再按 shards 分片）
+  // 需要渲的段：逐段渲（每段内部仍可按 shards 分片）
   for (const j of todo) {
     const part = join(dir, `seg${String(j.index).padStart(4, '0')}-${j.key}.mp4`);
     const p0 = Date.now();
@@ -463,7 +490,7 @@ async function renderIncremental(ctx, {from, to, out, crf, say, segFrames, width
     recordSegment(dir, j.index, j.key, {
       from: j.from, to: j.to, frames: j.to - j.from + 1, bytes: statSync(part).size,
     });
-    say(`  段 ${j.index}（${j.from}-${j.to}）渲染完成 ${((Date.now() - p0) / 1000).toFixed(0)}s`);
+    say(`  段 ${j.index}（${j.from}-${j.to}，覆盖 ${j.shotCount} 个镜头）渲染完成 ${((Date.now() - p0) / 1000).toFixed(0)}s`);
   }
 
   // 拼接：按段顺序 concat
@@ -477,11 +504,35 @@ async function renderIncremental(ctx, {from, to, out, crf, say, segFrames, width
   checkSpawned(ff, '增量拼接');
   if (code !== 0) throw new Error('filmwright: 增量拼接失败');
 
-  // 清理不再匹配的旧段（缓存别无限涨）
   const pruned = pruneSegments(dir, liveKeys);
   if (pruned) say(`  清理旧段 ${pruned} 个文件`);
 
   return {segments: segs.length, reused, rendered: todo.length, pruned};
+}
+
+/**
+ * 把 scene 里非数字的 `at`（句 id / 对象）解析成帧号，好让 host 侧能算镜头区间。
+ *
+ * 只用于**归因**（决定哪些镜头影响哪些段），不参与绘制 ——
+ * 绘制时的 at 解析仍在浏览器里由同一份 `resolveAt` 完成，两者不会漂。
+ * 实在解析不出来的镜头，其区间视为未知 → 保守地让**所有段**都收它的指纹。
+ */
+function sceneWithNumericAt(proj) {
+  if (!proj.scene) return null;
+  const tl = proj.timeline;
+  const shots = proj.scene.shots.map((s) => {
+    let at = s.at;
+    if (typeof at !== 'number') {
+      try {
+        const n = resolveAt(at, tl);
+        if (Number.isInteger(n) && n >= 1) at = n;
+      } catch {
+        return s;             // 解析不了：保持原样，由 collectShotDeps 走保守路径
+      }
+    }
+    return {...s, at};
+  });
+  return {...proj.scene, shots};
 }
 
 /** 画面与配音合流。 */

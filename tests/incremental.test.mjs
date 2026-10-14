@@ -8,16 +8,18 @@ import {mkdtempSync, mkdirSync, writeFileSync, readdirSync, readFileSync, exists
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
-  segmentKey, planSegments, findCached, recordSegment, pruneSegments, engineFingerprint, projectFingerprint,
+  segmentKey, planSegments, findCached, recordSegment, pruneSegments, engineFingerprint,
+  globalFingerprint, sceneShotFingerprint, compFingerprint, collectShotDeps, mergeDeps,
 } from '../src/host/media/incremental.mjs';
 
-const base = {engine: 'e1', project: 'p1', from: 1, to: 300, width: 1280, height: 720, fps: 30, crf: '16'};
+const base = {engine: 'e1', global: 'p1', shotsHash: 's1', from: 1, to: 300, width: 1280, height: 720, fps: 30, crf: '16'};
 
 test('segmentKey：任一输入变化都要变键（漏一个就会复用旧画面）', () => {
   const k = segmentKey(base);
   const cases = [
     ['engine', {engine: 'e2'}],
-    ['project', {project: 'p2'}],
+    ['global', {global: 'p2'}],
+    ['shotsHash（该段覆盖的镜头）', {shotsHash: 's2'}],
     ['from', {from: 2}],
     ['to', {to: 299}],
     ['width', {width: 640}],
@@ -30,6 +32,81 @@ test('segmentKey：任一输入变化都要变键（漏一个就会复用旧画�
   }
   assert.equal(segmentKey(base), k, '同样的输入 → 同样的键（可复用）');
   assert.match(k, /^[0-9a-f]{16}$/, '键的形状');
+});
+
+test('sceneShotFingerprint：镜头内容变则指纹变，且区分镜头位置', () => {
+  const a = {type: 'title', at: 1, title: 'x'};
+  const f = sceneShotFingerprint(a, 0);
+  assert.match(f, /^[0-9a-f]{12}$/);
+  assert.equal(sceneShotFingerprint(a, 0), f, '同样内容 → 同指纹');
+  assert.notEqual(sceneShotFingerprint({...a, title: 'y'}, 0), f, '内容变 → 指纹变');
+  // 同一份内容放在不同位置也算不同（顺序变了画面就变了）
+  assert.notEqual(sceneShotFingerprint(a, 1), f, '位置变 → 指纹变');
+});
+
+test('compFingerprint：子合成内容变则指纹变', () => {
+  const def = {frames: 30, shots: [{type: 'title', at: 1, title: 'x'}]};
+  const f = compFingerprint('badge', def);
+  assert.equal(compFingerprint('badge', def), f);
+  assert.notEqual(compFingerprint('other', def), f, '名字变 → 指纹变');
+  assert.notEqual(compFingerprint('badge', {...def, frames: 40}), f, '内容变 → 指纹变');
+});
+
+test('collectShotDeps：只收与段重叠的镜头 —— 这是「改一个镜头只失效几段」的关键', () => {
+  const scene = {
+    comps: {},
+    shots: [
+      {type: 'title', at: 1, title: 'A'},       // 1–99
+      {type: 'bullets', at: 100, items: []},    // 100–199
+      {type: 'stat', at: 200, value: 1, label: 'C'}, // 200–300
+    ],
+  };
+  const early = collectShotDeps(scene, {from: 1, to: 50});
+  const mid = collectShotDeps(scene, {from: 100, to: 150});
+  const late = collectShotDeps(scene, {from: 250, to: 300});
+  assert.equal(early.length, 1, '早段只应覆盖第 1 个镜头');
+  assert.equal(mid.length, 1, '中段只应覆盖第 2 个镜头');
+  assert.equal(late.length, 1, '晚段只应覆盖第 3 个镜头');
+  // 三段互不相同
+  assert.notEqual(early[0], mid[0]);
+  assert.notEqual(mid[0], late[0]);
+  // 跨段会同时覆盖多个镜头
+  const span = collectShotDeps(scene, {from: 90, to: 110});
+  assert.equal(span.length, 2, '跨段应覆盖两个镜头');
+});
+
+test('collectShotDeps：comp 镜头会把它引用的 comp（含嵌套引用）一并收进来', () => {
+  const scene = {
+    comps: {
+      inner: {shots: [{type: 'stat', at: 1, value: 1, label: 'x'}]},
+      outer: {shots: [{type: 'comp', at: 1, comp: 'inner'}]},
+    },
+    shots: [{type: 'comp', at: 1, comp: 'outer', loop: true}],
+  };
+  const deps = collectShotDeps(scene, {from: 1, to: 100});
+  assert.equal(deps.length, 3, '应含镜头本身 + outer + inner（嵌套引用）');
+  // 改 inner 会让这个段的依赖哈希变化
+  const before = mergeDeps(deps);
+  const after = mergeDeps(collectShotDeps({
+    ...scene,
+    comps: {...scene.comps, inner: {shots: [{type: 'stat', at: 1, value: 2, label: 'y'}]}},
+  }, {from: 1, to: 100}));
+  assert.notEqual(before, after, '改嵌套子合成 → 段依赖必须变');
+});
+
+test('collectShotDeps 保守性：at 不是数字（解析不出来）时不漏，宁可整段全收', () => {
+  const scene = {shots: [{type: 'title', at: 'S01', title: 'A'}]};
+  const deps = collectShotDeps(scene, {from: 500, to: 600});
+  assert.equal(deps.length, 0, 'At 非数字时不误报（由调用方决定保守策略）');
+  // 手写镜头项目没有 scene → 返回空，调用方走「整个文件算全局」
+  assert.deepEqual(collectShotDeps(null, {from: 1, to: 100}), []);
+});
+
+test('mergeDeps：顺序无关（镜头依赖的顺序不该影响键）', () => {
+  assert.equal(mergeDeps(['a', 'b', 'c']), mergeDeps(['c', 'a', 'b']), '排序后拼接，顺序无关');
+  assert.notEqual(mergeDeps(['a', 'b']), mergeDeps(['a', 'c']));
+  assert.equal(mergeDeps([]), 'none', '空依赖有确定的表示');
+  assert.equal(mergeDeps([undefined, 'a'].filter(Boolean)), mergeDeps(['a']));
 });
 
 test('planSegments：切成不重叠、首尾相接的段，覆盖整个区间', () => {
@@ -115,7 +192,7 @@ test('engineFingerprint：源码内容变则指纹变（升引擎要重渲）', 
   assert.equal(engineFingerprint(root), f2, 'host/ 改动不影响画面指纹（只有 runtime/contract 参与绘制）');
 });
 
-test('projectFingerprint：配置/场景/时间轴/镜头/字体/素材任一变化都要变', () => {
+test('globalFingerprint：全局输入（配置/时间轴/字体/素材/clips）任一变化都要变', () => {
   const dir = mkdtempSync(join(tmpdir(), 'fw-proj-'));
   const paths = {
     config: join(dir, 'film.config.mjs'),
@@ -135,22 +212,30 @@ test('projectFingerprint：配置/场景/时间轴/镜头/字体/素材任一变
   writeFileSync(join(dir, 'public', 'assets', 'a.png'), 'PNG1');
 
   const proj = {paths, raw: {}};
-  const base = projectFingerprint(proj, dir);
+  const base = globalFingerprint(proj, dir);
   assert.match(base, /^[0-9a-f]{12}$/);
-  assert.equal(projectFingerprint(proj, dir), base, '同样内容 → 同指纹');
+  assert.equal(globalFingerprint(proj, dir), base, '同样内容 → 同指纹');
 
   const mutations = [
     ['config', () => writeFileSync(paths.config, 'export default {a:1};\n')],
-    ['scene', () => writeFileSync(paths.scene, '{"shots":[1]}\n')],
     ['timeline', () => writeFileSync(paths.timeline, '{"fps":25}\n')],
-    ['shots', () => writeFileSync(paths.shots, 'export const SHOTS = [1];\n')],
     ['font', () => writeFileSync(join(dir, 'public', 'fonts', 'F.ttf'), 'FONT2')],
     ['asset', () => writeFileSync(join(dir, 'public', 'assets', 'a.png'), 'PNG2')],
+    ['clips 声明', () => { proj.raw = {clips: [{name: 'x', src: 'a.mp4', fps: 30}]}; }],
   ];
   for (const [name, mutate] of mutations) {
-    const before = projectFingerprint(proj, dir);
+    const before = globalFingerprint(proj, dir);
     mutate();
-    assert.notEqual(projectFingerprint(proj, dir), before, `${name} 变化后指纹必须变`);
+    assert.notEqual(globalFingerprint(proj, dir), before, `${name} 变化后指纹必须变`);
   }
+
+  // **有意的不对称**：scene.json 与 shots/index.js 不算全局 ——
+  // 它们由按段归因处理（scene 能按镜头归因；手写镜头整个文件算全局，在命令层加）。
+  // 如果它们进了全局指纹，改一个镜头会让所有段失效，增量重渲就白做了。
+  const beforeScene = globalFingerprint(proj, dir);
+  writeFileSync(paths.scene, '{"shots":[{"type":"title","at":1,"title":"x"}]}\n');
+  assert.equal(globalFingerprint(proj, dir), beforeScene, 'scene.json 不该进全局指纹（要按段归因）');
+  writeFileSync(paths.shots, 'export const SHOTS = [1];\n');
+  assert.equal(globalFingerprint(proj, dir), beforeScene, 'shots/index.js 不该进全局指纹（命令层单独处理）');
   void base; void existsSync;
 });
