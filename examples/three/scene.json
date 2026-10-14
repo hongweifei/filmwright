@@ -1,0 +1,29 @@
+{
+  "$schema": "filmwright/scene-v0",
+  "shots": [
+    {
+      "type": "three", "at": 1,
+      "camera": {"z": 4.6, "fov": 50},
+      "lights": [
+        {"type": "ambient", "intensity": 0.55},
+        {"type": "directional", "intensity": 2.2, "position": [4, 3, 5],
+         "animate": {"x": [{"frame": 1, "v": -4}, {"frame": 90, "v": 4, "ease": "inout3"}]}},
+        {"type": "point", "color": "#F5B942", "position": [0, -1.6, 2.4],
+         "animate": {"intensity": [{"frame": 1, "v": 0.4}, {"frame": 45, "v": 2.4}, {"frame": 90, "v": 0.4}]}}
+      ],
+      "objects": [
+        {"shape": "torus", "size": 2.4, "color": "accent",
+         "animate": {"ry": [{"frame": 1, "v": -35}, {"frame": 90, "v": 55}],
+                     "rx": [{"frame": 1, "v": 26}, {"frame": 90, "v": -6}]}},
+        {"shape": "icosahedron", "size": 0.9, "color": "#35D07F", "wireframe": true,
+         "position": {"x": 1.7, "y": 0.7, "z": 0.4},
+         "animate": {"ry": [{"frame": 1, "v": 0}, {"frame": 90, "v": -260}]}},
+        {"shape": "box", "size": 0.6, "color": "#F5B942",
+         "position": {"x": -1.7, "y": -0.7, "z": 0.5},
+         "animate": {"rz": [{"frame": 1, "v": 0}, {"frame": 90, "v": 200}]}}
+      ],
+      "effects": [{"type": "glow", "intensity": 0.35, "threshold": 0.6},
+                  {"type": "vignette", "amount": 0.3}]
+    }
+  ]
+}
