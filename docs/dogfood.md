@@ -13,7 +13,7 @@ make-timeline-fixture.mjs → 合成时间轴（edge-tts 端点不可达时；�
 filmwright schema         → 拿全部镜头类型与容量上限
 写 scene.json             → 11 个镜头，用到 16 种类型（当时是全部）
 tools/dogfood-review.mjs  → 走 MCP filmwright_review：校验 + 静态自检 + 代表帧回图
-filmwright check          → 九道全过（2141 帧）
+filmwright check          → 十道全过（2141 帧）
 ```
 
 `tools/dogfood-review.mjs` 把 MCP 的 `filmwright_review` 回图落盘，是这条回路的可复现版本。

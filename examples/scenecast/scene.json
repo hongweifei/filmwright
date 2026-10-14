@@ -61,7 +61,7 @@
       "type": "bullets", "at": "S07",
       "items": [
         {"t": "filmwright tts", "d": "解说词 → 时间轴"},
-        {"t": "filmwright check", "d": "九道自检"},
+        {"t": "filmwright check", "d": "十道自检"},
         {"t": "filmwright all", "d": "一条龙出片"}
       ]
     }

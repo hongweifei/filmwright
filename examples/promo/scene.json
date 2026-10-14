@@ -41,7 +41,7 @@
      "items": ["title", "bullets", "stat", "flow", "code", "image",
                "compare", "steps", "table", "quote", "terminal", "chips"]},
 
-    {"type": "table", "at": "S07", "heading": "九道自检 + 像素回归",
+    {"type": "table", "at": "S07", "heading": "十道自检 + 像素回归",
      "columns": ["检查", "抓什么"],
      "rows": [
        ["scene", "规格不合法、超容量、对齐错"],

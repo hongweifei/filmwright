@@ -1,5 +1,5 @@
 // gallery：13 类模板镜头各一镜，全部由 scene.json 驱动（项目里没有 shots/）。
-// 它同时是模板的目视验收件：filmwright check 过九道，stills 逐类看图。
+// 它同时是模板的目视验收件：filmwright check 过十道，stills 逐类看图。
 export default {
   slug: 'gallery',
   size: {width: 1280, height: 720},

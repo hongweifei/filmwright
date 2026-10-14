@@ -13,6 +13,7 @@
 // 所以数字不写死：这个工具从**实现里读事实**，再扫文档里的说法。
 // 数字变了而文档没跟上，CI 就会红。
 import {readFileSync, readdirSync, writeFileSync, existsSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {join, relative, resolve} from 'node:path';
 
 // resolve() 保证 ROOT 是绝对路径（与其它验收工具一致；相对路径在这里能工作，
@@ -65,18 +66,33 @@ const CN = {七: 7, 八: 8, 九: 9, 十: 10, 十一: 11, 十二: 12};
 const cnNum = (n) => Object.entries(CN).find(([, v]) => v === n)?.[0] ?? String(n);
 
 // ---------- 扫文档 ----------
+// ⚠️ 只扫**入库的**文档（用 git ls-files）。原来扫磁盘上的所有 .md，
+// 于是本机未入库的草稿（如 `docs/design/`）也被算进来 ——
+// 那会让检查结果**依赖本机状态**（CI 干净检出里没有那些文件，数字就对不上），
+// 也会让「否定式断言清单」的条数在两处不一致。
+// 取不到 git 时回退到扫磁盘（宁可多扫，也不能不扫）。
 const DOC_FILES = [];
-const walk = (dir) => {
-  for (const e of readdirSync(dir, {withFileTypes: true})) {
-    if (e.isDirectory()) {
-      if (['node_modules', '.git', '.work', 'renders', '__pycache__', 'examples'].includes(e.name)) continue;
-      walk(join(dir, e.name));
-      continue;
+const tracked = (() => {
+  try {
+    const out = execFileSync('git', ['ls-files', '*.md'], {cwd: ROOT, encoding: 'utf8'});
+    return out.split('\n').map((s) => s.trim()).filter(Boolean).map((p) => join(ROOT, p));
+  } catch { return null; }
+})();
+if (tracked) {
+  DOC_FILES.push(...tracked);
+} else {
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, {withFileTypes: true})) {
+      if (e.isDirectory()) {
+        if (['node_modules', '.git', '.work', 'renders', '__pycache__', 'examples'].includes(e.name)) continue;
+        walk(join(dir, e.name));
+        continue;
+      }
+      if (e.name.endsWith('.md')) DOC_FILES.push(join(dir, e.name));
     }
-    if (e.name.endsWith('.md')) DOC_FILES.push(join(dir, e.name));
-  }
-};
-walk(ROOT);
+  };
+  walk(ROOT);
+}
 
 /**
  * 修正规则：每条给出「怎么从错误写法改成正确写法」。
@@ -261,9 +277,7 @@ if (!problems.length) console.log('\n✓ 文档数字与事实性说法都与实
 // 用法：`--list-negative` 打印全部；默认只报数量。
 const byDoc = Object.entries(negByDoc).sort((a, b) => b[1] - a[1]);
 console.log(`\n否定式断言（不支持/没有/还没/不做…）：${negLines.length} 条，分布在 ${byDoc.length} 个文件`);
-// 说明一句：扫描范围是**磁盘上的** docs/，所以本地若有未入库的设计草稿也会被算进来
-// （本机 docs/design/ 就有 4 份草稿、约占 85 条）。CI 是干净检出，数字会更小。
-console.log('   （数字含磁盘上所有 docs/*.md，包括未入库的本地草稿；CI 干净检出会更少）');
+console.log('   （只扫**入库的** .md —— 未入库的本地草稿不算，所以本机与 CI 的数字一致）');
 if (process.argv.includes('--list-negative')) {
   for (const n of negLines) console.log(`   ${n.doc}:${n.line}  ${n.text.slice(0, 90)}`);
 } else {

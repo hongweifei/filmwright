@@ -60,7 +60,7 @@
      ]},
 
     {"type": "chips", "at": "S09", "heading": "chips · 关键词",
-     "items": ["逐帧纯函数", "分片并行", "无头 Chrome", "sRGB 钉死", "九道自检", "像素回归", "MCP", "scene.json"]},
+     "items": ["逐帧纯函数", "分片并行", "无头 Chrome", "sRGB 钉死", "十道自检", "像素回归", "MCP", "scene.json"]},
 
     {"type": "bars", "at": "S10", "heading": "bars · 条形图（每帧耗时）", "unit": "ms",
      "items": [

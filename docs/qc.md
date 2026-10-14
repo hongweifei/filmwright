@@ -10,7 +10,7 @@
 
 ## 十道自检
 
-`filmwright check --project <项目目录>` 依次跑九道，前八道不启浏览器：
+`filmwright check --project <项目目录>` 依次跑十道，前八道不启浏览器：
 
 | 检查 | 抓的问题 | 要浏览器吗 |
 |---|---|---|

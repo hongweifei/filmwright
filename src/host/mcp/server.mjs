@@ -131,7 +131,7 @@ export function buildServer() {
   }, async ({project}) => run('tts', project));
 
   server.registerTool('filmwright_check', {
-    title: '九道自检',
+    title: '十道自检',
     description: 'static_only=true 时七道不启浏览器（秒级）；完整自检含逐帧绘制与画质。errors 带 code/where。',
     inputSchema: {project: projectArg, static_only: z.boolean().optional()},
   }, async ({project, static_only}) =>
