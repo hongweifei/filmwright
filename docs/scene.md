@@ -355,6 +355,32 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 
 一份项目可以同时有 `scene.json` 和 `shots/index.js`：两边的镜头合并后按 `start` 串接，起始帧撞车会被镜头覆盖自检直接报出来。典型用法——主体走规格，个别需要复杂动画的镜头手写。
 
+### 手写镜头与声明式**同能力**
+
+声明式镜头能声明的通用字段，手写镜头**都能用**（用 `start` 代替 `at`）：
+
+```js
+import {view, theme as C, text, applyDesignScale} from 'filmwright';
+export const SHOTS = [
+  {start: 1,
+   beats: [20, 50],                                  // 声明节拍 ⇒ beat 锚点才可用
+   transform: {x: 12, alpha: 0.95},
+   animate: {y: [{beat: 1, v: 0}, {beat: 2, v: 20}]},
+   effects: [{type: 'glow', intensity: 0.5}],        // 效果链同样能用（含关键帧参数）
+   transition: {type: 'fade', frames: 10},
+   draw(ctx, n) { /* 任意 Canvas 2D 绘制 */ }},
+];
+```
+
+**校验也是同一套**（`tools/verify-imperative.mjs` 钉住这条）。这一点值得强调，因为手写镜头不走 `scene.json` 的校验路径，规则容易悄悄缺掉——实测抓到过两个难查的失败：
+
+- **不认识的效果名**（`{type: 'sparkle'}`）→ 曾经**静默失效**：不报错，画面与不写效果一模一样；
+- **越界参数**（`blur radius=999`）→ 曾经不报错**而且真的生效**，绕过了契约上限，渲染出带振铃的画面。
+
+两条现在都会**当场报错**，并带结构化错误码与出路提示。
+
+⚠️ **一个已知限制**：这些校验跑在**浏览器 boot** 时，所以 `check --static-only`（Node 侧、不开浏览器）**抓不到**，要跑到渲染或预览才报。这与「自检越早越好」的方向相反，是有意如实记下的现状。
+
 ## 质量下限从哪来
 
 模板把示例片验证过的节奏纪律内建了：入场用 `inv + easeOut3`、落位后保持呼吸/脉冲（幅度按画质自检的静止阈值口径给足）、配色只取章节 `accent`、坐标一律设计基准。也就是说 **AI 写规格写不出「静止 3 秒」和「挤在左边」**——这些下限由引擎兜住，剩下的内容对错交给十道自检与联络表。

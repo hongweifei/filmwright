@@ -207,7 +207,13 @@ async function load() {
   return info;
 }
 
-load().catch((e) => showError('装载失败：\n' + ((e && e.stack) || e)));
+load().catch((e) => {
+  // 带上结构化错误码与出路：预览页是主要的调试界面，只给一段 stack 会让人
+  // （和 agent）少掉可分支的那部分信息。
+  const tag = e && e.code ? `[${e.code}] ` : '';
+  const hint = e && e.hint ? `\n提示：${e.hint}` : '';
+  showError('装载失败：' + tag + '\n' + ((e && e.stack) || e) + hint);
+});
 
 // ---------- 播放 ----------
 function stop() { playing = false; $('play').textContent = '▶ 播放'; }

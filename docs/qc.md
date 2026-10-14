@@ -105,7 +105,8 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |
 | `verify-longform.mjs` | 在 10 分钟量级上量单实例退化、分片加速比、增量段缓存规模、全分辨率吞吐 |
 | `verify-attribution.mjs` | 验增量重渲按段归因：改一个镜头只重渲覆盖它的段，改全局输入则全失效 |
-| `verify-tts.mjs` | 验 TTS 契约：`voices` 的引擎可用性与回退结果、真跑产出三件套、`subs_timing` 标注、缓存命中、换引擎让缓存失效 |
+| `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |
+| `verify-imperative.mjs` | 验**手写镜头与声明式同能力**：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |

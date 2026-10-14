@@ -101,6 +101,11 @@ load()
   })
   .catch((e) => {
     window.__bootError = String((e && e.stack) || e);
+    // **结构化字段单独带出来**：`code` 是给 AI 的机器可读部分，`hint` 是可行动的出路。
+    // 只留 String(e) 的话，主机侧只能拿到 `code: "ERROR"` —— 模型就只能去解析中文散文，
+    // 而它本该能按码分支（实测过：手写镜头里写错效果名，报错码退化成 ERROR）。
+    window.__bootErrorCode = (e && e.code) || null;
+    window.__bootErrorHint = (e && e.hint) || null;
     console.error(window.__bootError);
   });
 </script>

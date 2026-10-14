@@ -1,7 +1,7 @@
 // 镜头注册与串接。只声明 start，区间由这里算 —— 手算 from/to 会让区间重叠。
 import {isValidTransform} from '../composite/layer.js';
 import {compileAnimate} from '../scene/animate.js';
-import {validateAnimate} from '../../contract/scene.js';
+import {validateAnimate, validateEffects} from '../../contract/scene.js';
 import {compileEffects} from '../fx/compile.js';
 import {EFFECT_SPECS} from '../../contract/effects.js';
 
@@ -86,12 +86,30 @@ export function setShots(list) {
       }
     }
     // 关键帧动画：形状校验与 scene.json 走**同一套规则**（手写镜头不走 scene 校验，
-    // 所以在这里补上）。拍数相关的两条要到绑定期才知道，见 compileShotAnimate。
+    // 所以在这里补上）。拍数相关的两条要到绑定期才知道，见 compileNodeTracks。
     if (s.animate !== undefined) {
       const errs = validateAnimate(s.animate, s.transform);
       if (errs.length) {
         const first = errs[0];
         const e = new Error(`filmwright: 镜头 animate 形状不对（start=${s.start}）：${first.message}`);
+        e.code = first.code;
+        e.hint = first.hint;
+        throw e;
+      }
+    }
+    // 效果链：同样与 scene.json 走**同一套规则**。
+    //
+    // 为什么这条是必须的（实测过两个难查的失败）：
+    //   · **不认识的效果名**会被 compileEffects 静默 `continue` —— 不报错、
+    //     画面与不写效果一模一样，写错了但什么都不说；
+    //   · **越界参数**（如 radius=999）会绕过契约上限真的生效 ——
+    //     而上限存在的意义正是防"抽头间距过大 → 稀疏采样 → 振铃"
+    //     （实测过"半径越大反而越锐"），绕过去就会渲染出带振铃的画面。
+    if (s.effects !== undefined) {
+      const errs = validateEffects(s.effects);
+      if (errs.length) {
+        const first = errs[0];
+        const e = new Error(`filmwright: 镜头 effects 形状不对（start=${s.start}）：${first.message}`);
         e.code = first.code;
         e.hint = first.hint;
         throw e;

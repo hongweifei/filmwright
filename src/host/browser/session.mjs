@@ -232,6 +232,9 @@ export async function openSession(url, size, opts = {}) {
 
   let info = null;
   let bootError = null;
+  // 页面侧的结构化字段（`code` / `hint`）要单独带回来 —— 见 index.html 里的说明。
+  let bootCode = null;
+  let bootHint = null;
   let ready = false;
   // 就绪预算：默认 120s。为什么这么长 —— 分片渲染时多个浏览器**同时冷启**，
   // 在内存吃紧的机器上（实测 16 核但只剩 5GB）单个实例的 boot 可以慢到几十秒。
@@ -243,14 +246,14 @@ export async function openSession(url, size, opts = {}) {
   for (let i = 0; i < tries; i++) {
     const expr = opts.readyExpr
       ? `Boolean(${opts.readyExpr})`
-      : '({ready: window.__ready === true, info: window.__info || null, err: window.__bootError || null})';
+      : '({ready: window.__ready === true, info: window.__info || null, err: window.__bootError || null, errCode: window.__bootErrorCode || null, errHint: window.__bootErrorHint || null})';
     const r = await send('Runtime.evaluate', {expression: expr, returnByValue: true});
     const v = r.result?.result?.value;
     if (opts.readyExpr) {
       if (v === true) { ready = true; break; }
       lastSeen = String(v);
     } else {
-      if (v?.err) { bootError = v.err; break; }
+      if (v?.err) { bootError = v.err; bootCode = v.errCode ?? null; bootHint = v.errHint ?? null; break; }
       if (v?.ready) { ready = true; info = v.info; break; }
       lastSeen = v ? `ready=${v.ready}（页面已连上但 boot 未完成）` : '页面还没响应';
     }
@@ -261,7 +264,14 @@ export async function openSession(url, size, opts = {}) {
     try { ws.close(); } catch {}
     try { chrome.kill(); } catch {}
     try { rmSync(profile, {recursive: true, force: true}); } catch {}
-    if (bootError) throw new Error('filmwright: 渲染页启动失败\n' + bootError);
+    if (bootError) {
+      const e = new Error('filmwright: 渲染页启动失败\n' + bootError);
+      // 把页面侧的结构化字段接回错误对象 —— 否则 CLI 的 `--json` 只能报 code: "ERROR"，
+      // AI 拿不到可分支的码（那正是这个项目对 agent 的核心承诺之一）。
+      if (bootCode) e.code = bootCode;
+      if (bootHint) e.hint = bootHint;
+      throw e;
+    }
     // 如实说「等了多久 + 最后看到什么」，而不是猜一个原因。
     // 慢（机器忙/内存不足）与坏（字体路径错、import 错）的排查方向完全不同。
     throw new Error(`filmwright: 渲染页 ${secs}s 内没就绪（最后状态：${lastSeen ?? '未知'}）\n` +

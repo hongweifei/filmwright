@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import {validateEffects, validateScene} from '../src/contract/scene.js';
 import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX} from '../src/contract/effects.js';
 import {compileEffects, isNoopEffects, evalEffects} from '../src/runtime/fx/compile.js';
-import {bindShots} from '../src/runtime/stage/shots.js';
+import {bindShots, setShots} from '../src/runtime/stage/shots.js';
 
 const codes = (fx) => validateEffects(fx).map((e) => e.code);
 
@@ -304,4 +304,70 @@ test('效果参数是**静态数值**时不触发那两条（没有 beat 可查�
   // 没有节拍表也能用静态参数
   const shots = bindShots([{start: 1, draw() {}, effects: [{type: 'blur', radius: 5}]}], 60);
   assert.ok(shots[0].fx, '静态度也能正常编译');
+});
+
+// ─────────────────────── 命令式（手写镜头）与声明式同能力 ───────────────────────
+
+/** 手写镜头的一个最小合法形状（start 必须从 1 起）。 */
+const hand = (extra) => ({start: 1, draw() {}, ...extra});
+
+test('手写镜头的 effects **走与 scene.json 同一套校验**（不再静默失效）', () => {
+  // 这两条是实测出来的难查失败：不认识的效果名会被 compileEffects 静默跳过
+  // （画面与不写效果一模一样）；越界参数会绕过契约上限真的生效（渲染出振铃）。
+  try {
+    setShots([hand({effects: [{type: 'sparkle', radius: 0.5}]})]);
+    assert.fail('不认识的效果名应当报错');
+  } catch (e) {
+    assert.equal(e.code, 'SCENE_FX_TYPE');
+    assert.ok(/sparkle/.test(e.message), '消息要指出是哪个效果：' + e.message);
+    assert.ok(e.hint && e.hint.length > 0, '要带可用效果列表');
+  }
+  try {
+    setShots([hand({effects: [{type: 'blur', radius: 999}]})]);
+    assert.fail('越界参数应当报错');
+  } catch (e) {
+    assert.equal(e.code, 'SCENE_FX_RANGE');
+    assert.ok(/999/.test(e.message));
+  }
+});
+
+test('手写镜头的合法 effects 正常编译（命令式不是只能画图）', () => {
+  setShots([hand({effects: [{type: 'glow', intensity: 0.5}, {type: 'vignette', amount: 0.3}]})]);
+  const shots = bindShots([hand({effects: [{type: 'glow', intensity: 0.5}]})], 60);
+  assert.ok(shots[0].fx, 'effects 要被编译进镜头');
+  assert.equal(shots[0].fx.steps.length, 1);
+});
+
+test('手写镜头也能用**关键帧参数**的效果，且 beat 锚点同样受绑定期检查', () => {
+  // 有 beats ⇒ 可以按拍锚定
+  const withBeats = hand({beats: [10, 40], effects: [{type: 'blur', radius: [{beat: 1, v: 0}, {beat: 2, v: 12}]}]});
+  setShots([withBeats]);
+  const shots = bindShots([withBeats], 60);
+  assert.equal(shots[0].fx.steps[0].tracks.radius[1][0], 40, 'beat:2 → beats[1]');
+  // 没有 beats ⇒ 用 beat 锚点要报错（与 animate 同一条规则）
+  try {
+    setShots([hand({effects: [{type: 'blur', radius: [{beat: 1, v: 4}]}]})]);
+    bindShots([hand({effects: [{type: 'blur', radius: [{beat: 1, v: 4}]}]})], 60);
+    assert.fail('没有节拍表却用 beat 锚点，应当报错');
+  } catch (e) {
+    assert.equal(e.code, 'SCENE_ANIM_NO_BEATS');
+  }
+});
+
+test('命令式与声明式在**当前已实现的能力**上是对等的（这条是防回归的清单）', () => {
+  // 声明式镜头能声明的通用字段：transform / animate / transition / effects / beats / at
+  // 手写镜头对应的字段：start 代替 at，其余都该支持且走同一套校验。
+  // 这里逐个装上，确认都不抛错。
+  const s = hand({
+    beats: [20, 50],
+    transition: {type: 'fade', frames: 10},
+    transform: {x: 10, alpha: 0.9},
+    animate: {y: [{beat: 1, v: 0}, {beat: 2, v: 20}]},
+    effects: [{type: 'blur', radius: 8}],
+  });
+  setShots([s]);
+  const out = bindShots([s], 60);
+  assert.ok(out[0].anim, 'animate 编译');
+  assert.ok(out[0].fx, 'effects 编译');
+  assert.equal(out[0].start, 1);
 });
