@@ -52,11 +52,12 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | 命令 | 作用 |
 |---|---|
 | `new` | 新建项目骨架（scene / shots 两种模板） |
-| `schema` | 输出 scene 规格的机器可读 schema（13 类模板、字段、上限、错误码） |
+| `schema` | 输出 scene 规格的机器可读 schema（15 类模板、字段、上限、错误码） |
 | `mcp` | MCP 服务器（stdio），把工具链暴露给 agent |
 | `check` | 九道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
-| `tts` | 解说词 → 配音 + 时间轴 |
+| `tts` | 解说词 → 配音 + 时间轴（引擎可换、可回退） |
+| `voices` | 列出 TTS 引擎可用性与音色（做片子前先探路） |
 | `stills` | 出指定帧的静帧 |
 | `sheet` | 抽帧联络表（人工 QC 用） |
 | `render` | 逐帧渲染成无声视频 |
@@ -115,7 +116,25 @@ filmwright preview --project <项目目录> [--no-open] [--seconds N]
 
 热重载只盯三处：`shots/`、`film.config.mjs`、`script/timeline.json`——不盯整个项目目录，否则 `.work/` 里的渲染产物会自己触发自己。预览页与渲染页共用同一套运行时，**预览看到的和渲出来的是同一份代码**。
 
+## `voices`
+
+```bash
+filmwright voices --project <项目目录> [--json]
+```
+
+**做片子之前先探路**：实测各 TTS 引擎现在能不能用、列出可用音色、并说明最终会用哪一个（含回退结果）。
+
+为什么需要它：TTS 是联网服务、会整段不可用（实测 edge 合成 403，而 `list_voices` 端点正常——微软侧故障）。先问一句「现在能用什么」，比合成到一半才发现引擎挂了要好。输出里还会说明各引擎**有没有词边界**（决定字幕能否精确对齐）以及当前会不会降级到离线引擎。
+
 ## `tts`
+
+```bash
+filmwright tts --project <项目目录>
+```
+
+读 `script/narration.txt` 生成配音与时间轴。引擎由 `film.config.mjs` 的 `tts.engine` 定，**支持回退链**（`'auto'` = edge → sapi → command）；逐句缓存，改一句只重合成一句。失败时按原因给出路：服务不可用会明确说「换引擎或等」，并提示离线后备怎么开。
+
+详见 [配置参考的 tts 段](config.md#tts解说词--配音)。
 
 ```bash
 filmwright tts --project <项目目录>

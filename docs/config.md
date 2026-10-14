@@ -102,22 +102,78 @@ assets: [{name: '架构图', src: 'assets/arch.png'}],                 // 显式
 
 ## `tts`：解说词 → 配音
 
+```js
+tts: {
+  engine: 'auto',                 // 见下面「引擎与回退」
+  voice: 'zh-CN-YunxiNeural',     // 发音人（各引擎名字不同，用 filmwright voices 查）
+  rate: '+0%',                    // 语速
+}
+```
+
+### 引擎与回退
+
+**配音曾经是单点故障**：只有 edge-tts 一条路，而它是联网服务、会整段不可用（实测撞上 403 `WSServerHandshakeError`，同时 `voices` 端点却正常——微软侧故障，不是本机问题）。现在引擎可换、可回退：
+
+| `engine` 写法 | 行为 |
+|---|---|
+| `'auto'` | 依次尝试 `edge` → `sapi` → `command`，**用第一个可用的**（推荐） |
+| `'edge'` | 只用 edge（要确定性、宁可失败也不降级时用） |
+| `'sapi'` | 只用 Windows 自带语音（**完全离线**） |
+| `['edge','sapi']` | 明确指定回退顺序 |
+| `'command'` | 接你自己的 TTS（见下） |
+
+| 引擎 | 平台 | 音质 | 词边界 | 说明 |
+|---|---|---|---|---|
+| `edge` | 全平台 | 神经音色，最好 | **有** | 需要联网；服务会不可用 |
+| `sapi` | Windows | 桌面合成，一般 | 无 | 系统自带，**完全离线**，兜底用 |
+| `command` | 全平台 | 取决于你的命令 | 无 | 逃生舱：piper / 自训模型 / 内部服务都能接 |
+
+**词边界意味着什么**：edge 会给每个词的起始时间，所以字幕块的切换点能**精确**对齐到词；`sapi` 与 `command` 没有，只能按字数比例估算（标点折算成停顿，比纯字符数准）。时间轴里会如实标注 `subs_timing: "word" | "estimated"` —— 你据此知道字幕能不能卡得很准，不用猜。
+
+`command` 引擎的写法（模板里用 `{out}` 与 `{text_file}` 占位）：
+
+```js
+tts: {
+  engine: 'command',
+  command: 'piper --model zh_CN.onnx --output_file {out} < {text_file}',
+  format: 'wav',        // 可省略，默认按扩展名判断
+}
+```
+
+### 先探路：`filmwright voices`
+
+做片子**之前**先跑一次，它会实测各引擎能否用、列出音色、并说明最终会用哪个：
+
+```bash
+filmwright voices --project <项目目录>          # 人读
+filmwright voices --project <项目目录> --json   # 机器读
+```
+
+### 其余键
+
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `engine` | `'edge'` | 目前只有 edge-tts |
-| `voice` | `zh-CN-YunxiNeural` | 发音人 |
-| `rate` | `'+0%'` | 语速 |
 | `gap` | `10` | 句与句之间的空白帧 |
 | `paraGap` | `20` | 段末（空行）后多留的空白帧 |
 | `chapterGap` | `45` | 章前空白帧 |
 | `lead` | `40` | 开头留白帧 |
 | `tail` | `90` | 结尾留白帧 |
-| `tries` | `8` | 单句合成重试次数（edge-tts 会限流） |
+| `tries` | `8` | 单句合成重试次数（联网引擎会限流） |
 | `pace` | `0.6` | 限速节奏（秒） |
+| `loudnorm` | `'on'` | 逐句峰值归一（`off` 关掉；见下） |
 
-全部键都可以用环境变量覆盖：`TTS_ENGINE` / `VOICE` / `RATE` / `GAP` / `PARA_GAP` / `CHAPTER_GAP` / `LEAD` / `TAIL` / `EDGE_TRIES` / `EDGE_PACE`。
+全部键都可以用环境变量覆盖：`TTS_ENGINE` / `VOICE` / `RATE` / `GAP` / `PARA_GAP` / `CHAPTER_GAP` / `LEAD` / `TAIL` / `EDGE_TRIES` / `EDGE_PACE` / `TTS_COMMAND` / `TTS_LOUDNORM`。
 
-输出三件套：`public/assets/<slug>/audio.wav`、`script/timeline.json`（渲染与自检读它）、`script/timeline.md`（人读的表）。逐句缓存于 `audio/cache/`，改一句只重合成那一句。
+### 音量归一
+
+**不同引擎、不同音色的输出电平差很多**（实测 SAPI 的 mean −27dB / max −9dB，edge 神经音色普遍更响）。所以逐句做**峰值归一**，末尾再做一次全片归一：
+
+- 逐句峰值归一（不改变句内动态，听感自然）——抹平引擎间与句间的电平差；
+- 全片归一 + 限幅——多句叠加可能超满量程，**削波是不可逆失真**，宁可整体降一点。
+
+不用单句 LUFS 归一：句子很短时积分窗口比句子还长，反而不准。
+
+输出三件套：`public/assets/<slug>/audio.wav`（48k 双声道）、`script/timeline.json`（渲染与自检读它）、`script/timeline.md`（人读的表）。逐句缓存于 `audio/cache/`，**缓存键含引擎名**——换引擎会自动重新合成，不会拿旧引擎的音频。
 
 ## `clips`（视频 / 图片序列素材）
 

@@ -21,3 +21,7 @@ examples/*/public/assets/*/audio.wav
 # 几 KB，别人 clone 下来要靠它才能跑 tools/regression.mjs verify。
 
 *.log
+
+# Python 字节码缓存（tts 引擎层会生成）
+__pycache__/
+*.pyc

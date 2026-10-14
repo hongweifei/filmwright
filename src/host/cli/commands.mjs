@@ -251,6 +251,47 @@ export function tts(ctx) {
   };
 }
 
+/**
+ * 列出可用音色，并**实测各引擎是否可用**（`filmwright voices`）。
+ *
+ * 为什么需要这条命令：TTS 是联网服务，会整段不可用（实测 edge 合成 403
+ * 而 list_voices 正常）。做片子前先跑一下，就能知道该用哪个引擎、
+ * 有哪些音色可选 —— 而不是合成到一半才发现引擎挂了。
+ */
+export async function voices(ctx) {
+  const say = makeSay(ctx.args);
+  const script = join(RUNTIME_ROOT, 'host', 'tts', 'list_voices.py');
+  const r = spawnSync('python', [script, '--project', ctx.projectDir, ...(isJson(ctx.args) ? ['--json'] : [])], {
+    encoding: 'utf8',
+    env: {...process.env, PYTHONIOENCODING: 'utf-8'},
+  });
+  if (r.error) {
+    const e = new Error('filmwright: 起不了 python —— ' + r.error.message);
+    e.code = 'NO_PYTHON';
+    e.hint = '装 Python 3 并让 python 在 PATH 里';
+    throw e;
+  }
+  const out = String(r.stdout || '');
+  const errOut = String(r.stderr || '').trim();
+  if (isJson(ctx.args)) {
+    // --json：把子进程的 JSON 原样透出（保持「stdout 恰好一个 JSON」的契约）
+    const line = out.trim().split('\n').filter((l) => l.trim().startsWith('{')).pop();
+    if (!line) {
+      const e = new Error('filmwright: voices 没有产出 JSON' + (errOut ? '：\n' + errOut : ''));
+      e.code = 'VOICES_FAILED';
+      throw e;
+    }
+    return {code: 0, data: JSON.parse(line)};
+  }
+  if (r.status !== 0) {
+    const e = new Error(errOut || out.trim() || 'filmwright: voices 失败');
+    e.code = 'VOICES_FAILED';
+    throw e;
+  }
+  say(out.trimEnd());
+  return {code: 0, data: {}};
+}
+
 /** 出静帧。 */
 export async function stills(ctx) {
   const say = makeSay(ctx.args);

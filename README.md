@@ -51,11 +51,14 @@
 git clone https://github.com/hongweifei/filmwright filmwright && cd filmwright
 pip install edge-tts numpy          # 要配音时
 
+node bin/filmwright.mjs voices --project examples/minimal  # 先看有哪些 TTS 可用
 node bin/filmwright.mjs tts    --project examples/minimal   # 解说词 -> 配音 + 时间轴
-node bin/filmwright.mjs check  --project examples/minimal   # 九道自检
+node bin/filmwright.mjs check  --project examples/minimal   # 八道自检
 node bin/filmwright.mjs all    --project examples/minimal --shards 3
 # -> examples/minimal/renders/minimal.mp4
 ```
+
+**配音不会因为一个服务挂了就做不了**：`tts.engine` 支持回退链（`'auto'` = edge → sapi → command）。edge 音质最好但会整段不可用（实测 403），这时自动降级到 Windows 自带的离线引擎——代价是音质一般、字幕切换点按字数估算（时间轴会如实标 `subs_timing`）。也可以用 `tts.engine: 'command'` 接自己的 TTS。
 
 改镜头时的主力回路是预览页（拖动 / 播放 / 改文件热重载）：
 

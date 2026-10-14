@@ -24,12 +24,19 @@ TTS 引擎由 film.config.mjs 的 tts 段给（engine/voice/rate），也可用�
 不设超时会一直挂着。所以这里限速 + 超时 + 退避重试 —— 这是 NoAudioReceived 的正确解法，
 不是文案问题。
 """
-import asyncio, hashlib, json, os, re, subprocess, sys
+import asyncio, hashlib, json, os, re, subprocess, sys, time
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import engines
 
 FPS = 30
 SR = 48000
 SHORT_TAIL = 45
+# 响度归一目标（EBU R128）。人声口播的常见目标是 -16 LUFS 左右；
+# 这里只做「峰值归一 + 轻度限幅」，因为 loudnorm 是单遍近似，
+# 对逐句合成后拼接的长音频更稳（两遍模式要预扫全片，成本高收益小）。
+TARGET_PEAK = 0.89
 
 
 def load_project(project_dir):
@@ -92,104 +99,117 @@ def parse(path):
     return items, para_break
 
 
-def _tts_failure_hint(tries, why, text):
-    """把 TTS 失败说成人能照做的事。
+def _engine_failure_hint(e):
+    """把引擎失败翻译成「你能做什么」。按 kind 分，因为出路完全不同。
 
-    分两类，因为出路完全不同（实测踩过）：
-      - 403 / 服务不可用：微软侧的服务故障或区域不可用，**不是本机的问题**
-        （时钟、版本、令牌都验过正常：voices 端点直接返回
-        "Our services aren't available right now"）。重试没用，要换引擎或等。
-      - 其余（限流 / 超时 / 空音频）：等一会儿再跑，或放慢 pace。
+    为什么要有这一层：原先 edge 403 时只抛一句
+    `WSServerHandshakeError: 403`，使用者既不知道这是微软侧故障、
+    也不知道框架本身有离线后备可以开。错误信息要给出路，不只是给原因。
     """
-    unavailable = ('403' in why) or ('WSServerHandshake' in why) or ('Handshake' in why)
-    head = 'filmwright: edge-tts 试了 %d 次仍拿不到音频（%s）：%s' % (tries, why, text[:30])
-    if unavailable:
+    kind = getattr(e, 'kind', 'engine')
+    msg = str(e)
+    if kind == 'unavailable':
         return (
-            head + '\n'
-            '  这是 **微软侧 TTS 服务不可用**（403 / 服务故障），不是本机配置问题：\n'
-            '    · 已核对：edge-tts 7.2.8（最新）、系统时钟与服务器同步、网络可达\n'
-            '    · voices 端点直接返回 "Our services aren\'t available right now"\n'
+            'filmwright: %s\n'
+            '  这是**服务不可用**（403 / 握手失败），多为微软侧故障或区域不可用，'
+            '不是本机配置问题。\n'
+            '  已核对：edge-tts 版本、系统时钟、网络均正常，而 voices 端点可用、合成一律 403。\n'
             '  出路（按推荐顺序）：\n'
-            '    1) 过一段时间再试（服务恢复即好，脚本不用改）\n'
-            '    2) 自己按同样格式产出 script/timeline.json —— 时间轴是数据契约，\n'
-            '       任何 TTS 都能接入，格式见 LIMITATIONS.md 第 5 节\n'
-            '    3) 先用手写时间轴继续做画面：本仓库 tools/make-timeline-fixture.mjs\n'
-            '       能按 narration.txt 合成一份（仅供开发验收，不是配音）')
-    return (head + '\n'
-            '  多为端点限流：等一会儿再跑，或用 GAP / EDGE_PACE 放慢（见 docs/config.md 的 tts 段）')
+            '    1) 让引擎自动回退到离线引擎（推荐）：\n'
+            '         film.config.mjs 里写 tts: {engine: "auto"}\n'
+            '       或用 ["edge","sapi"] 明确回退顺序；Windows 自带 SAPI，完全离线\n'
+            '    2) 过一段时间再试（服务恢复即好，配置不用改）\n'
+            '    3) 接自己的 TTS：tts: {engine: "command", command: "你的命令 {out} {text_file}"}\n'
+            '    4) 自己按同样格式产出 script/timeline.json（时间轴是数据契约，见 LIMITATIONS.md）\n'
+            '  查可用音色：filmwright voices --project <目录>' % msg)
+    if kind == 'throttled':
+        return ('filmwright: %s\n'
+                '  多为端点限流：等一会儿再跑，或用 tts.pace 放慢（见 docs/config.md 的 tts 段）' % msg)
+    if kind == 'config':
+        return 'filmwright: %s\n  检查 film.config.mjs 的 tts 段（见 docs/config.md）' % msg
+    return 'filmwright: %s' % msg
 
 
 class Tts:
+    """把「合成一句话」委托给引擎层（engines.py），自己只管时间轴与缓存。
+
+    引擎可换、可回退：edge（音质最好但会 403）→ sapi（Windows 离线兜底）→ command（逃生舱）。
+    实测：edge 合成 403 而 list_voices 正常 —— 所以「可用性」必须真探一次合成，
+    不能只看包装了没（否则回退链永远不生效）。
+    """
+
     def __init__(self, root, cfg):
         self.root = root
         self.slug = cfg['slug']
-        self.engine = os.environ.get('TTS_ENGINE') or cfg['tts'].get('engine', 'edge')
-        self.voice = os.environ.get('VOICE') or cfg['tts'].get('voice', 'zh-CN-YunxiNeural')
-        self.rate = os.environ.get('RATE') or cfg['tts'].get('rate', '+0%')
         self.fps = cfg.get('fps', FPS)
-        self.gap = int(os.environ.get('GAP', cfg['tts'].get('gap', 10)))
-        self.para_gap = int(os.environ.get('PARA_GAP', cfg['tts'].get('paraGap', 20)))
-        self.chapter_gap = int(os.environ.get('CHAPTER_GAP', cfg['tts'].get('chapterGap', 45)))
-        self.lead = int(os.environ.get('LEAD', cfg['tts'].get('lead', 40)))
-        self.tail = int(os.environ.get('TAIL', cfg['tts'].get('tail', 90)))
-        self.tries = int(os.environ.get('EDGE_TRIES', cfg['tts'].get('tries', 8)))
-        self.pace = float(os.environ.get('EDGE_PACE', cfg['tts'].get('pace', 0.6)))
+        tts_cfg = dict(cfg.get('tts') or {})
+        # 环境变量覆盖（保留原有用法）
+        for env, key in (('TTS_ENGINE', 'engine'), ('VOICE', 'voice'), ('RATE', 'rate'),
+                         ('EDGE_TRIES', 'tries'), ('EDGE_PACE', 'pace'),
+                         ('TTS_COMMAND', 'command')):
+            if os.environ.get(env):
+                tts_cfg[key] = os.environ[env]
+        self.cfg = tts_cfg
+        self.gap = int(os.environ.get('GAP', tts_cfg.get('gap', 10)))
+        self.para_gap = int(os.environ.get('PARA_GAP', tts_cfg.get('paraGap', 20)))
+        self.chapter_gap = int(os.environ.get('CHAPTER_GAP', tts_cfg.get('chapterGap', 45)))
+        self.lead = int(os.environ.get('LEAD', tts_cfg.get('lead', 40)))
+        self.tail = int(os.environ.get('TAIL', tts_cfg.get('tail', 90)))
+        self.pace = float(os.environ.get('EDGE_PACE', tts_cfg.get('pace', 0.6)))
+        self.loudnorm = str(os.environ.get('TTS_LOUDNORM', tts_cfg.get('loudnorm', 'on'))).lower() not in ('0', 'off', 'false', 'no')
         self.cache = os.path.join(root, 'audio', 'cache')
         os.makedirs(self.cache, exist_ok=True)
+        self.log = lambda *a: print(*a)
+        # 引擎在这里定下来（回退链只解析一次，避免每句都探测）
+        self.engine, self.engine_note = engines.resolve_chain(self.cfg, log=self.log)
+        self.engine_name = self.engine.name
+        self.has_words = self.engine.has_word_boundary
 
     def cache_path(self, text, ext):
-        sig = '%s|%s|%s|%s' % (self.engine, self.voice, self.rate, text)
+        # 缓存键含引擎名：换了引擎必须重新合成（不同引擎音色完全不同），
+        # 只按 voice/rate 做键会让换引擎后拿到旧引擎的音频（静默错音）。
+        sig = '%s|%s|%s|%s|%s' % (self.engine_name, self.cfg.get('voice', ''), self.cfg.get('rate', ''),
+                                  self.cfg.get('command', ''), text)
         return os.path.join(self.cache, hashlib.sha1(sig.encode('utf-8')).hexdigest()[:16] + ext)
 
-    async def synth_edge(self, text):
-        import edge_tts
-        mp3, js = self.cache_path(text, '.mp3'), self.cache_path(text, '.json')
-        if os.path.exists(mp3) and os.path.exists(js):
-            with open(js, encoding='utf-8') as fh:
-                return mp3, json.load(fh)
-        why = ''
-        for attempt in range(1, self.tries + 1):
-            audio, words = bytearray(), []
-            try:
-                comm = edge_tts.Communicate(
-                    text, self.voice, rate=self.rate, boundary='WordBoundary',
-                    connect_timeout=15, receive_timeout=25)
+    def synth(self, text):
+        """合成一句（带缓存）。返回 (音频字节, words 或 None, meta)。"""
+        ext = '.mp3' if self.engine_name == 'edge' else '.bin'
+        audio_path = self.cache_path(text, ext)
+        words_path = self.cache_path(text, '.words.json')
+        meta_path = self.cache_path(text, '.meta.json')
+        if os.path.exists(audio_path) and os.path.exists(words_path) and os.path.exists(meta_path):
+            with open(audio_path, 'rb') as fh:
+                data = fh.read()
+            with open(words_path, encoding='utf-8') as fh:
+                words = json.load(fh)
+            with open(meta_path, encoding='utf-8') as fh:
+                meta = json.load(fh)
+            meta['cached'] = True
+            return data, words, meta
 
-                async def collect():
-                    async for ch in comm.stream():
-                        if ch['type'] == 'audio':
-                            audio.extend(ch['data'])
-                        elif ch['type'] == 'WordBoundary':
-                            words.append({'t': ch['offset'] / 1e7, 'd': ch['duration'] / 1e7,
-                                          'text': ch['text']})
-
-                await asyncio.wait_for(collect(), timeout=40)
-                if audio:
-                    break
-                why = '端点返回空音频'
-            except TypeError:
-                raise SystemExit("filmwright: edge-tts 过旧：pip install 'edge-tts==7.2.8'")
-            except asyncio.TimeoutError:
-                why = '超时'
-            except Exception as e:
-                why = '%s: %s' % (type(e).__name__, e)
-            if attempt == self.tries:
-                raise SystemExit(_tts_failure_hint(self.tries, why, text))
-            back = min(8.0, 1.2 * attempt)
-            print('  edge-tts 第 %d/%d 次失败（%s），等 %.1fs' % (attempt, self.tries, why, back))
-            await asyncio.sleep(back)
-        with open(mp3, 'wb') as fh:
-            fh.write(audio)
-        with open(js, 'w', encoding='utf-8') as fh:
+        data, words, meta = self.engine.synth(text)
+        with open(audio_path, 'wb') as fh:
+            fh.write(data)
+        with open(words_path, 'w', encoding='utf-8') as fh:
             json.dump(words, fh, ensure_ascii=False)
-        await asyncio.sleep(self.pace)
-        return mp3, words
+        with open(meta_path, 'w', encoding='utf-8') as fh:
+            json.dump(meta, fh, ensure_ascii=False)
+        if self.pace and self.engine_name == 'edge':
+            time.sleep(self.pace)
+        return data, words, meta
 
-    def decode(self, mp3):
-        out = subprocess.run(['ffmpeg', '-v', 'error', '-i', mp3, '-f', 'f32le',
-                              '-ac', '1', '-ar', str(SR), '-'],
-                             capture_output=True, check=True).stdout
-        return np.frombuffer(out, dtype=np.float32).copy()
+    def decode(self, data, fmt):
+        """把引擎产出的音频解码成 48k 单声道 float32。"""
+        cmd = ['ffmpeg', '-v', 'error', '-i', 'pipe:0', '-f', 'f32le', '-ac', '1', '-ar', str(SR), '-']
+        r = subprocess.run(cmd, input=data, capture_output=True)
+        if r.returncode != 0:
+            raise SystemExit('filmwright: 解码 TTS 音频失败：%s'
+                             % r.stderr.decode('utf-8', 'replace')[:300])
+        x = np.frombuffer(r.stdout, dtype=np.float32).copy()
+        if len(x) == 0:
+            raise SystemExit('filmwright: 解码 TTS 音频得到 0 采样（引擎产出可能损坏）')
+        return x
 
 
 def trim_edges(x, thr=0.004):
@@ -199,6 +219,57 @@ def trim_edges(x, thr=0.004):
     a = max(0, idx[0] - int(0.03 * SR))
     b = min(len(x), idx[-1] + int(0.12 * SR))
     return x[a:b], a / SR
+
+
+def normalize_peak(x, target=TARGET_PEAK):
+    """逐句做峰值归一。
+
+    **为什么必须做**：不同引擎、不同音色的输出电平差很多
+    （实测 SAPI 的 mean -27dB / max -9dB，而 edge 神经音色普遍更响）。
+    不归一的话，换引擎后整片音量会突变；逐句归一还能抹平同引擎不同句子的
+    随机起伏（短句常因首尾静音被 trim 得偏轻）。
+
+    只做峰值归一而不是 LUFS 归一：峰值归一不会改变句内动态（听感自然），
+    而单句的 LUFS 归一在句子很短时不准（积分窗口比句子还长）。
+    整片的响度一致性由末尾的全局归一负责。
+    """
+    peak = float(np.max(np.abs(x))) if len(x) else 0.0
+    if peak < 1e-6:
+        return x, 1.0
+    return x * (target / peak), target / peak
+
+
+def estimate_chunk_starts(text, chunks, dur):
+    """无词边界时按**字数比例**估字幕块的起始秒。
+
+    这是降级方案，精度不如 edge 的 WordBoundary（它给的是词级时间）。
+    为什么按「有效字数」而不是「字符数」：中文标点不发音，
+    把它们算进去会让长句的估算越来越偏（实测末尾块能偏 0.3s 以上）。
+    标点按「停顿」折算成 0.35 个字的时长 —— 比完全忽略更接近真实朗读节奏。
+    """
+    def weight(s):
+        w = 0.0
+        for ch in s:
+            if ch in '，、；：,;:':
+                w += 0.35
+            elif ch in '。！？.!?':
+                w += 0.6
+            elif ch in '—…-()（）“”"\'’':
+                w += 0.15
+            elif ch.isspace():
+                w += 0.1
+            else:
+                w += 1.0
+        return max(w, 0.1)
+
+    ws = [weight(c) for c in chunks]
+    total = sum(ws) or 1.0
+    starts, acc = [], 0.0
+    for w in ws:
+        starts.append(dur * acc / total)
+        acc += w
+    starts[0] = 0.0
+    return starts
 
 
 def chunk_starts(text, chunks, words, lead_cut, dur):
@@ -234,7 +305,12 @@ def chunk_starts(text, chunks, words, lead_cut, dur):
     return [max(0.0, s) for s in starts]
 
 
-async def run(project_dir):
+def run(project_dir):
+    """主流程：解析解说词 → 逐句合成 → 拼时间轴与音频。
+
+    同步函数（不再是 async）：引擎层内部自己管异步（edge 用 asyncio.run），
+    外层再套 async 只会让「同步阻塞」伪装成协程，反而看不清真实行为。
+    """
     project_dir = os.path.abspath(project_dir)
     cfg = load_project(project_dir)
     t = Tts(project_dir, cfg)
@@ -260,10 +336,18 @@ async def run(project_dir):
         if not chunks:
             continue
         tts_text = ''.join(chunks)
-        mp3, words = await t.synth_edge(tts_text)
-        x, lead_cut = trim_edges(t.decode(mp3))
+        data, words, meta = t.synth(tts_text)
+        x = t.decode(data, meta.get('format', 'mp3'))
+        x, lead_cut = trim_edges(x)
+        x, gain = normalize_peak(x)
         dur = len(x) / SR
-        starts = chunk_starts(tts_text, chunks, words, lead_cut, dur)
+        # 有词边界（edge）就用它精确对齐；没有（sapi / command）按字数比例估。
+        # 两条路都产 subs，但**如实记录用的是哪种**（timeline.json 的 subs_timing），
+        # 让使用者知道字幕切换点是精确的还是要留余量。
+        if words:
+            starts = chunk_starts(tts_text, chunks, words, lead_cut, dur)
+        else:
+            starts = estimate_chunk_starts(tts_text, chunks, dur)
         sid += 1
         subs = []
         for i, c in enumerate(chunks):
@@ -291,8 +375,15 @@ async def run(project_dir):
         a = int(st * SR)
         y[a:a + len(x)] += x
     y = y[:int(total / t.fps * SR)]
+    # 全局归一：把整片峰值压到 TARGET_PEAK。
+    # 逐句已归一到同一峰值，这里再兜一次 —— 因为多句叠加（重叠/回声）可能超过 1.0，
+    # 直接写 int16 会削波（削波是**不可逆**的失真，宁可整体降一点）。
     peak = float(np.max(np.abs(y))) or 1.0
-    y = y / peak * 0.89
+    y = y / peak * TARGET_PEAK
+    clipped = int(np.sum(np.abs(y) > 1.0))
+    if clipped:
+        y = np.clip(y, -1.0, 1.0)
+        print('⚠ 有 %d 个采样超过满量程，已限幅（句间重叠过多？）' % clipped)
 
     outdir = os.path.join(project_dir, 'public', 'assets', t.slug)
     os.makedirs(outdir, exist_ok=True)
@@ -312,16 +403,26 @@ async def run(project_dir):
         if all_subs[i]['to'] >= all_subs[i + 1]['from']:
             all_subs[i]['to'] = all_subs[i + 1]['from'] - 1
 
-    tl = {'fps': t.fps, 'total_frames': total, 'engine': t.engine, 'voice': t.voice,
-          'rate': t.rate, 'slug': t.slug, 'chapters': chapters, 'sentences': sentences,
+    tl = {'fps': t.fps, 'total_frames': total,
+          'engine': t.engine_name, 'voice': t.cfg.get('voice', ''),
+          'rate': t.cfg.get('rate', '+0%'), 'slug': t.slug,
+          # 如实标注字幕时间的来源：word=按词边界精确对齐，estimated=按字数比例估算。
+          # 使用者据此知道字幕切换点能不能卡得很准（sapi/command 是 estimated）。
+          'subs_timing': 'word' if t.has_words else 'estimated',
+          'engine_note': t.engine_note,
+          'chapters': chapters, 'sentences': sentences,
           'subs': all_subs, 'chars': total_chars, 'speech_sec': round(speech_sec, 2)}
     os.makedirs(os.path.join(project_dir, 'script'), exist_ok=True)
     with open(os.path.join(project_dir, 'script', 'timeline.json'), 'w', encoding='utf-8') as fh:
         json.dump(tl, fh, ensure_ascii=False, indent=1)
     with open(os.path.join(project_dir, 'script', 'timeline.md'), 'w', encoding='utf-8') as fh:
         fh.write('# 时间轴（%s · %s %s，共 %d 帧 = %.1fs，%d 字，语速 %.2f 字/秒）\n\n'
-                 % (t.engine, t.voice, t.rate, total, total / t.fps, total_chars,
+                 % (t.engine_name, t.cfg.get('voice', '') or '(默认)', t.cfg.get('rate', '+0%'),
+                    total, total / t.fps, total_chars,
                     total_chars / max(1e-6, speech_sec)))
+        if not t.has_words:
+            fh.write('> 字幕切换点是**按字数比例估算**的（%s 不提供词边界）；'
+                     '要精确对齐请用 edge 引擎。\n\n' % t.engine_name)
         fh.write('| 句 | 章 | 帧 from–to | 时长 | 文本 |\n|---|---|---|---|---|\n')
         for s in sentences:
             fh.write('| %s | %d | %d–%d | %.1fs | %s |\n'
@@ -363,4 +464,11 @@ if __name__ == '__main__':
             pd = sys.argv[i + 1]
     if not pd:
         raise SystemExit('用法：filmwright tts --project <项目目录>')
-    raise SystemExit(asyncio.run(run(pd)))
+    try:
+        raise SystemExit(run(pd))
+    except engines.TtsError as e:
+        # 把「引擎不可用」翻译成使用者能照做的出路，而不是抛一个异常名。
+        # 这是实测出来的需求：edge 403 时原先只报一句 WSServerHandshakeError，
+        # 使用者不知道是微软侧故障、也不知道本框架有离线后备。
+        print(_engine_failure_hint(e), file=sys.stderr)
+        raise SystemExit(2)

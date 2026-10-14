@@ -46,6 +46,12 @@ jobs:
       - name: 静态自检（不启浏览器）
         run: node bin/filmwright.mjs check --project examples/minimal --static-only
 
+      - name: 编码检查（全仓文本必须是合法 UTF-8、无 BOM）
+        # 抓肉眼看不见的问题：曾用 PowerShell 的 Add-Content 追加 .gitignore，
+        # 它按系统默认编码（GBK）写，中文注释变成非法 UTF-8 —— 而 read 工具
+        # 直接拒绝读取，才知道出事了。这类问题必须在 CI 上自动拦住。
+        run: node tools/verify-encoding.mjs .
+
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
     strategy:

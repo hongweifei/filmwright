@@ -76,10 +76,36 @@ draw(ctx, n, t, accent) {
 `theme` 给了背景/面板/线/文字/4 档灰 + 一组章节主色。
 换主题是改这些值，但没有「主题包」「暗亮两套自动切换」这类机制。
 
-## 5. TTS 只有一个引擎
+## 5. TTS 引擎可换可回退，但音质与字幕精度因引擎而异
 
-`tts` 命令走 edge-tts（云端，会限流）。要别的 TTS，得自己按同样的时间轴格式产出
-`timeline.json` —— 格式就是：
+`tts` 命令的引擎由配置的 `tts.engine` 决定，支持回退链：
+
+| 引擎 | 平台 | 音质 | 词边界 | 联网 |
+|---|---|---|---|---|
+| `edge` | 全平台 | 神经音色，最好 | **有** | 需要 |
+| `sapi` | Windows | 桌面合成，一般 | 无 | 完全离线 |
+| `command` | 全平台 | 取决于你的命令 | 无 | 取决于它 |
+
+`'auto'` = 依次尝试 edge → sapi → command，用第一个可用的。**先探路**：
+`filmwright voices --project <目录>` 会实测各引擎能否用、列出音色、说明最终会用哪个。
+
+**词边界是真实差别，不是细节**：edge 给每个词的起始时间，字幕块能精确对齐；
+`sapi` / `command` 没有，只能按字数比例估算（标点折算成停顿）。时间轴里会如实标注
+`subs_timing: "word" | "estimated"` —— 你据此知道字幕能不能卡得很准，不用猜。
+
+**edge-tts 端点会整段时间不可用**（实测 2026-10-13 与本次：`WSServerHandshakeError: 403`，
+而 `list_voices` 端点正常）。已排除本机原因：edge-tts 7.2.8（最新）、系统时钟与服务器同步
+（差 <1s）、网络可达 —— 是微软侧的服务故障/区域不可用，**不是配置问题，重试也没用**。
+
+这类故障不再让流程停住：把 `tts.engine` 设成 `'auto'`（或 `['edge','sapi']`）就会自动降级到
+离线引擎，配音与时间轴照常产出（代价是音质一般、字幕时间按字数估算）。
+
+**仍然做不到的**：跨引擎的**音色一致性** —— 从 edge 降级到 sapi 后，成片人声会变。
+所以正式出片前应确认用的是哪个引擎（`voices` 或 `timeline.json` 的 `engine` 字段），
+不要一半用 edge 一半用 sapi（逐句缓存会保留各自的结果，混用会听得出差别）。
+
+要接自己的 TTS：`tts: {engine: 'command', command: '你的命令 {out} {text_file}'}`，
+或按下面的格式自产 `timeline.json`（时间轴是**数据契约**，任何 TTS 都能接入）：
 
 ```json
 {
@@ -93,15 +119,8 @@ draw(ctx, n, t, accent) {
 
 **句 id 是镜头对齐节拍用的**（`S('S01').from`、`BLK('S01', 2)`），所以 id 必须稳定。
 
-**edge-tts 端点会整段时间不可用**（实测 2026-10-13：`WSServerHandshakeError: 403`，
-`voices` 端点直接返回 `Our services aren't available right now`）。已排除本机原因：
-edge-tts 7.2.8（最新）、系统时钟与服务器同步（差 <1s）、网络可达 —— 是微软侧的服务
-故障/区域不可用，**不是配置问题，重试也没用**。`tts` 失败时会打印可行动的出路
-（等一会儿 / 自产时间轴 / 先用合成夹具继续做画面）。
-
-这种时候开发流程不该停：时间轴是**数据契约**，`tools/make-timeline-fixture.mjs`
-按 `narration.txt` 合成一份形状与节拍正确的 `timeline.json`（明确标注非配音），
-足够跑 `check`、出静帧、验收画面；真实配音等端点恢复后跑 `tts` 覆盖即可。
+开发流程也不该因此停：`tools/make-timeline-fixture.mjs` 能按 `narration.txt` 合成一份
+形状与节拍正确的 `timeline.json`（明确标注非配音），足够跑 `check`、出静帧、验收画面。
 
 ## 6. 渲染速度取决于浏览器与机器
 

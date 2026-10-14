@@ -98,6 +98,9 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-clips.mjs` | 验素材管线 host 侧：抽帧帧数、内容寻址缓存命中、改参数重抽、断点安全、源文件缺失与 start 超时长 |
 | `verify-clip-render.mjs` | 验片段在浏览器里真的取到并画出：帧随 n 变化、同一帧两次相同、源帧映射、未声明片段名报错 |
 | `verify-complex.mjs` | **四项复杂制作能力的协作验收**：同一个夹具项目里同时用图层变换、嵌套循环、素材片段、增量重渲与代理，验规格合法、抽帧缓存、代理分辨率、复用与全新重渲逐帧一致、以及三种能力各自确实改变画面 |
+| `verify-tts.mjs` | 验 TTS 契约：`voices` 报出引擎可用性与回退结果、真跑一遍产出三件套、timeline 如实标注引擎与 `subs_timing`、音频与时间轴一致、逐句缓存命中、换引擎必须让缓存失效 |
+| `verify-tts-e2e.py` | 验 TTS 端到端（真合成）：引擎回退链生效、产物与时间轴自洽、缓存命中、三处负面对照 |
+| `verify-encoding.mjs` | 全仓文本必须是合法 UTF-8 且无 BOM —— 抓肉眼看不见的问题（曾把 `.gitignore` 写成 GBK） |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |

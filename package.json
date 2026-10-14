@@ -36,7 +36,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test": "node --test \"tests/**/*.test.mjs\" && npm run test:py",
+    "test:js": "node --test \"tests/**/*.test.mjs\"",
+    "test:py": "node tools/run-python-tests.mjs",
     "check": "node bin/filmwright.mjs check --project examples/minimal",
     "render": "node bin/filmwright.mjs render --project examples/minimal --shards 3",
     "all": "node bin/filmwright.mjs all --project examples/minimal --shards 3",
@@ -45,7 +47,9 @@
     "verify:readme": "node tools/verify-readme.mjs",
     "verify:reuse": "node tools/verify-reuse.mjs",
     "verify:assets": "node tools/verify-assets.mjs",
-    "verify:preview": "node tools/verify-preview.mjs"
+    "verify:preview": "node tools/verify-preview.mjs",
+    "verify:tts": "node tools/verify-tts.mjs",
+    "verify:encoding": "node tools/verify-encoding.mjs ."
   },
   "files": [
     "bin",
