@@ -66,14 +66,21 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
     // 落成 PNG 序列（pngDir）时必须用 PNG —— 那类产物是给人看/给工具比对的，
     // 有损压缩会让像素回归失去意义。
     const fmt = pngDir ? pngDirFormat : (frameFormat ?? 'jpeg');
+    const fps = proj.raw.fps ?? 30;
     const total = to - from + 1;
     let written = 0;
 
     let ff = null;
     if (!pngDir) {
-      ff = spawnTool(ffmpegPath(), ['-y', '-f', 'image2pipe', '-framerate', String(proj.raw.fps ?? 30), '-i', '-',
-        '-c:v', 'libx264', '-preset', preset, '-pix_fmt', 'yuv420p', '-crf', String(crf), out],
-        {stdio: ['pipe', 'ignore', 'inherit']});
+      // h264 路径：页面已经编好 H.264，这里**只解封装、不重编**（`-c:v copy`）。
+      // 这是 WebCodecs 路径省下来的第二道 —— 原来同一帧等于编了两遍
+      // （页面编 JPEG，ffmpeg 再编 H.264）。
+      // 裸 h264 没有时基，所以用 `-r` 显式给帧率。
+      const ffArgs = fmt === 'h264'
+        ? ['-y', '-f', 'h264', '-r', String(fps), '-i', '-', '-c:v', 'copy', out]
+        : ['-y', '-f', 'image2pipe', '-framerate', String(fps), '-i', '-',
+          '-c:v', 'libx264', '-preset', preset, '-pix_fmt', 'yuv420p', '-crf', String(crf), out];
+      ff = spawnTool(ffmpegPath(), ffArgs, {stdio: ['pipe', 'ignore', 'inherit']});
       // 帧直接落地：写完（必要时等 drain）再返回，page 的 await fetch 就成了背压。
       sink.write = async (buf) => {
         if (ff.stdin.destroyed || !ff.stdin.writable) {
@@ -91,7 +98,7 @@ export async function renderRange(projectDir, proj, {from, to, out, crf = '16', 
     // 落 PNG 序列必须逐帧取回（每帧要写一个文件），所以 pngDir 强制走 cdp。
     const useStream = !pngDir && transport === 'stream';
     if (useStream) {
-      await sess.streamFrames({from, to, frameFormat: fmt});
+      await sess.streamFrames({from, to, frameFormat: fmt, fps});
       if (written !== total) {
         throw new Error(`filmwright: 传输帧数不符（页面写了 ${written}，应为 ${total}）`);
       }

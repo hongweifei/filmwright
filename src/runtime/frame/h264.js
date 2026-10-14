@@ -116,7 +116,7 @@ export async function createH264Encoder(o) {
     err.hint = '需要 Chrome/Edge 94+；也可用 --frame-format jpeg 回到 JPEG 取像素那条路';
     throw err;
   }
-  const {width, height, fps = 30, bitrate = 8_000_000, onChunk, maxQueue = 4} = o;
+  const {width, height, fps = 30, bitrate = 8_000_000, onChunk, maxQueue = 8} = o;
 
   // 逐个试，挑第一个被支持的 —— 不同机器支持的 level/profile 不一样
   let config = null;
@@ -162,9 +162,13 @@ export async function createH264Encoder(o) {
   const drain = async () => {
     let guard = 0;
     // ⚠️ 用 `>=` 而不是 `>`：这一帧入队后队列会 +1，用 `>` 会允许冲到上限+1（实测踩到）
+    //
+    // ⚠️ 上限别设太小：这里的等待是 `setTimeout(0)`，浏览器把它**钳到 ~1–4ms**，
+    // 队列经常触顶会白等。所以设 8（8 个 VideoFrame ≈ 30MB）。
+    // **但它不是端到端变慢的原因**：实测 maxQueue 4→8 没有可测差别（6.69s vs 6.99s，
+    // 属噪声）。端到端只快 1.34× 的原因**尚未查清**，见 LIMITATIONS §6 —— 别把猜测当结论。
     while (enc.encodeQueueSize >= maxQueue) {
       if (firstError) throw firstError;
-      // 编码在后台线程，这里让出主线程等它
       await new Promise((r) => setTimeout(r, 0));
       if (++guard > 100000) throw new Error('filmwright: 编码队列一直排不空（编码器可能卡死）');
     }

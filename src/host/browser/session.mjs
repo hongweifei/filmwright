@@ -49,7 +49,10 @@ export function isValidFrameFormat(s) {
   const f = String(s ?? '').toLowerCase();
   // 注意要认 jpg 这个别名 —— 只认 jpeg 会让「白名单说不行、解析器说行」
   // 的不一致（测试抓到的真问题）。
-  return f === 'png' || f === 'jpeg' || f === 'jpg' || /^jpe?g:\d{1,3}$/.test(f);
+  // `h264`：页面里用 WebCodecs 直接编 H.264（见 src/runtime/frame/h264.js）——
+  // 省掉"编 JPEG + ffmpeg 再编一遍"两道。**只用于成片**，不能用于静帧/像素回归
+  // （那两处要无损可复现）。
+  return f === 'png' || f === 'jpeg' || f === 'jpg' || f === 'h264' || /^jpe?g:\d{1,3}$/.test(f);
 }
 
 
@@ -365,20 +368,61 @@ export async function openSession(url, size, opts = {}) {
      * @param {{from:number,to:number,frameFormat?:string,onPage?:Function,timeoutMs?:number}} o
      * @returns {Promise<number>} 页面报告写完的帧数
      */
-    async streamFrames({from, to, frameFormat = 'jpeg', timeoutMs}) {
-      const fmt = frameFormatExpr(frameFormat);
+    async streamFrames({from, to, frameFormat = 'jpeg', fps = 30, timeoutMs}) {
       const total = to - from + 1;
       if (total <= 0) return 0;
       // 逐帧超时预算：正常一帧几十毫秒，给 3s/帧 + 120s 余量；上限 6 小时。
       // 不用固定 60s —— 长片一段几千帧，固定超时必挂（旧代码的隐患）。
       const budget = Math.min(6 * 3600 * 1000, total * 3000 + 120000);
-      const expr = `(async () => {
+      const expr = frameFormat === 'h264' ? `(async () => {
+        // ── H.264 路径：页面里直接编码，chunk 转 Annex-B 后二进制 POST ──
+        // 实测（720p）：绘制 0.19ms + 编码 2.18ms，而 JPEG 取像素要 16.47ms。
+        // 主机侧因此可以 -c:v copy 直接封装，**不重编**。
+        const canvas = document.querySelector('canvas');
+        const {createH264Encoder, annexBFromChunk, h264Available} =
+          await import('/kit/runtime/frame/h264.js');
+        if (!h264Available()) throw new Error('这个环境没有 WebCodecs；用 --frame-format jpeg');
+        let desc = null, descUsed = false;
+        const pending = [];
+        const enc = await createH264Encoder({
+          width: canvas.width, height: canvas.height, fps: ${fps},
+          // onChunk 是**同步**的，而 POST 是异步的 —— 先入队，由渲染循环排空。
+          // 不排队直接 await 会把编码器的回调卡住。
+          onChunk: (chunk, meta) => {
+            if (meta && meta.decoderConfig && meta.decoderConfig.description && !desc) {
+              desc = new Uint8Array(meta.decoderConfig.description);
+            }
+            const buf = new Uint8Array(chunk.byteLength);
+            chunk.copyTo(buf);
+            // SPS/PPS 只在第一帧写一次（重复写虽然合法但白费字节）
+            pending.push(annexBFromChunk(buf, descUsed ? null : desc));
+            if (desc) descUsed = true;
+          },
+        });
+        let sent = 0;
+        const post = async (bytes) => {
+          const resp = await fetch('/__filmwright/frame?n=' + (${from} + sent),
+            {method: 'POST', body: bytes});
+          if (!resp.ok) throw new Error('第 ' + (${from} + sent) + ' 帧上传被拒：' + (await resp.text()));
+          sent++;
+        };
+        const drain = async () => { while (pending.length) await post(pending.shift()); };
+        for (let n = ${from}; n <= ${to}; n++) {
+          window.__renderFrame(n);
+          await enc.encode(canvas, n);   // encode 是入队；背压在编码器内部
+          await drain();
+        }
+        await enc.flush();               // 冲掉编码器里剩下的
+        await drain();
+        enc.close();
+        return sent;
+      })()` : `(async () => {
         const canvas = document.querySelector('canvas');
         for (let n = ${from}; n <= ${to}; n++) {
           window.__renderFrame(n);
           const blob = await new Promise((res, rej) => canvas.toBlob(
             (b) => (b ? res(b) : rej(new Error('toBlob 返回空'))),
-            ${fmt}));
+            ${frameFormatExpr(frameFormat)}));
           const resp = await fetch('/__filmwright/frame?n=' + n, {method: 'POST', body: blob});
           if (!resp.ok) throw new Error('第 ' + n + ' 帧上传被拒：' + (await resp.text()));
         }
