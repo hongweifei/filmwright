@@ -91,6 +91,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 两个 `verify-*` 夹具的浏览器会话统一走 `src/host/browser/session.mjs` 的 `openSession`（无头启动、启动失败当场报，不静默等到超时）。**工具里不要再各写一份启动逻辑**——那份拷贝漏掉过 `--headless`，CI 无显示器时挂在一个与真实原因无关的报错上。
 | `verify-reuse.mjs` | 验换分辨率（1080p）与换浏览器（两个浏览器渲同一帧要字节相同） |
+| `verify-mix.mjs` | **验配乐混音**：真跑 ffmpeg，只测音乐那一路，证明「人声在场时被压低、人声停下后恢复、duck 越大压得越深」，并验产物带双流与缺文件报错 |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |

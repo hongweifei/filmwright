@@ -107,6 +107,30 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | bars.items | 6 |
 | compare.left/right.items | 各 5 |
 
+## 转场（`transition`）
+
+任何镜头都可以声明转场（**所有类型通用**，不是某个模板的字段）：
+
+```json
+{"type": "flow", "at": "S02", "transition": {"type": "crossfade", "frames": 14}, "boxes": [...]}
+{"type": "bullets", "at": "S05", "transition": 10, "items": [...]}
+```
+
+| 写法 | 效果 |
+|---|---|
+| `12` | 等价于 `{type: "crossfade", frames: 12}` |
+| `{"type": "crossfade", "frames": N}` | 前一个镜头淡出 + 当前镜头淡入（**两个镜头同时可见并交叠**） |
+| `{"type": "fade", "frames": N}` | 当前镜头从背景色淡入（不画前一个镜头） |
+
+要点：
+
+- 转场发生在**当前镜头的前 N 帧**（`start` 起）；
+- **第一个镜头不能用 `crossfade`**（前面没有镜头可混合）——校验会报 `SCENE_BAD_TRANSITION`，用 `fade`；
+- N 会被镜头自身长度夹住，不会溢出到下一个镜头；
+- **不破坏「第 N 帧只是 N 的函数」**：两个镜头的 `draw` 都只依赖 N，混合系数也只是 N 的函数——所以分片并行、任意跳帧、全量自检（`check`）全都不受影响。这也是为什么转场在**引擎内**做，而不是用 ffmpeg 的 `xfade`（那会把帧变成「需要前一帧」的序列，跳帧就废了）。
+
+手写镜头同样支持：`{start, transition: {type: 'crossfade', frames: 12}, draw}`。
+
 ## 校验与错误码
 
 `filmwright check` 的 `scene` 一道（不启浏览器）跑校验；boot 在浏览器里查的是**同一份实现**（`src/contract/scene.js`）。每条错误带 `code / path / message / hint`——错误信息是给模型读的，读完能直接改。
@@ -119,6 +143,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | `SCENE_BAD_FIELD` / `SCENE_BAD_SHOT` | 字段类型/形状/取值不对 / 镜头不是对象 |
 | `SCENE_TOO_MANY` | 超出容量上限（见上表） |
 | `SCENE_TABLE_WIDTH` | 表格某行的单元格数与表头不符 |
+| `SCENE_BAD_TRANSITION` | 转场形状不对，或第一个镜头用了 crossfade |
 | `SCENE_NO_SENTENCE` / `SCENE_NO_BLOCK` | 对齐到不存在的句 / 块（说共几块） |
 | `SCENE_NO_ASSET` | `image.asset` 没在配置里声明（列出已声明的） |
 | `SCENE_FIRST_NOT_1` | 第一个镜头不从第 1 帧起 |

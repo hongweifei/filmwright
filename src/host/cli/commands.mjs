@@ -11,6 +11,7 @@ import {dirname, join, resolve, basename} from 'node:path';
 import {requireTimeline} from '../project/load.mjs';
 import {renderRange, renderStills, renderSequence} from '../media/renderRange.mjs';
 import {muxVideo} from '../media/mux.mjs';
+import {muxWithMusic} from '../media/mix.mjs';
 import {spawnTool, ffmpegPath, checkSpawned} from '../media/ffmpegBin.mjs';
 import {runChecks} from '../checks/index.mjs';
 import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
@@ -18,6 +19,7 @@ import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
 import {exportSrt, readTranslation} from '../media/srt.mjs';
 import {sceneSchema} from '../../contract/scene.js';
+import {normalizeConfig} from '../../contract/config.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
 import {num, str} from './args.mjs';
 import {assertTool} from '../preflight.mjs';
@@ -339,7 +341,30 @@ export async function mux(ctx) {
   }
   const video = resolve(str(ctx.args, 'video'));
   const out = resolve(str(ctx.args, 'out', join(ctx.projectDir, 'renders', `${slug}.mp4`)));
-  const r = await muxVideo(video, audio, out, ctx.proj.timeline.total_frames / (ctx.proj.raw.fps ?? 30));
+  const dur = ctx.proj.timeline.total_frames / (ctx.proj.raw.fps ?? 30);
+
+  // 配乐：配置里有 music 就混（带自动闪避），否则保持「只混人声」的老行为
+  const musicCfg = ctx.proj.raw?.music ? normalizeConfig(ctx.proj.raw).music : null;
+  if (musicCfg) {
+    const musicFile = join(ctx.projectDir, 'public', musicCfg.src.replace(/^\//, ''));
+    if (!existsSync(musicFile)) {
+      const e = new Error('filmwright: 找不到配乐 ' + musicFile);
+      e.code = 'NO_MUSIC_FILE';
+      e.hint = `music.src 是 ${musicCfg.src}，对应项目里的 public/${musicCfg.src.replace(/^\//, '')}`;
+      throw e;
+    }
+    const r = await muxWithMusic(video, audio, musicFile, out, musicCfg, dur);
+    say(`${r.out}  ${r.sizeMB} MB  ${r.durationSec.toFixed(2)}s（配乐 gain ${musicCfg.gain}dB，闪避 ${musicCfg.duck}dB）`);
+    return {
+      code: 0,
+      data: {
+        out: r.out, sizeMB: r.sizeMB, seconds: r.durationSec,
+        music: {src: musicCfg.src, gain: musicCfg.gain, duck: musicCfg.duck},
+      },
+    };
+  }
+
+  const r = await muxVideo(video, audio, out, dur);
   say(`${r.out}  ${r.sizeMB} MB  ${r.durationSec.toFixed(2)}s`);
   return {code: 0, data: {out: r.out, sizeMB: r.sizeMB, seconds: r.durationSec}};
 }

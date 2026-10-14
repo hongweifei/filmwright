@@ -218,6 +218,37 @@ test('负面对照：bars 的 v 不是数字 / chips 的 label 缺失都要报',
   assert.ok(c.includes('SCENE_UNKNOWN_FIELD'), 'chips 条目字段拼错：' + JSON.stringify(r.errors));
 });
 
+// ---------- 转场（scene 规格层） ----------
+
+test('scene 支持 transition：合法形状通过，且不破坏其它字段校验', () => {
+  const r = validateScene({shots: [
+    {type: 'title', at: 1, title: 't'},
+    {type: 'bullets', at: 2, items: [{t: 'a'}], transition: 12},
+    {type: 'stat', at: 3, value: 1, label: 'l', transition: {type: 'fade', frames: 8}},
+  ]}, {timeline: tl});
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+});
+
+test('负面对照：transition 形状不对报 SCENE_BAD_TRANSITION', () => {
+  for (const bad of [0, -1, 1.5, 'fade', {frames: 0}, {type: 'wipe', frames: 5}, [], {}]) {
+    const r = validateScene({shots: [
+      {type: 'title', at: 1, title: 't'},
+      {type: 'bullets', at: 2, items: [{t: 'a'}], transition: bad},
+    ]}, {timeline: tl});
+    const e = r.errors.find((x) => x.code === 'SCENE_BAD_TRANSITION');
+    assert.ok(e, `应报转场错：${JSON.stringify(bad)}（实际 ${JSON.stringify(r.errors.map((x) => x.code))}）`);
+    assert.equal(e.path, 'shots[1].transition', 'path 要指到具体镜头');
+  }
+});
+
+test('transition 是通用字段：不会因「未知字段」被误报', () => {
+  const r = validateScene({shots: [
+    {type: 'title', at: 1, title: 't', transition: {type: 'fade', frames: 5}},
+  ]}, {timeline: tl});
+  assert.ok(!r.errors.some((e) => e.code === 'SCENE_UNKNOWN_FIELD'),
+    'transition 不该被当成未知字段：' + JSON.stringify(r.errors));
+});
+
 // ---------- 机器可读 schema ----------
 
 test('sceneSchema()：13 类齐、每类有 note/fields/max，错误码表完整', () => {

@@ -20,6 +20,7 @@
     {
       "type": "flow", "at": "S02",
       "heading": "底座带来什么",
+      "transition": {"type": "crossfade", "frames": 14},
       "boxes": [
         {"label": "scene.json", "sub": "内容与节拍"},
         {"label": "模板镜头", "sub": "节奏与配色"},

@@ -528,6 +528,9 @@ export function compileScene(scene, tl) {
     return {
       start,
       beats: shot.beats,
+      // 场景规格里的 transition 透传给镜头层（crossfade/fade + frames）。
+      // 它**不破坏纯函数不变量**：两个 draw 都只依赖 n，混合系数也是 n 的函数。
+      ...(raw.transition !== undefined ? {transition: raw.transition} : {}),
       scene: shot,
       draw(ctx, n, t, accent) {
         ctx.save();

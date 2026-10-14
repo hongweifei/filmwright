@@ -41,6 +41,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_NOT_OBJECT', 'SCENE_SCHEMA', 'SCENE_UNKNOWN_FIELD', 'SCENE_NO_SHOTS', 'SCENE_BAD_SHOT',
   'SCENE_UNKNOWN_TYPE', 'SCENE_MISSING_FIELD', 'SCENE_MISSING_AT', 'SCENE_BAD_FIELD',
   'SCENE_TOO_MANY', 'SCENE_TABLE_WIDTH', 'SCENE_NO_ASSET', 'SCENE_FIRST_NOT_1', 'SCENE_NOT_INCREASING',
+  'SCENE_BAD_TRANSITION',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
   'SCENE_NO_SENTENCE', 'SCENE_NO_BLOCK',
 ];
@@ -125,6 +126,16 @@ const TYPE_NOTES = {
   bars: '竖向条形图（2–6 根）：数值 + 标签，适合性能/占比对比',
 };
 
+/** 转场声明是否合法（与 runtime/stage/shots.js 的 normalizeTransition 同一套规则）。 */
+export function isValidTransition(v) {
+  if (typeof v === 'number') return Number.isInteger(v) && v >= 1;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const type = v.type ?? 'crossfade';
+  if (type !== 'crossfade' && type !== 'fade') return false;
+  return Number.isInteger(v.frames) && v.frames >= 1;
+}
+
+/** 各种形状错误的说明（校验与 schema 共用）。 */
 const err = (code, path, message, hint) => ({code, path, message, hint});
 
 function checkStr(v, path, name, errors, required, kind = 'str') {
@@ -257,13 +268,19 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
       errors.push(err('SCENE_BAD_SHOT', path, '镜头必须是对象', '形如 {"type": "bullets", "at": "S02", …}'));
       return;
     }
+    // transition 是所有类型共用的字段（不是某个模板的），单独校验
+    if (shot.transition !== undefined && !isValidTransition(shot.transition)) {
+      errors.push(err('SCENE_BAD_TRANSITION', `${path}.transition`,
+        `转场形状不对：${JSON.stringify(shot.transition)}`,
+        '要 {type:"crossfade"|"fade", frames:N}（N≥1），或直接给帧数；第一个镜头不能用 crossfade'));
+    }
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {
       errors.push(err('SCENE_UNKNOWN_TYPE', `${path}.type`, `不认识的镜头类型 ${JSON.stringify(type)}`,
         `可用：${SHOT_TYPES.join(' / ')}`));
     } else {
       const spec = FIELDS[type];
-      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && !(k in spec));
+      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && !(k in spec));
       if (unknown.length) {
         errors.push(err('SCENE_UNKNOWN_FIELD', `${path}.${unknown[0]}`,
           `${type} 没有字段 ${unknown.join(', ')}`, `可用：${Object.keys(spec).map((k) => k.replace(/\?$/, '')).join(' / ')}`));

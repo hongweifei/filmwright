@@ -128,7 +128,47 @@ export function normalizeConfig(raw) {
     chapterTech: raw.chapterTech ?? [],
     assets: normAssets(raw.assets),
     endingFade: raw.endingFade ?? 30,
+    music: normMusic(raw.music),
   };
+}
+
+/**
+ * 配乐声明。**这是 host 层的事**（ffmpeg 混音），不属于浏览器运行时 ——
+ * 但配置校验仍在这里，理由同其它字段：写错要当场报错。
+ *
+ *   music: 'assets/bgm.mp3'                        → 默认闪避设置
+ *   music: {src: 'assets/bgm.mp3', gain: -14, duck: 10, fadeIn: 1, fadeOut: 2}
+ *
+ * 字段：
+ *   src      音乐文件（放项目的 public/ 下，与 assets 同一种取法）
+ *   gain     音乐相对人声的增益 dB（默认 -14：人声为主，音乐垫底）
+ *   duck     闪避强度 dB（默认 10：说话时把音乐压低这么多；0 = 不闪避）
+ *   fadeIn   片头淡入秒数（默认 1）
+ *   fadeOut  片尾淡出秒数（默认 2）
+ */
+function normMusic(raw) {
+  if (raw === undefined || raw === null) return null;
+  const m = typeof raw === 'string' ? {src: raw} : raw;
+  if (typeof m !== 'object' || Array.isArray(m)) {
+    throw new Error('filmwright: music 要么是路径字符串，要么是 {src, gain?, duck?, fadeIn?, fadeOut?}，收到 ' + JSON.stringify(raw));
+  }
+  if (typeof m.src !== 'string' || !m.src) {
+    throw new Error('filmwright: music.src 必填（音乐文件路径，放项目的 public/ 下）');
+  }
+  const numOr = (v, def, name, {min, max} = {}) => {
+    if (v === undefined) return def;
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(`filmwright: music.${name} 要是数字，收到 ${JSON.stringify(v)}`);
+    }
+    if (min !== undefined && v < min) throw new Error(`filmwright: music.${name} 不能小于 ${min}，收到 ${v}`);
+    if (max !== undefined && v > max) throw new Error(`filmwright: music.${name} 不能大于 ${max}，收到 ${v}`);
+    return v;
+  };
+  const gain = numOr(m.gain, -14, 'gain', {min: -60, max: 12});
+  const duck = numOr(m.duck, 10, 'duck', {min: 0, max: 40});
+  const fadeIn = numOr(m.fadeIn, 1, 'fadeIn', {min: 0});
+  const fadeOut = numOr(m.fadeOut, 2, 'fadeOut', {min: 0});
+  return {src: m.src.startsWith('/') ? m.src : '/' + m.src, gain, duck, fadeIn, fadeOut};
 }
 
 /**

@@ -171,6 +171,8 @@ filmwright mux --project <项目目录> --video <视频> [--out y.mp4]
 
 画面与配音合流，默认输出 `renders/<slug>.mp4`。`--video` 必填（通常传 `render` 的产物）；找不到 `public/assets/<slug>/audio.wav` 会提示先跑 `tts`。
 
+**配置里声明了 `music` 就自动混配乐**（带自动闪避：说话时压低音乐），否则保持「只混人声」。`--json` 里会回报 `music: {src, gain, duck}`。配乐文件找不到会报 `NO_MUSIC_FILE` 并指出它期望的路径。
+
 ## `srt`
 
 ```bash

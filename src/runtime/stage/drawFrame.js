@@ -5,13 +5,55 @@
 // 早先这些全挤在一个 254 行的文件里，改一处要读全篇。
 import {config, accentFor, view} from '../../contract/config.js';
 import {isReady, chapterAt, timeline, tailFrom} from '../../contract/timeline.js';
-import {shotAt} from './shots.js';
+import {shotAt, shots, normalizeTransition} from './shots.js';
 import {drawBackdrop} from '../chrome/backdrop.js';
 import {drawHud} from '../chrome/hud.js';
 import {drawChapterCard} from '../chrome/chapterCard.js';
 import {drawSubtitle} from '../chrome/subtitle.js';
 import {drawProgress} from '../chrome/progress.js';
 import {drawEnding} from '../chrome/ending.js';
+
+/**
+ * 转场混合：当前镜头 `start` 起的 transition.frames 帧内，与**前一个镜头**交叠。
+ *
+ * 不变量仍然成立：两个 draw 都只依赖 n，混合系数 alpha 也只是 n 的纯函数 ——
+ * 所以第 N 帧依然只由 N 决定（分片、跳帧、全量自检都不受影响）。
+ *
+ * 两种：
+ *   crossfade —— 前镜头淡出 + 当前镜头淡入（都在画）
+ *   fade      —— 当前镜头从**背景色**淡入（不画前镜头，只用 alpha 渐显）
+ *
+ * @returns {{cur:number, prevShot:object|null, prevAlpha:number}}
+ */
+export function transitionAt(n, list = shots()) {
+  const cur = list.find((s) => n >= s.from && n <= s.to) ?? null;
+  if (!cur) return {cur: 1, prevShot: null, prevAlpha: 0};
+  const tr = normalizeTransition(cur.transition);
+  if (!tr) return {cur: 1, prevShot: null, prevAlpha: 0};
+  const span = Math.min(tr.frames, cur.to - cur.from + 1);   // 不能超过镜头自身长度
+  const local = n - cur.from;                                // 0..span-1
+  if (local >= span) return {cur: 1, prevShot: null, prevAlpha: 0};
+  // 用 (local+1)/span 而不是 local/span：转场占 span 帧，**最后一帧要恰好走完**
+  // （local/span 会让末帧停在 (span-1)/span，永远到不了 1 —— 实测 fade 末帧读 0.9）。
+  const p = Math.min(1, (local + 1) / span);
+  const idx = list.indexOf(cur);
+  const prev = idx > 0 ? list[idx - 1] : null;
+  if (tr.type === 'fade') {
+    // 从背景色淡入：只有当前镜头，alpha 从 0 到 1
+    return {cur: p, prevShot: null, prevAlpha: 0};
+  }
+  // crossfade：前镜头从 1 淡到 0，当前镜头从 0 淡到 1
+  return {cur: p, prevShot: prev, prevAlpha: 1 - p};
+}
+
+/** 用给定 alpha 画一个镜头（含各自的 this 绑定）。 */
+function drawShotWithAlpha(ctx, shot, n, t, accent, alpha) {
+  if (!shot || alpha <= 0.001) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  shot.draw.call(shot, ctx, n, t, accent);
+  ctx.restore();
+}
 
 export function drawFrame(ctx, n) {
   if (!isReady()) throw new Error('filmwright: 时间轴未装载');
@@ -27,9 +69,11 @@ export function drawFrame(ctx, n) {
   // 片尾区不再画镜头：最后一个镜头会一直画到片尾，在署名卡淡出后又冒出内容
   const shot = n < tail ? shotAt(n) : null;
   if (shot) {
-    ctx.save();
-    shot.draw(ctx, n, t, accent);
-    ctx.restore();
+    const tr = transitionAt(n);
+    // crossfade：先画前一个镜头（它已过自己的区间，但 draw 是纯函数，用 n 直接画即可），
+    // 再以 alpha 叠加当前镜头。fade：只画当前镜头，用它的 alpha。
+    if (tr.prevShot) drawShotWithAlpha(ctx, tr.prevShot, n, t, accent, tr.prevAlpha);
+    drawShotWithAlpha(ctx, shot, n, t, accent, tr.cur);
   }
 
   drawChapterCard(ctx, n);

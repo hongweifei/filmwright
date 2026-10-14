@@ -119,6 +119,36 @@ assets: [{name: '架构图', src: 'assets/arch.png'}],                 // 显式
 
 输出三件套：`public/assets/<slug>/audio.wav`、`script/timeline.json`（渲染与自检读它）、`script/timeline.md`（人读的表）。逐句缓存于 `audio/cache/`，改一句只重合成那一句。
 
+## `music`（配乐）
+
+一句话版：`music: 'assets/bgm.mp3'`。完整写法：
+
+```js
+music: {
+  src: 'assets/bgm.mp3',   // 音乐文件，放项目的 public/ 下（与 assets 同一种取法）
+  gain: -14,               // 音乐相对人声的增益 dB（默认 -14：人声为主，音乐垫底）
+  duck: 10,                // 闪避强度 dB（默认 10：说话时把音乐压低；0 = 不闪避）
+  fadeIn: 1,               // 片头淡入秒数（默认 1）
+  fadeOut: 2,              // 片尾淡出秒数（默认 2）
+}
+```
+
+**自动闪避（ducking）**：人声一响就把音乐压下去，说完再抬回来——由 ffmpeg 的
+`sidechaincompress` 完成，以人声作触发信号。不需要人工标时间点，所以**改解说词、
+句子移位之后不用重调**（与「时间轴由解说词唯一生成」同一条思路）。
+
+| 字段 | 范围 | 说明 |
+|---|---|---|
+| `src` | 非空字符串 | 必填 |
+| `gain` | −60 … 12 | 音乐整体增益；太大会盖住人声 |
+| `duck` | 0 … 40 | 0 = 关掉闪避（纯混音）；越大压得越深 |
+| `fadeIn` / `fadeOut` | ≥ 0 | 秒；淡出会自动夹到音乐长度的一半以内 |
+
+音乐比片子长是常态（多余部分被裁掉）；比片子短也不会报错，自然结束。
+
+配置校验会当场拦下写错的字段（`music.gain 要是数字`、`music.duck 不能大于 40`……），
+不会静默退回默认值。
+
 ## 配置怎么被校验
 
 `normalizeConfig()`（`src/contract/config.js`）负责校验与补默认：

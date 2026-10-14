@@ -22,6 +22,15 @@ export function setShots(list) {
         throw new Error('filmwright: 镜头 beats 必须是 ≥1 的整数帧号数组（start=' + s.start + '）');
       }
     }
+    // 可选的入场转场。**不破坏核心不变量**：两个镜头的 draw 都是只依赖 N 的纯函数，
+    // 混合系数也是 N 的纯函数，所以「第 N 帧只是 N 的函数」仍然成立。
+    if (s.transition !== undefined) {
+      const tr = normalizeTransition(s.transition);
+      if (!tr) {
+        throw new Error('filmwright: 镜头 transition 形状不对（start=' + s.start +
+          '）：要 {type:"crossfade"|"fade", frames:N}，或直接给帧数');
+      }
+    }
   }
   for (let i = 1; i < declared.length; i++) {
     if (declared[i].start <= declared[i - 1].start) {
@@ -32,7 +41,24 @@ export function setShots(list) {
   if (declared[0].start !== 1) {
     throw new Error('filmwright: 第一个镜头必须从第 1 帧开始，收到 ' + declared[0].start);
   }
+  // crossfade 需要「上一个镜头」才有东西可混；第一个镜头只能用 fade
+  const first = declared[0];
+  if (first.transition && normalizeTransition(first.transition).type === 'crossfade') {
+    throw new Error('filmwright: 第一个镜头不能用 crossfade（前面没有镜头可混合）；用 fade');
+  }
   return declared;
+}
+
+/** 转场声明归一化：数字 = crossfade 帧数；对象 = {type, frames}。非法返回 null。 */
+export function normalizeTransition(v) {
+  if (typeof v === 'number') {
+    return Number.isInteger(v) && v >= 1 ? {type: 'crossfade', frames: v} : null;
+  }
+  if (!v || typeof v !== 'object') return null;
+  const type = v.type ?? 'crossfade';
+  if (type !== 'crossfade' && type !== 'fade') return null;
+  if (!Number.isInteger(v.frames) || v.frames < 1) return null;
+  return {type, frames: v.frames};
 }
 
 /**
