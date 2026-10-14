@@ -64,6 +64,12 @@ jobs:
       - name: 死导出（棘轮：新增死导出 / 名单陈旧 都算错）
         run: node tools/dead-exports.mjs
 
+      # 文档内部链接：所有 `](相对路径)` 都要指向存在的文件。
+      # 这类东西最容易悄悄腐烂 —— 文件改名/移动后链接不会报错，只会 404，
+      # 而 `verify-docs` 核数字与事实性说法、核不到链接。
+      - name: 文档内部链接（改文件名时最容易漏）
+        run: node tools/verify-links.mjs
+
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
     strategy:

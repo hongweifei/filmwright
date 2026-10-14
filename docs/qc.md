@@ -101,6 +101,8 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-tts.mjs` | 验 TTS 契约：`voices` 报出引擎可用性与回退结果、真跑一遍产出三件套、timeline 如实标注引擎与 `subs_timing`、音频与时间轴一致、逐句缓存命中、换引擎必须让缓存失效 |
 | `verify-tts-e2e.py` | 验 TTS 端到端（真合成）：引擎回退链生效、产物与时间轴自洽、缓存命中、三处负面对照 |
 | `verify-encoding.mjs` | 全仓文本必须是合法 UTF-8 且无 BOM —— 抓肉眼看不见的问题（曾把 `.gitignore` 写成 GBK） |
+| `verify-links.mjs` | 文档里的**内部链接**必须指向存在的文件（外链与页内锚点不管）。这类东西最容易悄悄腐烂：**文件改名/移动后链接不会报错，只会 404**，而 `verify-docs` 核数字与事实性说法、核不到链接。只扫**入库的** `.md` |
+| `dead-exports.mjs` | 死导出**棘轮**：`src/` 里"导出但没人用"的符号记录在名单里，**新出现**就红；名单里已被清理的也红（防名单腐烂）。"没人用"不等于"该删"（可能是给使用者的公开 API），所以不做一刀切 |
 | `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
 | `tools/probes/profile-current.mjs` | **当前管线的复测**（上面那个量的是 CDP 路径，现在默认是二进制 POST 流，旧数据不准了）：绘制 / JPEG 取像素 / **WebCodecs 编码**三段。实测 720p：绘制 0.19ms、JPEG **16.47ms**（占 99%）、WebCodecs **2.18ms**（快 7.5×） |
 | `tools/probes/check-determinism.mjs` | **快速确定性检查**：同一个效果、同一帧渲染两次比哈希。`verify-effects` 里已有同一判据，但它跑一次约 **10 分钟**，排查着色器问题（如 `displace`）时**迭代太慢**；这个工具**全部 11 个效果只要 35 秒**（快 17×），判据完全一致，定位到的问题可用 `verify-effects` 复核 |
@@ -149,11 +151,11 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 | 状态 | 工具 | 耗时 |
 |---|---|---|
-| **CI 自动跑** | `verify-encoding`、`verify-docs`（static job） | 秒级 |
+| **CI 自动跑** | `verify-encoding`、`verify-docs`、`verify-links`、`dead-exports`（static job） | 秒级 |
 | **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、**`verify-longform`（约 204s，`--frames 2400 --no-big`）**、`verify-preview`（browser job） | 合计约 **13 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts` / `verify-tts-e2e.py`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
-**22 个验收工具里 20 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
+**23 个验收工具里 21 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
 
 （`verify-longform` 原来在这张表里是"手动跑（10 分钟量级）"—— 那说的是它的**默认规模**
