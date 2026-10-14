@@ -313,6 +313,88 @@ line();
     '受光场景同一帧两次渲染**逐字节一致**（光照不破坏"第 N 帧只是 N 的函数"）');
 }
 
+line('═');
+console.log('八、灯的关键帧（脉冲光 / 光扫过）');
+line();
+{
+  const {writeFileSync: wf} = await import('node:fs');
+  const {execFileSync} = await import('node:child_process');
+  const writeScene4 = (s) => wf(join(P, 'scene.json'), JSON.stringify({shots: [s]}, null, 2) + '\n', 'utf8');
+  writeFileSync(join(P, 'shots', 'index.js'),
+    'import {view} from \'filmwright\';\nexport const SHOTS = [];\n', 'utf8');
+  const toGray = (p) => execFileSync('ffmpeg', ['-v', 'error', '-i', p, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'],
+    {maxBuffer: 64 * 1024 * 1024});
+  const meanOf = (buf) => { let s = 0; for (const v of buf) s += v; return s / buf.length; };
+
+  // 脉冲光：强度从 0.2 涨到 3.0
+  const pulse = {
+    type: 'three', at: 1, camera: {z: 4.2},
+    lights: [{type: 'point', position: [2, 2, 3],
+      animate: {intensity: [{frame: 1, v: 0.2}, {frame: 31, v: 3.0}]}}],
+    objects: [{shape: 'sphere', size: 2.2, color: 'accent'}],
+  };
+  writeScene4(pulse);
+  const frames = [1, 11, 21, 31];
+  const means = [];
+  for (const f of frames) {
+    const r = stills([f], 'pulse' + f);
+    if (r.code !== 0) { ok(false, `脉冲光第 ${f} 帧渲染失败`); break; }
+    const g = toGray(join(P, '.work', 'pulse' + f, `f${String(f).padStart(5, '0')}.png`));
+    means.push(meanOf(g));
+  }
+  console.log(`  脉冲光平均亮度：${frames.map((f, i) => `第${f}帧 ${(means[i] ?? 0).toFixed(1)}`).join('  ')}`);
+  ok(means.length === 4 && means.every((m, i) => i === 0 || m > means[i - 1]),
+    '强度关键帧让画面**逐帧变亮**（单调）⇒ 灯的 intensity 轨道真的在生效');
+
+  // 光扫过：平行光的 x 从 -5 到 +5（且**不写静态 position**，位置完全由轨道给出）
+  const sweep = {
+    type: 'three', at: 1, camera: {z: 4.2},
+    lights: [{type: 'directional', intensity: 2.4,
+      animate: {x: [{frame: 1, v: -5}, {frame: 31, v: 5}],
+        y: [{frame: 1, v: 1}, {frame: 31, v: 1}], z: [{frame: 1, v: 2}, {frame: 31, v: 2}]}}],
+    objects: [{shape: 'sphere', size: 2.2, color: 'accent'}],
+  };
+  writeScene4(sweep);
+  const s1 = stills([1], 'sweep1');
+  const s16 = stills([16], 'sweep16');
+  const s31 = stills([31], 'sweep31');
+  const hs = [s1, s16, s31].map((r) => Object.values(r.out)[0]?.hash);
+  ok(s1.code === 0 && s31.code === 0, '只用轨道给位置（不写静态 position）也能渲染');
+  ok(new Set(hs).size === 3, `光扫过时画面逐帧不同（${hs.join(' / ')}）⇒ x/y/z 轨道真的在动`);
+
+  // 灯动了，核心不变量仍然要成立
+  const a = stills([16], 'sweepA');
+  const b = stills([16], 'sweepB');
+  const seq = stills([1, 16], 'sweepSeq');
+  ok(Object.values(a.out)[0]?.hash === Object.values(b.out)[0]?.hash,
+    '灯在动时，同一帧两次渲染**逐字节一致**');
+  ok(Object.values(seq.out)[1]?.hash === Object.values(a.out)[0]?.hash,
+    '灯在动时，**乱序渲染**同一帧也一致（没有"必须从头渲"的隐藏依赖）');
+
+  // 负面对照：不写 animate 时灯是静止的 ⇒ **3D 内容所在的中央区域**不随帧变化。
+  // ⚠️ 只能比中央区域：整帧里有引擎画的**字幕/HUD，它们本来就随时间变**，
+  // 拿第 1 帧与第 31 帧比整帧，会把"字幕换了"误当成"灯在动"（第一次就是这么错的）。
+  const centerBox = (gray, w = W, h = H, box = 200) => {
+    const x0 = Math.floor(w / 2 - box / 2), y0 = Math.floor(h / 2 - box / 2);
+    const out = Buffer.alloc(box * box);
+    for (let y = 0; y < box; y++) gray.copy(out, y * box, (y0 + y) * w + x0, (y0 + y) * w + x0 + box);
+    return out;
+  };
+  const centerHash = (p) => createHash('sha256').update(centerBox(toGray(p))).digest('hex').slice(0, 12);
+  writeScene4({...pulse, lights: [{type: 'point', position: [2, 2, 3], intensity: 1.5}]});
+  const st1 = stills([1], 'still1');
+  const st31 = stills([31], 'still31');
+  const c1 = centerHash(join(P, '.work', 'still1', 'f00001.png'));
+  const c31 = centerHash(join(P, '.work', 'still31', 'f00031.png'));
+  console.log(`  静态灯：中央区域 hash 第1帧 ${c1}，第31帧 ${c31}`);
+  ok(c1 === c31, '不写 animate 时灯静止（中央区域逐字节相同）—— 证明上面那条变化确实来自轨道');
+
+  // 正面佐证：同一个"中央区域"度量下，脉冲光的两帧必须不同
+  const p1 = centerHash(join(P, '.work', 'pulse1', 'f00001.png'));
+  const p31 = centerHash(join(P, '.work', 'pulse31', 'f00031.png'));
+  ok(p1 !== p31, `脉冲光的两帧在**同一个中央区域**度量下不同（${p1} ≠ ${p31}）—— 判据不是恒真`);
+}
+
 rmSync(P, {recursive: true, force: true});
 line('═');
 console.log(bad === 0 ? '✓ 3D 图层可用且守住核心不变量' : `✗ ${bad} 项失败`);

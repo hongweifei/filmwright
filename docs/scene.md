@@ -343,6 +343,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | `material` | `basic`（不受光/平涂）或 `standard`（受光）。默认：**有 `lights` 时 standard，否则 basic** |
 | `camera` | `x` `y` `z` `fov`（1–179）`lookAt`（`[x,y,z]`） |
 | `lights` | 最多 6 盏。`ambient`（铺底，不产生明暗）/ `directional`（像太阳）/ `point`（像灯泡，随距离衰减）；各有 `color` `intensity` 0–20，后两种还要 `position`（`[x,y,z]`） |
+| `lights[].animate` | 属性：`intensity`（脉冲/呼吸）、`x` `y` `z`（光扫过）。**颜色不能动**（配色只取章节 accent 是条纪律），`ambient` 只能动 `intensity`（它没有方向）。用 x/y/z 轨道时可以**不写静态 `position`** |
 | 上限 | 一个镜头最多 **24** 个对象（每个是一次 draw call） |
 
 **打光是显式动作**：不写 `lights` 就用无光照材质，画面与加光照之前**逐位相同**；
@@ -353,14 +354,17 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
  "camera": {"z": 4.2},
  "lights": [
    {"type": "ambient", "intensity": 0.6},
-   {"type": "directional", "intensity": 2.4, "position": [4, 3, 5]}
+   {"type": "directional", "intensity": 2.4, "position": [4, 3, 5]},
+   {"type": "point", "color": "#ffd9a0",
+    "animate": {"intensity": [{"beat": 1, "v": 0.3}, {"beat": 2, "v": 2.6, "ease": "out3"}]}}
  ],
  "objects": [{"shape": "sphere", "size": 2.2, "color": "accent"}]}
 ```
 
 实测判据（`tools/verify-three.mjs`）：**只有环境光时物体是"平"的**（中央亮度标准差 **0.00**），
 加上平行光才出现明暗梯度（**20.29**）—— 这一条证明光真的在参与着色，
-而不只是"材质换了所以画面变了"。受光场景同一帧两次渲染仍**逐字节一致**。
+而不只是"材质换了所以画面变了"。**脉冲光**的强度轨道让画面逐帧变亮
+（10.2 → 12.5 → 13.8 → 14.8，单调）；受光场景同一帧两次渲染仍**逐字节一致**。
 
 **写错在静态自检就报**（`scene.json` 是静态校验的）：不认识的形状、越界数值、
 不认识的动画属性都会带可用值报出来。`filmwright schema` 里能查到这份词汇表。

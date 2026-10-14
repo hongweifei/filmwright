@@ -58,9 +58,11 @@ function compile(shot, theme) {
   camera.lookAt(...(cam.lookAt ?? [0, 0, 0]));
   camera.updateProjectionMatrix();
 
+  const node = {beats: shot.beats ?? [], from: this.from};
+
   // ── 灯 ──
-  // 位置与强度都是**静态**的（v1 不支持灯的关键帧）：它们不影响纯函数性，
-  // 但要动就得每帧完整写一遍，那是另一件事（对象属性已经这么做了）。
+  // 强度与位置可以走关键帧（脉冲光 / 光扫过），编译与对象属性**同一套**
+  // （compileAnimate：beat 锚点解析、缓动名 → 函数）。
   const lights = (shot.lights ?? []).map((L) => {
     const color = resolveColor(L.color, theme);
     const intensity = L.intensity ?? 1;
@@ -68,15 +70,20 @@ function compile(shot, theme) {
     if (L.type === 'ambient') light = new T.AmbientLight(color, intensity);
     else if (L.type === 'directional') light = new T.DirectionalLight(color, intensity);
     else light = new T.PointLight(color, intensity);
-    if (L.type !== 'ambient') light.position.set(...(L.position ?? [1, 1, 1]));
+    const pos = L.position ?? [1, 1, 1];
+    if (L.type !== 'ambient') light.position.set(pos[0], pos[1], pos[2]);
     scene.add(light);
-    return light;
+    // 静态值：没写就沿用构造时给的值（位置 0 或 position；强度 intensity）
+    return {
+      light,
+      tracks: L.animate ? compileAnimate(L.animate, node) : null,
+      st: {intensity, x: pos[0], y: pos[1], z: pos[2]},
+    };
   });
   // 有灯 ⇒ 默认用受光材质；没有 ⇒ 保持无光照（**老项目逐位不变**）。
   // 单个对象可以用 material 覆盖这个默认。
   const litByDefault = lights.length > 0;
 
-  const node = {beats: shot.beats ?? [], from: this.from};
   const objects = (shot.objects ?? []).map((o) => {
     const size = o.size ?? 1;
     const common = {
@@ -102,7 +109,7 @@ function compile(shot, theme) {
     };
     return {mesh, tracks, st};
   });
-  return {scene, camera, objects};
+  return {scene, camera, objects, lights};
 }
 
 /** 渲染一帧（同步），结果贴到 `ctx` 上。 */
@@ -132,6 +139,13 @@ function render(ctx, n, shot, theme) {
     o.mesh.rotation.set(v('rx') * RAD, v('ry') * RAD, v('rz') * RAD);
     const s = v('scale');
     o.mesh.scale.set(s, s, s);
+  }
+  // 灯同理：**每帧完整写一遍**（脉冲光 / 光扫过）。只写一次、或按"距上一帧多久"累加，
+  // 都会让第 N 帧依赖历史 —— 那是 retained-mode 场景图最经典的陷阱。
+  for (const L of st.lights ?? []) {
+    const v = (k) => (L.tracks && L.tracks[k] ? kf(n, L.tracks[k]) : L.st[k]);
+    L.light.intensity = v('intensity');
+    if (L.light.position) L.light.position.set(v('x'), v('y'), v('z'));
   }
   renderer.render(st.scene, st.camera);
   // 读 renderer 自己的画布（踩过：读别的画布会拿到一张从没画过的空图）

@@ -40,6 +40,15 @@ export const LIGHT_TYPES = ['ambient', 'directional', 'point'];
 /** 一个镜头里最多几盏灯（受光材质的着色成本随灯数上升）。 */
 export const MAX_LIGHTS = 6;
 
+/**
+ * 灯上可以动（关键帧）的属性。
+ *
+ * 只有这四样有意义：`intensity`（脉冲/呼吸）与 `x`/`y`/`z`（光扫过）。
+ * 刻意**不含** `color` —— 颜色是主题色的语义，跟着关键帧变色会让
+ * "配色只取章节 accent"这条纪律失效。
+ */
+export const LIGHT_ANIM_PROPS = ['intensity', 'x', 'y', 'z'];
+
 export const THREE_ERROR_CODES = [
   'SCENE_3D_SHAPE', 'SCENE_3D_CAMERA', 'SCENE_3D_OBJECTS', 'SCENE_3D_SHAPE_KIND',
   'SCENE_3D_VALUE', 'SCENE_3D_COLOR', 'SCENE_3D_ANIM', 'SCENE_3D_LIGHT',

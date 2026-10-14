@@ -154,3 +154,47 @@ test('不给 lights 时行为**完全不变**（老项目逐位不受影响）',
   // 而"有 lights"是另一个世界（渲染期用受光材质），由 verify-three 的第七节验
   assert.deepEqual(codes(T({lights: [{type: 'ambient'}]})), []);
 });
+
+// ─────────────────────── 灯的关键帧（脉冲光 / 光扫过）───────────────────────
+
+test('灯可以用 intensity 与 x/y/z 轨道（走与 animate 同一套关键帧规则）', () => {
+  assert.deepEqual(codes(T({lights: [{type: 'point', position: [1, 2, 3],
+    animate: {intensity: [{frame: 1, v: 0.2}, {frame: 30, v: 2}]}}]})), []);
+  assert.deepEqual(codes(T({lights: [{type: 'directional', intensity: 2,
+    animate: {x: [{beat: 1, v: -3}, {beat: 2, v: 3, ease: 'out3'}]}}]})), []);
+  // 键序/缓动/时间基仍由 validateKeyTrack 管
+  const p = (anim) => codes(T({lights: [{type: 'point', position: [1, 2, 3], animate: anim}]}));
+  assert.deepEqual(p({intensity: [{frame: 1}]}), ['SCENE_ANIM_KEY'], '缺 v');
+  assert.deepEqual(p({intensity: [{frame: 5, v: 1}, {frame: 5, v: 2}]}), ['SCENE_ANIM_ORDER']);
+  assert.deepEqual(p({intensity: [{frame: 1, v: 1, ease: 'bounce'}]}), ['SCENE_ANIM_EASE']);
+});
+
+test('灯的关键帧也有**边界**：颜色不能动、ambient 只能动强度、强度有范围', () => {
+  // 颜色是主题色的语义，跟着关键帧变色会让"配色只取章节 accent"这条纪律失效
+  assert.deepEqual(codes(T({lights: [{type: 'point', position: [1, 2, 3],
+    animate: {color: [{frame: 1, v: 1}]}}]})), ['SCENE_3D_LIGHT']);
+  // 对象上有的旋转属性在灯上没有意义
+  assert.deepEqual(codes(T({lights: [{type: 'point', position: [1, 2, 3],
+    animate: {ry: [{frame: 1, v: 90}]}}]})), ['SCENE_3D_LIGHT']);
+  // ambient 没有方向 ⇒ 位置轨道是静默空操作，要报出来而不是放过
+  assert.deepEqual(codes(T({lights: [{type: 'ambient',
+    animate: {x: [{frame: 1, v: 0}, {frame: 30, v: 3}]}}]})), ['SCENE_3D_LIGHT']);
+  assert.deepEqual(codes(T({lights: [{type: 'ambient',
+    animate: {intensity: [{frame: 1, v: 0.5}, {frame: 30, v: 2}]}}]})), [], 'ambient 动强度是合法的');
+  // 强度关键帧取值逐个查范围
+  const e = errs(T({lights: [{type: 'point', position: [1, 2, 3],
+    animate: {intensity: [{frame: 1, v: 1}, {frame: 30, v: 99}]}}]}));
+  assert.deepEqual(e.map((x) => x.code), ['SCENE_3D_LIGHT']);
+  assert.ok(/intensity/.test(e[0].path), '路径要指到那盏灯的关键帧：' + e[0].path);
+});
+
+test('用轨道给位置时可以**不写静态 position**（否则 directional/point 会要求它）', () => {
+  // 只有 x 轨道也算"位置由轨道给出"
+  assert.deepEqual(codes(T({lights: [{type: 'point',
+    animate: {x: [{frame: 1, v: 0}, {frame: 30, v: 3}]}}]})), []);
+  assert.deepEqual(codes(T({lights: [{type: 'point',
+    animate: {y: [{frame: 1, v: 0}, {frame: 30, v: 3}]}}]})), []);
+  // 只动强度 ⇒ 仍必须有静态 position
+  assert.deepEqual(codes(T({lights: [{type: 'point',
+    animate: {intensity: [{frame: 1, v: 0.5}, {frame: 30, v: 2}]}}]})), ['SCENE_3D_LIGHT']);
+});

@@ -6,7 +6,7 @@
 // 因此校验必须**可行动**：每条错误带 code / path / hint，模型读完能直接改。
 import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES} from './effects.js';
 import {SHAPES, ANIM3D_PROPS, MAX_OBJECTS, THEME_COLOR_KEYS, THREE_ERROR_CODES,
-  LIGHT_TYPES, MAX_LIGHTS} from './three.js';
+  LIGHT_TYPES, MAX_LIGHTS, LIGHT_ANIM_PROPS} from './three.js';
 // 容量上限也在这里钉死 —— AI 该被校验告知边界，而不是靠肉眼发现画面溢出。
 //
 // 对齐 token（at）：
@@ -388,7 +388,7 @@ export function validate3D(spec, path = 'three') {
   }
 
   // ── lights（可选；给了才切到受光材质）──
-  const LIGHT_KEYS = ['type', 'color', 'intensity', 'position'];
+  const LIGHT_KEYS = ['type', 'color', 'intensity', 'position', 'animate'];
   if (spec.lights !== undefined) {
     if (!Array.isArray(spec.lights) || !spec.lights.length) {
       push('SCENE_3D_LIGHT', `${path}.lights`, 'lights 必须是非空数组（不想打光就别写这个字段）',
@@ -428,19 +428,54 @@ export function validate3D(spec, path = 'three') {
               `可用主题色：${THEME_COLOR_KEYS.join(' / ')}；或 #rrggbb`);
           }
         }
-        // 位置：ambient 不需要（它没有方向），另两种需要
-        if (L.type !== 'ambient') {
+        // 位置：ambient 不需要（它没有方向），另两种需要。
+        // **但若用关键帧给了 x/y/z，就可以不写静态 position** —— 位置由轨道算出来。
+        const anim = L.animate && typeof L.animate === 'object' ? L.animate : null;
+        const posFromAnim = !!(anim && ('x' in anim || 'y' in anim || 'z' in anim));
+        if (L.type !== 'ambient' && !posFromAnim) {
           if (L.position === undefined) {
             push('SCENE_3D_LIGHT', `${lp}.position`, `${L.type} 光源需要 position`,
-              '形如 [3, 4, 5]（世界坐标）');
+              '形如 [3, 4, 5]（世界坐标）；也可以用 animate 的 x/y/z 轨道代替');
           } else if (!Array.isArray(L.position) || L.position.length !== 3
             || L.position.some((x) => typeof x !== 'number' || !Number.isFinite(x))) {
             push('SCENE_3D_LIGHT', `${lp}.position`, 'position 必须是三个数值的数组',
               '形如 [3, 4, 5]');
           }
-        } else if (L.position !== undefined) {
+        } else if (L.type === 'ambient' && L.position !== undefined) {
           push('SCENE_3D_LIGHT', `${lp}.position`, 'ambient 光源不需要 position（它没有方向）',
             '要方向就换 directional 或 point');
+        }
+        // 灯的关键帧：走**同一套**轨道校验（beat/frame 锚点、缓动白名单、键序递增）
+        if (L.animate !== undefined) {
+          if (!anim) {
+            push('SCENE_3D_LIGHT', `${lp}.animate`, 'animate 必须是对象：{属性: [关键帧…]}',
+              `可用属性：${LIGHT_ANIM_PROPS.join(' / ')}`);
+          } else {
+            for (const prop of Object.keys(anim)) {
+              if (!LIGHT_ANIM_PROPS.includes(prop)) {
+                push('SCENE_3D_LIGHT', `${lp}.animate.${prop}`, `灯的光照动画不支持属性 ${JSON.stringify(prop)}`,
+                  `可用：${LIGHT_ANIM_PROPS.join(' / ')}（intensity 脉冲、x/y/z 光扫过；颜色不能动）`);
+                continue;
+              }
+              // ambient 没有方向 ⇒ 位置轨道是**静默空操作**，报出来而不是放过
+              if (L.type === 'ambient' && prop !== 'intensity') {
+                push('SCENE_3D_LIGHT', `${lp}.animate.${prop}`,
+                  `ambient 光源没有方向，${prop} 轨道不会有效果`,
+                  'ambient 只支持 intensity 轨道；要让光动就换 directional 或 point');
+                continue;
+              }
+              out.push(...validateKeyTrack(anim[prop], `${lp}.animate.${prop}`, {
+                valueNote: prop === 'intensity' ? 'intensity：强度，常用 0.5–3' : `${prop}：世界坐标`,
+                checkValue: prop === 'intensity'
+                  ? (v, kp, p) => {
+                    if (v < 0 || v > 20) {
+                      p('SCENE_3D_LIGHT', kp, `intensity 的关键帧值超出范围：${v}`, 'intensity：允许 0–20');
+                    }
+                  }
+                  : null,
+              }));
+            }
+          }
         }
       });
     }
@@ -885,7 +920,7 @@ const SHAPE_KEYS = {
   layer: ['content', 'z', 'from', 'to', 'transform', 'animate', 'effects'],
   // 声明式 3D 的一个对象。键级检查走这里，语义检查在 validate3D。
   threeobj: ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate', 'material'],
-  threelight: ['type', 'color', 'intensity', 'position'],
+  threelight: ['type', 'color', 'intensity', 'position', 'animate'],
   threecam: ['x', 'y', 'z', 'fov', 'lookAt'],
   '{t, d?}': ['t', 'd'],
   step: ['t', 'd'],
