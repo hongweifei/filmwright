@@ -401,16 +401,33 @@ test('sceneSchema()：13 类齐、每类有 note/fields/max，错误码表完整
 });
 
 test('错误码登记表与源码一致：用了没登记、登记了没用，都算错', async () => {
-  const {readFileSync} = await import('node:fs');
+  const {readFileSync, readdirSync} = await import('node:fs');
+  const {join: j, resolve: r} = await import('node:path');
+  const {fileURLToPath} = await import('node:url');
   // 登记表在 contract/scene.js，但**并非所有码都在那里抛**：
   // `SCENE_ANIM_RANGE` / `SCENE_ANIM_NO_BEATS` 要知道该节点的**节拍表**才能判，
   // 而节拍表到绑定期才齐（scene 镜头在编译期算、手写镜头自己声明），
   // 所以校验逻辑在 runtime/stage/shots.js。登记仍是单一表。
-  // ⇒ 扫描范围要覆盖**所有会抛 scene 码的文件**，否则会把合法用法误报成"登记了没用"。
-  const SRC_WITH_CODES = ['../src/contract/scene.js', '../src/runtime/stage/shots.js'];
+  //
+  // ⚠️ 扫描范围**扫全树**，不列文件清单 —— 这里曾经写着
+  // `['../src/contract/scene.js', '../src/runtime/stage/shots.js']`，那是个**硬编码清单**：
+  // 新文件一旦开始抛 scene 码，`used` 里就没有它，测试会误报"登记了没用"，
+  // 而那个方向的修法往往是**把登记删掉** —— 比漏报更糟。
+  // 扫全树对新增文件免疫，也不需要维护。（同类问题真实发生过一次：
+  // frame-format 的候选清单硬编码，h264 进了白名单却漏过了守卫。）
+  const SRC_ROOT = r(fileURLToPath(new URL('../src', import.meta.url)));
+  const srcFiles = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, {withFileTypes: true})) {
+      const p = j(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|mjs)$/.test(e.name)) srcFiles.push(p);
+    }
+  };
+  walk(SRC_ROOT);
   const used = new Set();
-  for (const rel of SRC_WITH_CODES) {
-    const src = readFileSync(new URL(rel, import.meta.url), 'utf8');
+  for (const abs of srcFiles) {
+    const src = readFileSync(abs, 'utf8');
     // 去掉登记表本身再扫，避免自引用
     const body = src.replace(/export const SCENE_ERROR_CODES[\s\S]*?\];/, '');
     // 码名可含数字（SCENE_FIRST_NOT_1）；标识符 SCENE_ERROR_CODES 本身不是码
@@ -418,6 +435,7 @@ test('错误码登记表与源码一致：用了没登记、登记了没用，�
       if (m[0] !== 'SCENE_ERROR_CODES') used.add(m[0]);
     }
   }
+  assert.ok(srcFiles.length > 20, `只扫到 ${srcFiles.length} 个源文件 —— 扫描逻辑写错了`);
   const declared = new Set(SCENE_ERROR_CODES);
   const undeclared = [...used].filter((c) => !declared.has(c));
   const unused = [...declared].filter((c) => !used.has(c));
