@@ -63,5 +63,16 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "three": ">=0.180.0"
+  },
+  "peerDependenciesMeta": {
+    "three": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "three": "^0.186.1"
   }
 }

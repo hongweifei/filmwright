@@ -305,6 +305,65 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 - **效果只作用于镜头（或图层）整体**，不能只作用于模板内部的某个元素。
   要那种效果就把它拆成独立的一层（`layers` 容器的每层都能挂自己的 `effects`）。
 
+## 3D 图层（现成的 three，**可选**依赖）
+
+3D 用现成的 [three](https://threejs.org/)，不自己封一套 GL。因为**渲染页的 `draw` 是同步的**，
+而 three 的加载与渲染器初始化是异步的，所以形状是「**模块顶层 await 一次，之后每帧同步渲**」：
+
+```js
+import {loadThree, create3D} from 'filmwright';
+
+const T = await loadThree();                 // 只有这个文件 import 了才加载 three
+const cube = await create3D(T, (T, {scene, camera, n}) => {
+  if (!scene.userData.m) {                   // 场景只建一次
+    const m = new T.Mesh(new T.BoxGeometry(1.6, 1.6, 1.6),
+      new T.MeshBasicMaterial({color: 0x4f9dff}));
+    scene.add(m); scene.userData.m = m;
+    camera.position.set(0, 0, 4.2);
+  }
+  // ⚠️ 每帧**完整**按 n 写一遍会动的属性
+  const m = scene.userData.m;
+  m.rotation.set(0.4 + n * 0.01, n * 0.03, 0);
+});
+
+export const SHOTS = [{start: 1, draw(ctx, n) { cube.render(ctx, n); }}];
+```
+
+顶层 await 带来两个性质，都是有意要的：
+
+- **不用 3D 就完全不加载 three**（2.2MB）—— 只有真去 import 才拉，引擎不需要猜也
+  不需要额外的声明字段；
+- 3D 图层可以和 `effects` / `transform` / `animate` 一起挂（它们作用在**画完之后**的帧上）。
+
+### ⚠️ retained-mode 陷阱：每帧都要完整写一遍
+
+three 是**保留模式**的场景图 —— 场景一旦建好就一直在。所以：
+
+- 只写一次、或按「距上一帧过了多久」**累加**，都会让第 N 帧依赖历史；
+- 那会直接破坏「第 N 帧只是 N 的函数」，**分片渲染、跳帧、增量复用全都会崩**。
+
+`create3D` 刻意**每帧都调 `build`**，就是让「完整写一遍」成为默认动作、而不是靠人记得。
+
+实测这条判据**有区分力**（`tools/verify-three.mjs` 里有负面对照）：故意写成累加的那版，
+**同顺序连渲两遍仍然逐字节一致** —— 所以「跑两遍比一比」**不足以**证明纯函数性，
+必须**乱序渲染同一帧**才抓得住。
+
+### 性能（实测，同一次运行内配对）
+
+| 档位 | 不带 3D | 带 3D | 代价 |
+|---|---|---|---|
+| 默认（软件 WebGL） | 70.3 ms/帧 | 95.9 ms/帧 | **+25.6 ms（1.36×）** |
+
+首次加载 three 约 50 ms，摊到长片可忽略。
+
+### 还没做的
+
+- **声明式 3D 图层**（在 `scene.json` 里描述 3D）—— 现在只有命令式入口。
+  需要先定一套"3D 场景的词汇表"（形状/相机/光照/动画），那是独立的一步。
+- **WebGPU 后端**：本机无头环境实测**实际用的是 WebGL 后端**（即使 `navigator.gpu`
+  为 `true`）。`render()` 是同步提交，WebGL 下正确；WebGPU 的渲染是异步的，
+  要真跑 WebGPU 需要改成 await 形状的 API。
+
 ## 并发多层（`layers` 容器）
 
 需要"同一个镜头区间里同时有几样东西"时，用容器：

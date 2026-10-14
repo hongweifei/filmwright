@@ -8,12 +8,18 @@
   #c { display: block; }
 </style>
 <!-- 项目镜头文件写 `import {text, panel} from 'filmwright'`，由这张 importmap 解析到
-     库的运行时公开面，不需要打包器。 -->
+     库的运行时公开面，不需要打包器。
+     3D 图层用现成的 three（**可选**依赖）：同样不打包，直接从 node_modules 按 ESM 路径给。
+     没装 three 时这些映射不会被解析（映射本身不触发请求），只有真去 import 才报错。 -->
 <script type="importmap">
 {
   "imports": {
     "filmwright": "/kit/index.js",
-    "filmwright/": "/kit/"
+    "filmwright/": "/kit/",
+    "three": "/vendor/three/build/three.module.js",
+    "three/": "/vendor/three/",
+    "three/webgpu": "/vendor/three/build/three.webgpu.js",
+    "three/tsl": "/vendor/three/build/three.tsl.js"
   }
 }
 </script>

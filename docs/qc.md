@@ -107,6 +107,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-attribution.mjs` | 验增量重渲按段归因：改一个镜头只重渲覆盖它的段，改全局输入则全失效 |
 | `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |
 | `verify-imperative.mjs` | 验**手写镜头与声明式同能力**：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
+| `verify-three.mjs` | 验 3D 图层（three）：3D 内容确实叠进帧里、**同一帧号两次渲染逐字节一致**、**跳帧渲染与连渲一致**、不用 3D 的项目不加载 three；并带一条**有区分力的负面对照**（故意写成有状态的必须被抓出来）与配对的性能实测 |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |
@@ -146,11 +147,14 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 |
 |---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`（static job）；`quality-negative`、`verify-assets`、`verify-effects`、`verify-imperative`、`verify-preview`（browser job） |
-| **手动跑（需真实环境/较慢）** | `verify-determinism`、`verify-incremental`、`verify-composite`、`verify-comp`、`verify-clips`、`verify-clip-render`、`verify-mix`、`verify-reuse`、`verify-attribution`、`verify-complex`、`verify-voiceover` |
+| **手动跑（需真实环境/较慢）** | `verify-determinism`、`verify-incremental`、`verify-composite`、`verify-comp`、`verify-clips`、`verify-clip-render`、`verify-mix`、`verify-reuse`、`verify-attribution`、`verify-complex`、`verify-voiceover`、`verify-three` |
 | **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级，约数分钟）、`verify-tts` / `verify-tts-e2e.py`（真合成，联网且端点可能不可用）、`verify-readme` |
 
 这是一个**已知缺口**：20 个验收工具里只有 7 个进了 CI。改核心路径（尤其是渲染、增量、合成）之后，**手动的那些要自己记得跑**——
 比如 `verify-incremental` 守的是"复用段与重渲必须逐帧一致"，它不跑就没人在守。
 把更多工具接进 CI 需要先按耗时分类（有的要几分钟），那是一件独立的事。
+
+`verify-three` 之所以暂时手动：它要装 `three`（可选依赖）并跑十几次渲染，
+耗时明显高于已接入的两个。改 `src/runtime/three/` 或 importmap / vendor 路由之后**必须手动跑它**。
 
 **关于 flaky 的判定纪律**：同一步骤「一次过、一次挂」时必须复跑定性，不能算修好。本次排查中 windows 渲染 job 的失败点曾逐次迁移（端到端出片 → 逐帧+画质 → MCP 测试 → 渲染确定性 → …），**每次的根因都不同且都定位到了**：定时器泄漏（测试进程挂 302 秒）、夹具被 CI 覆盖、`$RUNNER_TEMP` 展开为空、浏览器断开无处理、分片失败无重试。修完后 CI 全绿。

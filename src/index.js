@@ -44,3 +44,8 @@ export {applyDesignScale, scale, scaleFactors, sX, sY, sSize, DESIGN_SAFE} from 
 
 // ---- 运行时：阶段（镜头与装配）----
 export {drawFrame, shotAt, shots, chapterCards} from './runtime/stage/index.js';
+
+// ---- 运行时：3D 图层（现成的 three，**可选**依赖）----
+// 不在文件顶层 `import 'three'` —— 那样所有项目都要付 2.2MB 的加载代价。
+// 由镜头模块自己 `await loadThree()`，顶层 await 也是那里的事（draw 是同步的）。
+export {loadThree, create3D} from './runtime/three/stage.js';

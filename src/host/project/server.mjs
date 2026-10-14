@@ -171,11 +171,23 @@ export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null,
         return;
       }
 
-      // /kit/**  → 库的运行时源码（src/）
-      // /proj/** → 项目目录
+      // /kit/**     → 库的运行时源码（src/）
+      // /vendor/**  → 现成的第三方库（不打包，直接按 ESM 路径给页面）
+      // /proj/**    → 项目目录
       const targets = [];
       if (p.startsWith('/kit/')) targets.push(join(RUNTIME_ROOT, p.slice('/kit/'.length)));
-      else if (p.startsWith('/proj/')) targets.push(join(projectDir, p.slice('/proj/'.length)));
+      else if (p.startsWith('/vendor/three/')) {
+        // three 是**可选**依赖：只有用 3D 图层才需要它。所以从 node_modules 直接取，
+        // 没装就走到下面的 404 —— 但要给一条**可行动**的提示，而不是一个光秃秃的
+        // "not found"（那会让人以为是引擎坏了）。
+        const f = join(KIT_ROOT, 'node_modules', 'three', p.slice('/vendor/three/'.length));
+        if (!existsSync(f)) {
+          res.writeHead(404, {'Content-Type': 'text/plain; charset=utf-8'});
+          res.end('filmwright: 没找到 three（3D 图层需要它）。装一下：npm i three\n');
+          return;
+        }
+        targets.push(f);
+      } else if (p.startsWith('/proj/')) targets.push(join(projectDir, p.slice('/proj/'.length)));
       else if (p.startsWith('/fonts/') || p.startsWith('/assets/')) {
         // 项目把素材放在 public/ 下，但页面按根路径引用
         targets.push(join(projectDir, 'public', p));
