@@ -130,7 +130,11 @@ export async function openSession(url, size, opts = {}) {
     '--headless=new',
     `--window-size=${size.width},${size.height}`,
     '--hide-scrollbars',
-    '--disable-gpu',
+    // GPU 默认**关闭**（确定性优先）：Canvas 2D 走 CPU 光栅化（Skia 软件），
+    // 跨机器逐像素一致。`opts.gpu: true` 才放开 —— 但那会让 2D 也可能走
+    // GPU 光栅化路径，像素基线不再跨机器成立（探针 `tools/probes/probe-render.mjs`
+    // 量的就是这件事：GPU 到底有没有改变 2D 像素）。
+    ...(opts.gpu ? [] : ['--disable-gpu']),
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-extensions',
