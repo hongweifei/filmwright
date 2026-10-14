@@ -44,20 +44,24 @@ const PRESETS = {
 const P = join(ROOT, '.work', 'detprobe');
 const FRAME = 100;
 
-const renderOnce = (fx) => {
+// ⚠️ `frame` 参数**必须真的用上** —— 第一版忘了传它，于是"不同帧"的比较
+// 实际比的是同一帧（那种"测试恒真"的 bug 只有对着代码看才发现）。
+const renderOnce = (fx, frame = FRAME) => {
   rmSync(P, {recursive: true, force: true});
   cpSync(join(ROOT, 'examples', 'gallery'), P, {recursive: true});
   rmSync(join(P, 'audio'), {recursive: true, force: true});
   rmSync(join(P, 'renders'), {recursive: true, force: true});
   // ⚠️ **不要删 public/**：gallery 声明了 assets，删了会"素材加载失败"、页面起不来。
-  writeFileSync(join(P, 'scene.json'), JSON.stringify({shots: [
-    {type: 'bullets', at: 1, heading: '确定性', effects: fx,
-     items: [{t: '一', d: 'a'}, {t: '二', d: 'b'}, {t: '三', d: 'c'}]}]}, null, 2));
+  // ⚠️ `effects: []` **不是合法输入**（校验要求非空数组）。基线用例要**不写这个字段**。
+  const shot = {type: 'bullets', at: 1, heading: '确定性',
+    items: [{t: '一', d: 'a'}, {t: '二', d: 'b'}, {t: '三', d: 'c'}]};
+  if (fx.length) shot.effects = fx;
+  writeFileSync(join(P, 'scene.json'), JSON.stringify({shots: [shot]}, null, 2));
   mkdirSync(join(P, 'out'), {recursive: true});
   execFileSync('node', [join(ROOT, 'bin', 'filmwright.mjs'), 'stills', '--project', P,
-    '--frames', String(FRAME), '--dir', join(P, 'out')], {stdio: ['ignore', 'ignore', 'inherit']});
+    '--frames', String(frame), '--dir', join(P, 'out')], {stdio: ['ignore', 'ignore', 'inherit']});
   return createHash('sha256')
-    .update(readFileSync(join(P, 'out', `f${String(FRAME).padStart(5, '0')}.png`)))
+    .update(readFileSync(join(P, 'out', `f${String(frame).padStart(5, '0')}.png`)))
     .digest('hex').slice(0, 12);
 };
 
@@ -74,5 +78,38 @@ for (const n of names) {
   console.log(`  ${same ? '✓' : '✗'} ${n.padEnd(11)} ${a} / ${b}${same ? '' : '  ← **不一致：违反"第 N 帧只是 N 的函数"**'}`);
 }
 rmSync(P, {recursive: true, force: true});
-console.log(bad === 0 ? '\n✓ 全部逐字节一致' : `\n✗ ${bad} 个效果不一致`);
+
+// ── 附带的**行为**判据：`displace` 的参数真的生效吗 ──
+// 只用站得住的判据。原本想写"frequency 大 ⇒ 高频含量上升"，
+// 但实测**不成立**（位移类效果对边缘能量的影响不稳定），
+// 改成"不同 frequency 输出不同"—— 能证伪、也不会假阳性。
+// ⚠️ 这一节本该放进 `tools/verify-effects.mjs`（那里是守门工具的家），
+// 但写它的时候**机器负载过高**（`渲染页 130.7s 内没就绪`），那个工具跑一次约 10 分钟、
+// 当时跑不完 —— **不提交没跑过的验证代码**，所以先放在这个跑得动的探针里（约 1 分钟）。
+// 等机器空闲时应把它挪进 verify-effects。
+console.log('\n行为判据（displace）：');
+const hashes = {};
+const get = (fx, n) => { const k = JSON.stringify([fx, n]); hashes[k] ??= renderOnce(fx, n); return hashes[k]; };
+const base = renderOnce([], FRAME);
+const h8 = get([{type: 'displace', amount: 0.8, frequency: 8}], 100);
+const checks = [
+  ['displace 改变了画面', h8 !== base],
+  ['displace amount=0 与不写 effects 逐位相同（直通）', get([{type: 'displace', amount: 0}], 100) === base],
+  ['frequency 真的在起作用（30 ≠ 8）', get([{type: 'displace', amount: 0.8, frequency: 30}], 100) !== h8],
+  ['displace 与 distort 同参数下输出不同（不是同一个效果）',
+    get([{type: 'distort', amount: 0.8, frequency: 8}], 100) !== h8],
+];
+const ph = [{frame: 1, v: 0}, {frame: 40, v: 150, ease: 'linear'}];
+const p1 = get([{type: 'displace', amount: 0.8, phase: ph}], 100);
+checks.push(['phase 关键帧让不同帧不同（热浪在流动）',
+  p1 !== get([{type: 'displace', amount: 0.8, phase: ph}], 130)]);
+checks.push(['带 phase 轨道时同一帧仍逐字节一致',
+  p1 === get([{type: 'displace', amount: 0.8, phase: ph}], 100)]);
+for (const [name, okc] of checks) {
+  if (!okc) bad++;
+  console.log(`  ${okc ? '✓' : '✗'} ${name}`);
+}
+
+rmSync(P, {recursive: true, force: true});
+console.log(bad === 0 ? '\n✓ 全部逐字节一致，且 displace 的行为判据全过' : `\n✗ ${bad} 项失败`);
 process.exit(bad ? 1 : 0);
