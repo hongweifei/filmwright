@@ -208,6 +208,31 @@ for (const file of DOC_FILES) {
   }
 }
 
+// ---------- 否定式断言清单（只列出，不判对错）----------
+// 为什么单列这一类：**它们最容易过期**。一条「没有 X / 不支持 X」描述的是一个**否定**，
+// 而否定一旦被实现推翻，**没有任何检查会提醒** —— 上面那些数字与事实性说法都核不到
+// "这件事其实已经做了"。
+//
+// 实测：连着两轮随手一扫就找到 5 处过期的否定断言（声明式 3D「只有命令式」、
+// 「没有 GPU 加速路径」、base64「先不做」、「81 ms/帧」、「要 SRT 自己导出」）。
+//
+// ⚠️ 这里**不判对错**：多数否定是**有意的设计声明**（`architecture.md` 的「刻意不做的事」、
+// dogfood 的「模板不够用清单」），不该改。自动判"某条否定是否已实现"不现实，
+// 但**列出清单是可自动化的** —— 而这正是原来缺的：没人知道一共有多少条。
+const NEG = /不支持|没有|还没|尚未|不做|不能|无法|不会/;
+const negLines = [];
+for (const f of DOC_FILES) {
+  const lines = readFileSync(f, 'utf8').split('\n');
+  lines.forEach((l, i) => {
+    // 跳过纯标题与表格分隔行；保留有实际断言的句子
+    if (l.trim().length < 12) return;
+    if (/^\s*\|?\s*-{3,}/.test(l)) return;
+    if (NEG.test(l)) negLines.push({doc: relative(ROOT, f).replace(/\\/g, '/'), line: i + 1, text: l.trim()});
+  });
+}
+const negByDoc = {};
+for (const n of negLines) negByDoc[n.doc] = (negByDoc[n.doc] || 0) + 1;
+
 // ---------- 报告 ----------
 console.log('实现事实（唯一真相源）：');
 console.log(`  模板 ${F.templateCount} 类 | 自检 ${F.checkCount} 道（静态 ${F.staticCheckCount}） | 命令 ${F.commands.length} 个`);
@@ -230,4 +255,20 @@ if (claims.length) {
   for (const p of claims) console.log(`   ${p.doc}:${p.line}  ${p.why}\n      > ${p.text}`);
 }
 if (!problems.length) console.log('\n✓ 文档数字与事实性说法都与实现一致');
+
+// 否定式断言清单：**只列出、不判对错**（多数是有意的设计声明）。
+// 目的是让"一共有多少条这样的断言"可见 —— 原来没人知道，也就没人定期过一遍。
+// 用法：`--list-negative` 打印全部；默认只报数量。
+const byDoc = Object.entries(negByDoc).sort((a, b) => b[1] - a[1]);
+console.log(`\n否定式断言（不支持/没有/还没/不做…）：${negLines.length} 条，分布在 ${byDoc.length} 个文件`);
+// 说明一句：扫描范围是**磁盘上的** docs/，所以本地若有未入库的设计草稿也会被算进来
+// （本机 docs/design/ 就有 4 份草稿、约占 85 条）。CI 是干净检出，数字会更小。
+console.log('   （数字含磁盘上所有 docs/*.md，包括未入库的本地草稿；CI 干净检出会更少）');
+if (process.argv.includes('--list-negative')) {
+  for (const n of negLines) console.log(`   ${n.doc}:${n.line}  ${n.text.slice(0, 90)}`);
+} else {
+  console.log('   ' + byDoc.map(([d, n]) => `${d} ${n}`).join(' | '));
+  console.log('   ⚠️ 这些**多数是有意的设计声明**（不该改），但否定一旦被实现推翻就没人提醒 ——');
+  console.log('      加功能后请过一遍：node tools/verify-docs.mjs --list-negative');
+}
 process.exit(problems.length ? 1 : 0);
