@@ -116,13 +116,14 @@ export async function createH264Encoder(o) {
     err.hint = '需要 Chrome/Edge 94+；也可用 --frame-format jpeg 回到 JPEG 取像素那条路';
     throw err;
   }
-  const {width, height, fps = 30, bitrate = 8_000_000, onChunk, maxQueue = 8} = o;
+  const {width, height, fps = 30, bitrate = 8_000_000, onChunk, maxQueue = 8,
+    latencyMode = 'quality'} = o;
 
   // 逐个试，挑第一个被支持的 —— 不同机器支持的 level/profile 不一样
   let config = null;
   const tried = [];
   for (const codec of codecCandidates(width, height)) {
-    const base = {codec, width, height, bitrate, framerate: fps};
+    const base = {codec, width, height, bitrate, framerate: fps, latencyMode};
     for (const ha of ['prefer-hardware', 'no-preference']) {
       let sup;
       try {
