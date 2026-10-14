@@ -122,6 +122,8 @@ jobs:
           node bin/filmwright.mjs check --project examples/scenecast --static-only
           node bin/filmwright.mjs check --project examples/gallery --static-only
           node bin/filmwright.mjs check --project examples/three --static-only
+          node bin/filmwright.mjs check --project examples/promo --static-only
+          node bin/filmwright.mjs check --project examples/vertical --static-only
 
       # 渲染确定性：同一次运行内 capture → verify，证明「两轮渲染逐字节相同」。
       #

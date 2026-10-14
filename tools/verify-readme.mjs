@@ -44,7 +44,8 @@ console.log(`产出 ${out}  ${(statSync(out).size / 1048576).toFixed(1)} MB`);
 
 // 纯规格示例：文档承诺 clone 后不跑 tts 也能 check（timeline.json 是入库夹具）
 // `three` 也一样满足（它是纯 scene.json 项目，静态自检**不需要** three 这个可选依赖）。
-for (const ex of ['scenecast', 'gallery', 'three']) {
+// `promo` / `vertical` 之前**落在所有检查之外** —— 这一条是盘点 examples/ 时补上的。
+for (const ex of ['scenecast', 'gallery', 'three', 'promo', 'vertical']) {
   step(`check --static-only（${ex}）`, () => run(['check', '--project', join(ROOT, 'examples', ex), '--static-only']));
 }
 

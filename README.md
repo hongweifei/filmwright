@@ -90,6 +90,24 @@ node bin/filmwright.mjs preview --project examples/minimal
 
 全部选项与产物落点见[命令参考](docs/cli.md)。
 
+## 示例
+
+`examples/` 下有六个可跑的示例，**全部被 CI 的静态自检覆盖**（`check --static-only`，不启浏览器）：
+
+| 示例 | 是什么 | 演示的能力 |
+|---|---|---|
+| `minimal` | 最小的手写镜头项目 | 命令式入口、HUD、字幕；**像素回归的基线** |
+| `scenecast` | 项目自己的介绍片 | 效果链、关键帧 |
+| `promo` | 71 秒介绍片，**零镜头代码** | 声明式能做到什么（三个效果串联） |
+| `gallery` | 模板展廊，每类模板一镜 | `layers` 并发多层、关键帧 |
+| `three` | 声明式 3D 的最小演示 | 形状 / 相机 / **光照（含扫过与脉冲）** / 关键帧 |
+| `vertical` | 竖屏项目 | 管线支持竖屏（模板按 16:9 设计，见 [LIMITATIONS](LIMITATIONS.md)） |
+
+```bash
+node bin/filmwright.mjs check --project examples/gallery --static-only   # 秒级，不启浏览器
+node bin/filmwright.mjs stills --project examples/three --frames 45     # 出一帧看看
+```
+
 ## 文档
 
 | 文档 | 给谁看 |
