@@ -147,10 +147,15 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 | 耗时 |
 |---|---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`（static job） | 秒级 |
-| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、`verify-preview`（browser job） | 合计约 **9 分钟** |
-| **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级）、`verify-tts` / `verify-tts-e2e.py`（真合成、联网）、`verify-voiceover`（要真配音产物）、`verify-three`（要装 three，十几次渲染） | — |
+| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、`verify-preview`（browser job） | 合计约 **9.5 分钟** |
+| **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级）、`verify-tts` / `verify-tts-e2e.py`（真合成、联网）、`verify-voiceover`（要真配音产物） | — |
 
-**21 个验收工具里 17 个自动跑。** 剩下 4 个是有意留在手动的，原因写在上面（慢或要外部依赖）。
+**21 个验收工具里 18 个自动跑。** 剩下 3 个都需要外部条件（联网 / 真配音产物 / 十分钟量级的渲染），
+不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
+
+`verify-three` 能接进来是因为 `three` 是 **devDependency** —— `npm ci` 本来就会装它
+（运行时它仍是**可选**依赖，不装不影响其它功能）。这条路径以前完全没有自动守卫，
+而 3D 是最新、最容易被改坏的地方。
 
 `verify-readme` / `verify-attribution` 虽然各要两三分钟，但守的是**核心契约**
 （文档承诺的快速开始、增量重渲的按段归因），而且**公开仓库的 CI 不花钱**，

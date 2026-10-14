@@ -194,6 +194,14 @@ jobs:
       #   · readme 走一遍文档承诺的快速开始 —— 文档漂了就得有人管
       #   · attribution 守"改一个镜头只重渲覆盖它的段"（增量重渲的价值全在这）
       # 公开仓库的 CI 不花钱，只花墙上时间，所以这里选**接进来**。
+      # 3D 图层（three 是 **devDependency**，`npm ci` 已经装好了；运行时它仍是可选依赖）。
+      # 这条路径以前完全没有自动守卫 —— 改 src/runtime/three/ 或 importmap / vendor 路由
+      # 没人拦。它验的是：3D 内容真的叠进帧里、同一帧两次渲染逐字节一致、
+      # 跳帧与连渲一致、光照真的参与着色（只有环境光时物体应当是"平"的）、
+      # 以及不用 3D 的规格**不会去加载 three**。
+      - name: 3D 图层（内容入帧 / 确定性 / 光照真的生效 / 不用 3D 不加载 three）
+        run: node tools/verify-three.mjs .
+
       - name: README 快速开始路径（文档承诺要真的走通）
         run: node tools/verify-readme.mjs .
 
