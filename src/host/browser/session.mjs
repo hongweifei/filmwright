@@ -167,8 +167,18 @@ export async function openSession(url, size, opts = {}) {
   let devPort = null;
   for (let i = 0; i < 300; i++) {
     if (existsSync(portFile)) {
-      devPort = readFileSync(portFile, 'utf8').split('\n')[0].trim();
-      break;
+      try {
+        const txt = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+        // 端口必须是数字：文件可能只写了一半（Windows 上更常见）
+        if (/^\d+$/.test(txt)) { devPort = txt; break; }
+      } catch (e) {
+        // ⚠️ **Windows 上 Chrome 还锁着这个文件**：`existsSync` 为真，
+        // `readFileSync` 抛 `EBUSY: resource busy or locked`（CI 的 windows 那条实测红过）。
+        // 那是"**还没就绪**"，不是失败 —— 继续等，别把它抛出去。
+        // （`close()` 里删 profile 时踩过同一个 EBUSY，那边是等进程退出；
+        //   这边是文件正在被写，处理方式不同。）
+        if (e.code !== 'EBUSY' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+      }
     }
     if (chrome.exitCode !== null) throw new Error('filmwright: 浏览器提前退出：' + chromeErr);
     await sleep(100);
