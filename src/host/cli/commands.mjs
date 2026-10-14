@@ -19,6 +19,10 @@ import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
 import {exportSrt, readTranslation} from '../media/srt.mjs';
 import {prepareClips} from '../media/clips.mjs';
+import {
+  segmentDir, segmentKey, planSegments, findCached, recordSegment, pruneSegments,
+  engineFingerprint, projectFingerprint,
+} from '../media/incremental.mjs';
 import {sceneSchema} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
@@ -330,35 +334,154 @@ export async function render(ctx) {
   const crf = str(ctx.args, 'crf', '16');
   // --resume：已渲好的分片直接复用（长片渲到 90% 挂掉时不用从头来）
   const resume = ctx.args.resume === true || ctx.args.resume === 'true';
+  // --incremental：按内容哈希**跨次**复用已渲的段（改一两个镜头时不用重渲整片）
+  const incremental = ctx.args.incremental === true || ctx.args.incremental === 'true';
+  // --proxy [scale]：代理渲染——半（或更低）分辨率快速预览。默认 0.5
+  const proxyArg = ctx.args.proxy;
+  const proxy = proxyArg === undefined ? null : (proxyArg === true ? 0.5 : Number(proxyArg));
+  if (proxy !== null && (!Number.isFinite(proxy) || proxy <= 0 || proxy > 1)) {
+    const e = new Error(`filmwright: --proxy 要是 0–1 之间的比例，收到 ${proxyArg}`);
+    e.code = 'BAD_PROXY';
+    e.hint = '例：--proxy 0.5 出一半分辨率的预览';
+    throw e;
+  }
 
   const t0 = Date.now();
-  let written;
-  if (shards <= 1) {
-    ({written} = await renderRange(ctx.projectDir, ctx.proj, {
-      from, to, out, crf, opts: ctx.opts,
-      onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
-    }));
-    say(`${out}  ${written} 帧  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  const size = ctx.proj.raw.size ?? {width: 1280, height: 720};
+  const fps = ctx.proj.raw.fps ?? 30;
+  const opt = {
+    from, to, out, crf, opts: ctx.opts,
+    onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
+  };
+
+  if (incremental) {
+    const segFrames = ctx.args['seg-frames'] ? num(ctx.args, 'seg-frames') : 300;
+    const r = await renderIncremental(ctx, {
+      from, to, out, crf, say, segFrames,
+      width: size.width, height: size.height, fps,
+      proxy, shards,
+    });
     return {
       code: 0,
       data: {
-        out, frames: written, shards, seconds: Math.round((Date.now() - t0) / 1000),
-        msPerFrame: +(((Date.now() - t0) / written) || 0).toFixed(1),
+        out, frames: to - from + 1, seconds: Math.round((Date.now() - t0) / 1000),
+        incremental: true, segments: r.segments,
+        reusedSegments: r.reused, renderedSegments: r.rendered,
+        proxy: proxy ?? null,
+      },
+    };
+  }
+
+  if (shards <= 1) {
+    const r = await renderOneRange(ctx, {out, crf, say, from, to, proxy});
+    say(`${out}  ${r.written} 帧  ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+    return {
+      code: 0,
+      data: {
+        out, frames: r.written, shards, seconds: Math.round((Date.now() - t0) / 1000),
+        msPerFrame: +(((Date.now() - t0) / r.written) || 0).toFixed(1),
+        proxy: proxy ?? null,
       },
     };
   }
   const sh = await renderSharded(ctx, {from, to, shards, out, crf, say, resume});
-  written = sh.frames;
   return {
     code: 0,
     data: {
-      out, frames: written, shards, seconds: Math.round((Date.now() - t0) / 1000),
-      msPerFrame: +(((Date.now() - t0) / written) || 0).toFixed(1),
+      out, frames: sh.frames, shards, seconds: Math.round((Date.now() - t0) / 1000),
+      msPerFrame: +(((Date.now() - t0) / sh.frames) || 0).toFixed(1),
       parts: sh.parts,      // [{i, from, to, seconds, reused, attempts}]
       reused: sh.reused,
       retried: sh.retried,  // 有分片首次失败、重试后成功的个数
     },
   };
+}
+
+/**
+ * 单段渲染（可选代理分辨率）。
+ *
+ * 代理渲染只是把输出尺寸按比例缩小 —— **不改绘制逻辑**，所以画面构图与成片
+ * 一致（都是同一套设计坐标缩放），只是像素少。用途是快速看节奏与版式。
+ */
+async function renderOneRange(ctx, {out, crf, say, from, to, proxy}) {
+  if (!proxy || proxy === 1) {
+    return renderRange(ctx.projectDir, ctx.proj, {
+      from, to, out, crf, opts: ctx.opts,
+      onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
+    });
+  }
+  const size = ctx.proj.raw.size ?? {width: 1280, height: 720};
+  const small = {
+    ...ctx.proj.raw,
+    size: {width: Math.max(2, Math.round(size.width * proxy)), height: Math.max(2, Math.round(size.height * proxy))},
+  };
+  const smallProj = {...ctx.proj, raw: small};
+  return renderRange(ctx.projectDir, smallProj, {
+    from, to, out, crf, opts: ctx.opts,
+    onProgress: (w, t) => { if (w % 100 === 0 || w === t) say(`  ${w}/${t}`); },
+  });
+}
+
+/**
+ * 增量重渲：切成段 → 按内容哈希复用 → 只渲变化了的段 → 拼接。
+ *
+ * 安全性的根据：引擎是确定性的（第 N 帧只依赖 N），所以「输入指纹 + 段区间」
+ * 相同就一定能复用。指纹覆盖引擎源码、项目全部参与绘制的文件、输出参数。
+ */
+async function renderIncremental(ctx, {from, to, out, crf, say, segFrames, width, height, fps, proxy, shards}) {
+  const workDir = ctx.proj.paths.workDir;
+  const dir = segmentDir(workDir);
+  mkdirSync(dir, {recursive: true});
+
+  const engine = engineFingerprint(RUNTIME_ROOT);
+  const project = projectFingerprint(ctx.proj, ctx.projectDir);
+  const outW = proxy ? Math.max(2, Math.round(width * proxy)) : width;
+  const outH = proxy ? Math.max(2, Math.round(height * proxy)) : height;
+
+  const segs = planSegments(to - from + 1, segFrames, from, to);
+  const liveKeys = new Set();
+  const jobs = segs.map((s) => {
+    const key = segmentKey({engine, project, from: s.from, to: s.to, width: outW, height: outH, fps, crf});
+    liveKeys.add(key);
+    const hit = findCached(dir, s.index, key);
+    return {...s, key, hit};
+  });
+
+  const reused = jobs.filter((j) => j.hit).length;
+  const todo = jobs.filter((j) => !j.hit);
+  say(`增量：${segs.length} 段（每段 ${segFrames} 帧），复用 ${reused}，需渲 ${todo.length}` +
+    (proxy ? `（代理 ${outW}×${outH}）` : ''));
+
+  // 需要渲的段：用 renderSharded 的并发能力逐段渲（每段内部再按 shards 分片）
+  for (const j of todo) {
+    const part = join(dir, `seg${String(j.index).padStart(4, '0')}-${j.key}.mp4`);
+    const p0 = Date.now();
+    await renderOneRange(ctx, {out: part, crf, say: () => {}, from: j.from, to: j.to, proxy});
+    if (!existsSync(part) || statSync(part).size === 0) {
+      throw new Error(`filmwright: 增量渲染的第 ${j.index} 段没产出文件`);
+    }
+    recordSegment(dir, j.index, j.key, {
+      from: j.from, to: j.to, frames: j.to - j.from + 1, bytes: statSync(part).size,
+    });
+    say(`  段 ${j.index}（${j.from}-${j.to}）渲染完成 ${((Date.now() - p0) / 1000).toFixed(0)}s`);
+  }
+
+  // 拼接：按段顺序 concat
+  const listFile = join(dir, 'segments.txt');
+  const parts = jobs.map((j) => j.hit ? j.hit.part : join(dir, `seg${String(j.index).padStart(4, '0')}-${j.key}.mp4`));
+  mkdirSync(dirname(out), {recursive: true});
+  writeFileSync(listFile, parts.map((p) => `file '${basename(p).replace(/'/g, "'\\''")}'`).join('\n'), 'utf8');
+  const ff = spawnTool(ffmpegPath(), ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', out],
+    {stdio: ['ignore', 'ignore', 'inherit']});
+  const code = await new Promise((res) => ff.on('close', res));
+  checkSpawned(ff, '增量拼接');
+  if (code !== 0) throw new Error('filmwright: 增量拼接失败');
+
+  // 清理不再匹配的旧段（缓存别无限涨）
+  const pruned = pruneSegments(dir, liveKeys);
+  if (pruned) say(`  清理旧段 ${pruned} 个文件`);
+
+  return {segments: segs.length, reused, rendered: todo.length, pruned};
 }
 
 /** 画面与配音合流。 */

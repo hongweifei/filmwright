@@ -216,6 +216,26 @@ export async function openSession(url, size, opts = {}) {
     }
   });
 
+  /**
+   * 读 canvas 后备存储的 PNG（同步绘制完成后立刻读，不经过合成器）。
+   *
+   * 用 toDataURL 而不是 getImageData + 自己编码：toDataURL 由浏览器内部完成
+   * 编码，跨平台一致；而且它返回的就是「这一张 canvas 的 PNG」。
+   * 不走 `Page.captureScreenshot` 的原因见 frame() 上的注释（合成器竞态）。
+   */
+  const readCanvas = async (n) => {
+    const r = await sendTimeout('Runtime.evaluate', {
+      // 显式取渲染用的那个 canvas；页面里只有一个。
+      expression: `document.querySelector('canvas').toDataURL('image/png')`,
+      returnByValue: true,
+    }, 60000);
+    const dataUrl = r.result?.result?.value;
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/png;base64,')) {
+      throw new Error('filmwright: 第 ' + n + ' 帧从 canvas 读数失败（toDataURL 没返回 PNG）');
+    }
+    return Buffer.from(dataUrl.slice('data:image/png;base64,'.length), 'base64');
+  };
+
   return {
     info,
     /** 原始 CDP 调用（Input / Emulation 等高级用法）；普通取值用 evaluate。 */
@@ -228,9 +248,31 @@ export async function openSession(url, size, opts = {}) {
       if (r.result?.exceptionDetails) {
         throw new Error('filmwright: 第 ' + n + ' 帧抛错：' + JSON.stringify(r.result.exceptionDetails).slice(0, 400));
       }
-      const shot = await sendTimeout('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false}, 60000);
-      if (!shot.result?.data) throw new Error('filmwright: 第 ' + n + ' 帧截图失败');
-      return Buffer.from(shot.result.data, 'base64');
+      return readCanvas(n);
+    },
+
+    /**
+     * 从 **canvas 后备存储**直接读像素（而不是 Page.captureScreenshot）。
+     *
+     * ## 为什么不用截图（实测出来的真 bug）
+     *
+     * 绘制是同步的（`drawFrame` 画完就返回），但 `Page.captureScreenshot` 取的是
+     * **合成器已经呈现的那一帧** —— 合成是异步的，浏览器可能还没把刚画好的内容提交，
+     * 于是截图**偶尔取到上一帧的画面**。
+     *
+     * 实测（同一会话、同一批 60 帧、8 轮，每轮比对全部帧的 sha256）：
+     *   Page.captureScreenshot → 3/60 帧不稳定（每帧表现为「7 次一致 + 1 次孤例」）
+     *   canvas.toDataURL       → 0/60 帧不稳定
+     * 绘制本身是确定的（stills 连取 5 次逐字节相同），所以不确定的是**取像素这一步**。
+     *
+     * 危害不只是「偶尔一帧不对」：有损编码会把它放大 —— 60 帧里 1 帧不同，
+     * 编出来的 mp4 可能 45/60 帧都不同（GOP 与码率控制的连锁），
+     * 于是像素回归、增量重渲的判据全部失效（我正是在做增量重渲时撞上它的）。
+     *
+     * canvas 直读读的是后备存储（绘制结果本身），与合成器无关，因此确定。
+     */
+    async captureCanvas(n) {
+      return readCanvas(n);
     },
     /** 只跑绘制代码、不截图：用来把每帧都过一遍查错（比截图快得多）。 */
     async drawOnly(n) {

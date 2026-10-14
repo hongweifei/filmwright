@@ -1,4 +1,4 @@
-// 像素回归守卫：抓一组帧的哈希，之后重渲必须逐字节相同。
+// 像素回归守卫：抓一组帧的**像素**哈希，之后重渲必须画面相同。
 //
 // 用途：**结构调整不该改画面**。重构（搬文件、拆模块、改依赖方向）之后跑一次，
 // 全同才说明真的只是搬家；有一帧不同就说明行为被改了。
@@ -9,6 +9,15 @@
 // 基准存在 <项目>/regression-baseline.json —— **要提交**（它是夹具，几 KB，
 // 别人 clone 下来才能做回归）。渲出的帧在 <项目>/.work/ 下，那是产物，不提交。
 // 早先把基准放在 .work/ 里一起忽略了，结果谁 clone 都跑不了 verify。
+//
+// ## 为什么存**像素**哈希而不是 PNG 字节哈希
+//
+// 同一张画面，不同取像素方式编出的 PNG **字节可以不同而像素完全相同**。
+// 实测：`Page.captureScreenshot` 出的 PNG 约 470KB，`canvas.toDataURL` 约 920KB，
+// 两者**像素哈希一致、字节哈希不同**。用字节哈希当基线时，换一个取像素方式
+// 就会全线报红 —— 而画面其实一个像素都没变，守卫变成了噪音。
+// 存像素哈希后，守卫只对**真正的画面变化**报警，这才是它该有的语义。
+// （代价：verify 要对每帧解一次 PNG，6 帧约 0.3s，可接受。）
 import {execFileSync} from 'node:child_process';
 import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -71,19 +80,25 @@ try {
   process.exit(1);
 }
 
-const digest = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+/** 帧的**像素**哈希：解码成 rgb24 再哈希（对 PNG 编码差异免疫）。 */
+const pixelDigest = (p) => {
+  const r = execFileSync('ffmpeg', ['-v', 'error', '-i', p, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+    {maxBuffer: 256 * 1024 * 1024});
+  return createHash('sha256').update(r).digest('hex');
+};
+
 const shot = (n) => join(outDir, `f${String(n).padStart(5, '0')}.png`);
 
 if (cmd === 'capture') {
-  const data = {};
+  const data = {_format: 'pixel-rgb24-v1', frames: {}};
   for (const n of frames) {
     const p = shot(n);
     if (!existsSync(p)) throw new Error('渲染缺帧：' + p);
-    data[n] = digest(p);
+    data.frames[n] = pixelDigest(p);
   }
   writeFileSync(baseFile, JSON.stringify(data, null, 1), 'utf8');
-  console.log(`已存基准（${frames.length} 帧）-> ${baseFile}`);
-  for (const n of frames) console.log(`  f${n}  ${data[n].slice(0, 16)}`);
+  console.log(`已存基准（${frames.length} 帧，像素哈希）-> ${baseFile}`);
+  for (const n of frames) console.log(`  f${n}  ${data.frames[n].slice(0, 16)}`);
   process.exit(0);
 }
 
@@ -91,13 +106,22 @@ if (!existsSync(baseFile)) {
   console.error(`没有基准：${baseFile}\n先跑一次：node tools/regression.mjs capture --project <目录>`);
   process.exit(1);
 }
-const base = JSON.parse(readFileSync(baseFile, 'utf8'));
+const raw = JSON.parse(readFileSync(baseFile, 'utf8'));
+// 兼容旧格式（只有 {帧号: PNG字节哈希}）：能读，但要提示重抓 ——
+// 用旧哈希与新像素哈希比会全线报红，那不是画面变了。
+if (!raw._format) {
+  console.error(`✗ 基准是旧格式（PNG 字节哈希）：${baseFile}`);
+  console.error('  旧格式对「换取像素方式但画面不变」会误报，请重抓：');
+  console.error(`  node tools/regression.mjs capture --project ${projectDir}`);
+  process.exit(2);
+}
+const base = raw.frames;
 const differs = [];
 let same = 0;
 for (const n of frames) {
   const want = base[n];
   if (!want) { console.log(`  f${n}  基准里没有这一帧，跳过`); continue; }
-  const got = digest(shot(n));
+  const got = pixelDigest(shot(n));
   if (got === want) { same++; console.log(`  f${n}  相同  ${got.slice(0, 16)}`); }
   else differs.push([n, got.slice(0, 16), want.slice(0, 16)]);
 }
@@ -108,4 +132,4 @@ if (differs.length) {
   console.log('\n纯结构调整不该改画面 —— 这些差异要么是故意的（那就重新 capture），要么是 bug。');
   process.exit(1);
 }
-console.log(`\n✓ ${same} 帧全部与基准逐字节相同`);
+console.log(`\n✓ ${same} 帧画面全部与基准相同（像素级）`);
