@@ -39,6 +39,7 @@
     "test": "node --test \"tests/**/*.test.mjs\" && npm run test:py",
     "test:js": "node --test \"tests/**/*.test.mjs\"",
     "test:py": "node tools/run-python-tests.mjs",
+    "coverage": "node --test --experimental-test-coverage \"tests/**/*.test.mjs\"",
     "check": "node bin/filmwright.mjs check --project examples/minimal",
     "render": "node bin/filmwright.mjs render --project examples/minimal --shards 3",
     "all": "node bin/filmwright.mjs all --project examples/minimal --shards 3",
