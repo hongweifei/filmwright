@@ -58,6 +58,12 @@ jobs:
         # 数字从实现里读，文档跟不上就让 CI 红。
         run: node tools/verify-docs.mjs
 
+      # 死导出守卫（棘轮）：盘点时发现 src/ 的 376 个导出里有 3 个没人用。
+      # "没人用"不等于"该删"（可能是给使用者的公开 API），所以不做一刀切：
+      # 当前状态记录在名单里，**新出现**死导出就红；名单里已被清理的也红（防名单腐烂）。
+      - name: 死导出（棘轮：新增死导出 / 名单陈旧 都算错）
+        run: node tools/dead-exports.mjs
+
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
     strategy:
