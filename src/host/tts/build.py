@@ -403,6 +403,39 @@ def run(project_dir):
         if all_subs[i]['to'] >= all_subs[i + 1]['from']:
             all_subs[i]['to'] = all_subs[i + 1]['from'] - 1
 
+    # 第二语言：读 script/translation.json（可选），填进每个字幕块的 text2。
+    #
+    # **框架不翻译**（AI 在框架外产出译文，边界不破）—— 这里只负责把译文带进
+    # 时间轴，好让画面内双语字幕与 srt 导出用的是**同一份数据**
+    # （否则会出现「画面双语、导出单语」）。
+    #
+    # 文件形状与 `filmwright srt --translation` 认的一致，两种都行：
+    #   [{"from": 120, "to": 200, "text": "..."}]        按起始帧对齐
+    #   {"1": "...", "2": "..."}                          按字幕块序号（1 起）对齐
+    # 缺项就留空（那一块只显示原文），不编内容。
+    tr_path = os.path.join(project_dir, 'script', 'translation.json')
+    tr_used = 0
+    if os.path.exists(tr_path):
+        try:
+            with open(tr_path, encoding='utf-8') as fh:
+                tr = json.load(fh)
+        except Exception as e:
+            raise SystemExit('filmwright: 读 script/translation.json 失败：%s' % e)
+        for i, sb in enumerate(all_subs):
+            txt = None
+            if isinstance(tr, list):
+                hit = next((x for x in tr if isinstance(x, dict) and x.get('from') == sb['from']), None)
+                txt = hit.get('text') if hit else None
+            elif isinstance(tr, dict):
+                txt = tr.get(str(i + 1))
+            if isinstance(txt, str) and txt.strip():
+                sb['text2'] = txt.strip()
+                tr_used += 1
+        if tr_used:
+            print('第二语言：%d/%d 个字幕块填了译文（script/translation.json）' % (tr_used, len(all_subs)))
+        else:
+            print('⚠ script/translation.json 在，但一个都没匹配上 —— 检查 from 帧号或块序号')
+
     tl = {'fps': t.fps, 'total_frames': total,
           'engine': t.engine_name, 'voice': t.cfg.get('voice', ''),
           'rate': t.cfg.get('rate', '+0%'), 'slug': t.slug,
