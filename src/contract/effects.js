@@ -29,10 +29,10 @@ export const EFFECT_SPECS = {
     note: '高斯模糊（可分离，多趟迭代）。radius=0 时直通，不产生额外趟',
     noopWhen: [{radius: 0}],
     params: {
-      // 上限 36 不是随手定的：实现用"小核多趟"保证抽头间距始终 ≤2px（采样充分），
-      // 36 是 16 趟能覆盖的范围。更大的半径要靠金字塔（降采样→小核→升采样），
-      // 还没做；现在放开上限会出现"半径越大反而越锐"的振铃（实测过）。
-      radius: {kind: 'num', min: 0, max: 36, required: true, note: '模糊半径（像素）'},
+      // 上限 400：全分辨率上小核能"采样充分"地处理到约 16px，再大走**金字塔**
+      // （降采样 → 小核 → 升采样），所以这里不再是"实现撑不住"的边界，
+      // 而是"再大也没有视觉意义"的产品边界（400px 半径在 720p 上几乎等于整幅糊掉）。
+      radius: {kind: 'num', min: 0, max: 400, required: true, note: '模糊半径（像素）'},
     },
   },
 
@@ -40,7 +40,7 @@ export const EFFECT_SPECS = {
     note: '辉光/泛光：把亮度超过阈值的部分抽出来模糊，再叠加回原图。不给参数就是一次默认辉光',
     noopWhen: [{intensity: 0}, {radius: 0}],
     params: {
-      radius: {kind: 'num', min: 0, max: 36, def: 16, note: '辉光扩散半径（像素）'},
+      radius: {kind: 'num', min: 0, max: 200, def: 16, note: '辉光扩散半径（像素）'},
       intensity: {kind: 'num', min: 0, max: 3, def: 0.8, note: '叠加强度'},
       threshold: {kind: 'num', min: 0, max: 1, def: 0.7,
         note: '亮度阈值：只有比它亮的像素才发光（调低则光晕铺得更开）'},

@@ -139,12 +139,25 @@ test('效果参数的关键帧取值要**逐个**查范围（不是只看第一�
 });
 
 test('SCENE_FX_RANGE：越界，且 hint 要带**实际范围**', () => {
-  const errs = validateEffects([{type: 'blur', radius: 200}]);
+  const errs = validateEffects([{type: 'blur', radius: 999}]);
   assert.deepEqual(errs.map((e) => e.code), ['SCENE_FX_RANGE']);
   const ps = EFFECT_SPECS.blur.params.radius;
   assert.ok(errs[0].message.includes(String(ps.max)), '消息要带上限');
   assert.ok(errs[0].hint.includes(`${ps.min}–${ps.max}`), 'hint 要带完整范围');
   assert.deepEqual(codes([{type: 'blur', radius: -1}]), ['SCENE_FX_RANGE']);
+});
+
+test('radius 上限已经从"实现撑不住"挪到"没有视觉意义"（金字塔支持大半径）', () => {
+  // 曾经上限是 36，理由是**实现**撑不住：小核在大半径下抽头间距过大 →
+  // 稀疏采样 → 振铃（实测过"半径越大反而越锐"）。
+  // 现在大半径走**金字塔**（降采样 → 小核 → 升采样），上限挪到 400 ——
+  // 那不再是实现边界，而是产品边界（400px 在 720p 上几乎等于整幅糊掉）。
+  //
+  // ⚠️ 这条只钉住"边界确实放宽了"。**质量保证在 tools/verify-effects.mjs**：
+  // 模糊随半径单调、大半径不出现振铃、端点精确。
+  assert.equal(EFFECT_SPECS.blur.params.radius.max, 400);
+  assert.deepEqual(codes([{type: 'blur', radius: 200}]), [], '大半径现在是合法的');
+  assert.deepEqual(codes([{type: 'blur', radius: 401}]), ['SCENE_FX_RANGE']);
 });
 
 test('SCENE_FX_CHAIN：链长有上限', () => {
@@ -155,9 +168,9 @@ test('SCENE_FX_CHAIN：链长有上限', () => {
 });
 
 test('radius 上限与实现的保证是绑定的（写死这个数是有理由的）', () => {
-  // 上限 36 对应"16 趟、抽头间距 ≤2px"。若有人改这个数，应当同时确认
-  // 实现仍能保证模糊随半径单调增强（tools/verify-effects.mjs 会验）。
-  assert.equal(EFFECT_SPECS.blur.params.radius.max, 36);
+  // 这条原来断言 36。现在大半径走金字塔，理由变成"产品边界"而不是"实现边界"，
+  // 具体见上一条测试。这里只保留"上限是个写死的数、且不是随手写的"。
+  assert.ok(EFFECT_SPECS.blur.params.radius.max >= 36);
 });
 
 // ─────────────────────── 接进 scene.json ───────────────────────

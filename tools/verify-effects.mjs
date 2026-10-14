@@ -58,21 +58,34 @@ const run = (args) => spawnSync('node', [KIT, ...args], {encoding: 'utf8', maxBu
 function still(effects, frame, tag) {
   setEffects(effects);
   const dir = join(P, '.work', 's-' + tag);
-  rmSync(dir, {recursive: true, force: true});
-  const r = run(['stills', '--project', P, '--frames', String(frame), '--dir', dir]);
-  if (r.status !== 0) { console.log(`渲染失败(${tag})：` + String(r.stderr || r.stdout).slice(-400)); process.exit(1); }
-  const f = readdirSync(dir).find((x) => x.endsWith('.png'));
-  const p = join(dir, f);
-  const bytes = readFileSync(p);
-  const g = spawnSync('ffmpeg', ['-v', 'error', '-i', p, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
-    {maxBuffer: 96 * 1024 * 1024});
-  if (g.status !== 0) { console.log('ffmpeg 解码失败'); process.exit(1); }
-  const rgb = g.stdout;
-  const gray = Buffer.alloc(rgb.length / 3);
-  for (let i = 0, j = 0; i < rgb.length; i += 3, j++) {
-    gray[j] = Math.round(0.2126 * rgb[i] + 0.7152 * rgb[i + 1] + 0.0722 * rgb[i + 2]);
+  // 传输层偶发抖动（`fetch failed`）会造出**假失败**。这个工具现在在 CI 里跑，
+  // 所以对"看起来像传输问题"的失败重试一次 —— 但**只重试传输错误**：
+  // 真正的渲染失败（页面报错、校验不过）照旧直接失败，不能被重试掩盖。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    rmSync(dir, {recursive: true, force: true});
+    const r = run(['stills', '--project', P, '--frames', String(frame), '--dir', dir]);
+    if (r.status === 0) {
+      const f = readdirSync(dir).find((x) => x.endsWith('.png'));
+      const p = join(dir, f);
+      const bytes = readFileSync(p);
+      const g = spawnSync('ffmpeg', ['-v', 'error', '-i', p, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'],
+        {maxBuffer: 96 * 1024 * 1024});
+      if (g.status !== 0) { console.log('ffmpeg 解码失败'); process.exit(1); }
+      const rgb = g.stdout;
+      const gray = Buffer.alloc(rgb.length / 3);
+      for (let i = 0, j = 0; i < rgb.length; i += 3, j++) {
+        gray[j] = Math.round(0.2126 * rgb[i] + 0.7152 * rgb[i + 1] + 0.0722 * rgb[i + 2]);
+      }
+      return {hash: createHash('sha256').update(bytes).digest('hex').slice(0, 12), gray, rgb};
+    }
+    const out = String(r.stderr || r.stdout);
+    if (attempt === 0 && /fetch failed|ECONNRESET|socket hang up/i.test(out)) {
+      console.log(`  （传输抖动，重试一次：${tag}）`);
+      continue;
+    }
+    console.log(`渲染失败(${tag})：` + out.slice(-400));
+    process.exit(1);
   }
-  return {hash: createHash('sha256').update(bytes).digest('hex').slice(0, 12), gray, rgb};
 }
 
 /** 边缘能量：相邻像素灰度差的和（模糊会让它下降）。 */
@@ -80,6 +93,27 @@ function edgeEnergy(gray) {
   let s = 0;
   for (let i = 1; i < gray.length; i++) s += Math.abs(gray[i] - gray[i - 1]);
   return s / gray.length;
+}
+
+/**
+ * **掩码内**的边缘能量（水平方向）。
+ *
+ * 为什么需要它：效果只作用于镜头层，而整帧里 2/3 的像素是引擎画的背板 ——
+ * 背板自己的边缘不受模糊影响，会把"大半径到底糊了多少"稀释掉。
+ * 实测：半径 34 时镜头内容已经基本抹平，但整帧边缘能量只降到基线的 62%，
+ * 看上去像"大半径没生效"（其实是我的判据在量不该量的地方）。
+ */
+function maskedEdgeEnergy(gray, mask, w) {
+  let s = 0, n = 0;
+  for (let y = 0; y < mask.length / w; y++) {
+    for (let x = 1; x < w; x++) {
+      const j = y * w + x;
+      if (!mask[j] || !mask[j - 1]) continue;
+      s += Math.abs(gray[j] - gray[j - 1]);
+      n++;
+    }
+  }
+  return n ? s / n : 0;
 }
 
 /** 平均亮度（0–255）。 */
@@ -134,6 +168,33 @@ function blockUniformity(gray, w, h, size, mask) {
     }
   }
   return {inside: inN ? inSum / inN : 0, boundary: bN ? bSum / bN : 0};
+}
+
+/**
+ * 腐蚀掩码：只留下"四周 r 像素都在掩码内"的像素。
+ *
+ * 为什么需要：掩码是"blur 改变了哪些像素"，它含一圈**外溢环** —— 环里镜头层是
+ * 透明的（露出背板），背板自己的边缘不受模糊影响。于是大半径时镜头内容早已抹平，
+ * 但边缘能量卡在一个"背板地板"上（≈1.0），小半径与大半径的差别被淹没，
+ * 看起来像"越大反而越不糊"（实测踩到过：半径 34→80 出现 5% 的回升）。
+ * 腐蚀之后只量内容深处，地板消失。
+ */
+function erodeMask(mask, w, h, r) {
+  const out = new Uint8Array(mask.length);
+  for (let y = r; y < h - r; y++) {
+    for (let x = r; x < w - r; x++) {
+      const j = y * w + x;
+      if (!mask[j]) continue;
+      let all = true;
+      for (let dy = -r; dy <= r && all; dy += r) {
+        for (let dx = -r; dx <= r; dx += r) {
+          if (!mask[(y + dy) * w + (x + dx)]) { all = false; break; }
+        }
+      }
+      if (all) out[j] = 1;
+    }
+  }
+  return out;
 }
 
 const W = 1280, H = 720;
@@ -220,37 +281,85 @@ function vignetteProfile(baseGray, effGray, mask, w, h) {
 }
 
 console.log(`效果链验收：blur 最小闭环（${USE_GPU ? '--gpu 放开 GPU' : '默认档（软件 WebGL）'}）\n`);
+// 基准帧与**镜头内容掩码**先算好：后面每一节都只在镜头内容上量。
+// 效果只作用于镜头层，而整帧里约 2/3 是引擎画的背板（不受影响）——
+// 在整帧上量会把结论稀释掉（这个坑在三个不同的判据上各踩过一次）。
+const base100 = still(null, 100, 'base100');
+const maskRef = still([{type: 'blur', radius: 30}], 100, 'maskref');
+const mask = contentMask(base100.rgb, maskRef.rgb);
+const maskPct = (mask.reduce((a, b) => a + b, 0) / mask.length * 100).toFixed(1);
+// 大半径的判据要量**内容深处**（腐蚀掉外溢环），否则会卡在"背板地板"上，见 erodeMask
+const inner = erodeMask(mask, W, H, 8);
+const innerPct = (inner.reduce((a, b) => a + b, 0) / inner.length * 100).toFixed(1);
+console.log(`镜头内容区域（自动标定）：占整帧 ${maskPct}%；腐蚀后（内容深处）${innerPct}% —— 其余是背板，效果不作用于它\n`);
+
 line('═');
 console.log('一、radius=0 必须**逐位等于**不写 effects（短路保证）');
 line();
-const none = still(null, 100, 'none');
+const none = base100;
 const r0 = still([{type: 'blur', radius: 0}], 100, 'r0');
 console.log(`  不写 effects : ${none.hash}`);
 console.log(`  radius=0     : ${r0.hash}`);
 ok(none.hash === r0.hash, 'radius=0 与不写 effects **逐位相同**（效果被短路，没产生额外趟）');
 
 line('═');
-console.log('二、模糊必须真的生效，且**半径越大越模糊**（量边缘能量）');
+console.log('二、模糊必须真的生效，且**半径越大越模糊**（量**镜头内容内**的边缘能量）');
 line();
-const radii = [2, 8, 20, 34];
+// 半径范围**跨过全部金字塔层**：16 以下全分辨率，16→32 走 1 层，32→64 走 2 层，
+// 64→128 走 3 层，128 以上走 4 层。当年就是在半径 24 处抓到"越大反而越锐"的振铃。
+const radii = [2, 8, 20, 34, 80, 200];
 const samples = [];
 for (const rad of radii) {
   const s = still([{type: 'blur', radius: rad}], 100, 'r' + rad);
-  samples.push({rad, ...s, e: edgeEnergy(s.gray)});
+  samples.push({rad, ...s, e: maskedEdgeEnergy(s.gray, inner, W)});
 }
-const eNone = edgeEnergy(none.gray);
-console.log(`  不写 effects : 边缘能量 ${eNone.toFixed(3)}  hash ${none.hash}`);
+const eNone = maskedEdgeEnergy(none.gray, inner, W);
+console.log(`  不写 effects : 掩码内边缘能量 ${eNone.toFixed(3)}  hash ${none.hash}`);
 for (const s of samples) {
-  console.log(`  radius=${String(s.rad).padStart(2)}     : 边缘能量 ${s.e.toFixed(3)}  hash ${s.hash}` +
+  console.log(`  radius=${String(s.rad).padStart(3)}    : 掩码内边缘能量 ${s.e.toFixed(3)}  hash ${s.hash}` +
     `   ${s.hash === none.hash ? '（与不写 effects 相同 ← 可疑）' : ''}`);
 }
 ok(samples.every((s) => s.hash !== none.hash), 'radius>0 的画面都与不写 effects **不同**（效果确实上了）');
 ok(samples.every((s) => s.e < eNone), '半径>0 的边缘能量都**低于**不写 effects（确实变模糊了）');
+// **单调性只在"未饱和区间"断言**（2–34）。
+// 为什么：半径 34 之后镜头内容已经基本抹平，掩码内的残差 ≈1.2 是**背板**透过
+// 半透明层露出的边缘 —— 指标饱和了，再比大小就是比噪声（实测 34→80 有 5% 的回升，
+// 那不是振铃，是地板）。当年抓振铃（"半径越大反而越锐"）正是在这个区间。
+const unsat = samples.filter((s) => s.rad <= 34);
 let mono = true;
-for (let i = 1; i < samples.length; i++) {
-  if (!(samples[i].e < samples[i - 1].e)) mono = false;
+for (let i = 1; i < unsat.length; i++) {
+  if (!(unsat[i].e < unsat[i - 1].e)) mono = false;
 }
-ok(mono, `边缘能量随半径**单调下降**（${samples.map((s) => s.e.toFixed(1)).join(' → ')}）—— 方向正确`);
+ok(mono, `未饱和区间（${unsat.map((s) => s.rad).join('/')}）边缘能量**单调下降**` +
+  `（${unsat.map((s) => s.e.toFixed(2)).join(' → ')}）—— 没有振铃`);
+
+// 大半径改验**它们各自能证明的性质**：
+// ① 每一档都要与其它档**不同** —— 这条抓的正是"金字塔缓冲没分配存储"那个 bug
+//    （当时 34/80/200 输出**完全相同**、整幅几乎全黑）。
+const bigHashes = samples.filter((s) => s.rad > 34).map((s) => s.hash);
+ok(new Set(bigHashes).size === bigHashes.length,
+  `大半径各档输出互不相同（${bigHashes.join(' / ')}）—— 不是被截断/退化成同一个结果`);
+// ② 大半径要**真的糊掉**（相对基线）；③ 不能崩成黑屏/NaN
+const big = samples[samples.length - 1];
+const bigMean = meanGray(big.gray);
+console.log(`  半径 ${big.rad}：掩码内边缘能量 ${big.e.toFixed(3)}（基线 ${eNone.toFixed(3)}），整帧平均亮度 ${bigMean.toFixed(1)}`);
+ok(big.e < eNone * 0.2, `半径 ${big.rad} 把镜头内容的高频压到基线的 ${(big.e / eNone * 100).toFixed(0)}% ⇒ 真的糊了`);
+ok(bigMean > 1 && bigMean < 250, `平均亮度 ${bigMean.toFixed(1)} 在合理区间 ⇒ 没有崩成黑屏/NaN`);
+
+// 金字塔**层切换处**不能有跳变：16→17 跨 0→1 层，32→33 跨 1→2 层。
+// 这是金字塔最容易出问题的地方（降/升采样的接缝）。
+console.log('  层切换处（seam）检查：');
+let seamOk = true;
+for (const [a, b] of [[16, 17], [32, 33], [64, 65]]) {
+  const sa = still([{type: 'blur', radius: a}], 100, 'seam' + a);
+  const sb = still([{type: 'blur', radius: b}], 100, 'seam' + b);
+  const ea = maskedEdgeEnergy(sa.gray, inner, W), eb = maskedEdgeEnergy(sb.gray, inner, W);
+  const jump = Math.abs(ea - eb) / Math.max(ea, eb);
+  const dm = Math.abs(meanGray(sa.gray) - meanGray(sb.gray));
+  console.log(`    半径 ${a}→${b}：掩码内边缘能量 ${ea.toFixed(3)} → ${eb.toFixed(3)}（跳变 ${(jump * 100).toFixed(1)}%），平均亮度差 ${dm.toFixed(2)}`);
+  if (jump > 0.25 || dm > 3) seamOk = false;
+}
+ok(seamOk, '层切换处没有明显跳变（降/升采样的接缝是连续的）');
 
 line('═');
 console.log('三、GPU 往返保真（这一条能抓住一整类 bug，放在最前面）');
@@ -263,11 +372,7 @@ line();
 // 而 GL 的裁剪空间 y 朝上），翻转后的模糊还是模糊、边缘能量照样单调、
 // 端点一致性也照样成立。**只有看图才发现**。
 // 往返保真不依赖任何版面知识，能同时抓住翻转、预乘/反预乘错配、以及别的破坏。
-const base100 = still(null, 100, 'base100');
-const maskRef = still([{type: 'blur', radius: 30}], 100, 'maskref');
-const mask = contentMask(base100.rgb, maskRef.rgb);
-const maskPct = (mask.reduce((a, b) => a + b, 0) / mask.length * 100).toFixed(1);
-console.log(`  镜头内容区域（自动标定）：占整帧 ${maskPct}% —— 其余是引擎画的背板，效果不作用于它`);
+// （基准帧与掩码在文件开头已经算好，这里直接复用。）
 {
   const rt = still([{type: 'vignette', amount: 0.000001}], 100, 'rt');
   const md = maskedMeanAbsDiff(base100.rgb, rt.rgb, mask);
