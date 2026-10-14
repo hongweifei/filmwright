@@ -6,7 +6,10 @@
       "kicker": "SCENECAST",
       "title": "filmwright",
       "sub": "AI 自动化视频制作",
-      "en": "scene.json → frames"
+      "en": "scene.json → frames",
+      "effects": [{"type": "glow", "intensity": 0.35, "threshold": 0.72},
+                  {"type": "vignette", "amount": 0.3}],
+      "animate": {"y": [{"frame": 1, "v": -14}, {"frame": 18, "v": 0, "ease": "out3"}]}
     },
     {
       "type": "bullets", "at": "S01",
