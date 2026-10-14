@@ -7,95 +7,89 @@
 
 ### 新增
 
-- **素材管线（复杂制作第 ③ 步）**：`clips` 支持视频与图片序列。分两层守住不变量——**抽帧是 host 的 I/O**（`filmwright clips` 或渲染/预览时自动跑，落到 `.work/clips/<name>-<哈希>/`，哈希覆盖源文件指纹 + 全部抽帧参数，同样的源不重抽、改一个参数就重抽），**绘制仍是同步纯函数**（源帧号 = `round((n − 镜头起点)/输出fps × clip.fps)`，只由 n 决定）。新增场景模板 `clip`，静态自检加第 8 道 `clips`。预解码按**实际用到的区间**做；取到未预解码的帧会抛错而不是画空白。
-- **图层合成（第 ① 步）**：镜头可声明 `transform`——位移/缩放/旋转（设计坐标）、`alpha` 组透明度、`blend` 混合模式（15 种）、`origin` 变换中心。
-- **嵌套合成（第 ② 步）**：`comps` 定义可复用子合成（各有本地时间轴），`comp` 类型实例化，支持循环与嵌套。
+**面向复杂视频制作的四个能力（方向 D，按依赖顺序推进）**
 
-### 修复
-
-- **`backdrop` 用了硬下标 `C.accents[1]`**：`theme.accents` 长度由使用者定，只给 1 个主色时下标越界成 `undefined`，一路传到 `hexA` 才崩（`Cannot read properties of undefined (reading 'replace')`），崩溃点离原因很远。改用 `accent(1)` 回绕 —— 这正是项目里早就记录的坑，`backdrop` 自己犯了。minimal 有 3 个主色、取值不变，像素回归仍 6/6 逐字节相同。
-- **片段预解码区间整体偏移**：`preloadClipFrames` 漏传 `clipFrom`（「全局帧 X 对应片段第 1 帧」），于是按「全局帧 == 源帧」算，区间偏移、前若干帧没解 —— 实测表现为「镜头前 18 帧取不到图」而后面正常。现在 `uses` 里带上 `clipFrom`，与 `clipT` 里 `clipFrame(..., {from: this.from})` 用同一个量。
-
-- **图层合成（复杂制作第 ① 步）**：镜头可声明 `transform`——位移/缩放/旋转（设计坐标）、`alpha` 组透明度、`blend` 混合模式（multiply/screen/overlay 等 15 种）、`origin` 变换中心。scene 规格与手写镜头都支持。
-  - **组透明度走离屏缓冲**：`ctx.globalAlpha` 逐操作生效，一组内重叠部分会被混合两次（视觉 bug），所以先画进缓冲再整体合成。
-  - **默认参数走快路径**：不建缓冲、直接绘制，因此**没用到该特性的项目输出逐字节不变**——像素回归基线 6/6 逐字节相同是硬证据。
+- **④ 增量重渲与代理渲染**：`render --incremental` 按内容哈希切段跨次复用——键覆盖引擎源码指纹 + 项目全部参与绘制的文件（配置/scene/时间轴/镜头/字体/素材文件内容）+ 段区间 + 输出参数，改了任何一项自动重渲，不靠启发式判断；段写完立刻落盘（原子改名），中断不影响已完成的段。`render --proxy 0.5` 半分辨率快速预览——**只改输出尺寸、不改绘制逻辑**，构图与成片一致。迭代复杂镜头的推荐组合是 `--incremental --proxy 0.5`。
+- **③ 素材管线（`clips`）**：支持视频与图片序列。分两层守住不变量——**抽帧是 host 的 I/O**（`filmwright clips` 或渲染/预览时自动跑，落到 `.work/clips/<name>-<哈希>/`，哈希覆盖源文件指纹 + 全部抽帧参数，同样的源不重抽、改一个参数就重抽），**绘制仍是同步纯函数**（源帧号 = `round((n − 镜头起点)/输出fps × clip.fps)`，只由 n 决定）。新增场景模板 `clip`，静态自检加第 8 道 `clips`。预解码按**实际用到的区间**做；取到未预解码的帧会抛错而不是画空白。
+- **② 嵌套合成（`comps` / `comp`）**：具名子合成各有**本地时间轴**，可实例化、可循环、可嵌套引用。时间基契约：子镜头 `at` 只能是本地帧号，写成句 id 会报 `SCENE_COMP_LOCAL_AT`（本地与全局两套坐标混用是 bug 温床）；环检测在**校验期**拦住并指出完整引用链条。
+- **① 图层合成（`transform`）**：镜头可声明位移/缩放/旋转（**设计坐标**）、`alpha` 组透明度、`blend` 混合模式（15 种）、`origin` 变换中心。
+  - **组透明度走离屏缓冲**：`ctx.globalAlpha` 是逐绘制操作生效的，一组内重叠部分会被混合两次（那不是整组半透明，是视觉 bug），所以先画进缓冲再整体合成。
+  - **默认参数走快路径**：不建缓冲、直接绘制，因此**没用到该特性的项目画面一个像素都不变**。
   - 缓冲池按尺寸复用且有上限；`fn` 抛错时也归还缓冲（否则长片渲染逐帧泄漏直到 OOM，有专门的负面对照测试）。
-  - `tools/verify-composite.mjs` 端到端验证：位移/旋转/半透明/混合模式都真实改变画面、无副作用 transform 与基线逐字节相同、同一变换渲两次仍逐字节相同（不变量未破）。
-- `docs/scene.md` 加图层变换一节（含 15 种混合模式与两个实现约束）。
+  - 镜头模式的变换是**共轭变换** `T_device = D ∘ T_design ∘ D⁻¹`（镜头自己会 `applyDesignScale`），用「与设计空间变换 + 整体缩放等价」逐点断言，含 2x 分辨率。
 
-- **配乐混音（自动闪避）**：配置里写 `music` 即可，`mux` 自动把配乐与人声混合——用 ffmpeg `sidechaincompress`，**人声一响就把音乐压下去、说完抬回来**，不需要人工标时间点（改解说词后也不用重调）。可调 `gain`（音乐增益）/ `duck`（闪避深度，0 = 关）/ `fadeIn` / `fadeOut`；配置校验当场拦下写错的字段。新工具 `tools/verify-mix.mjs` 端到端验证（只测音乐那一路：压了 8.00 dB、停后恢复到 −35.1 dB、duck=4 比 duck=10 更响）。
-- **镜头转场（crossfade / fade）**：镜头声明 `transition: {type, frames}` 或直接给帧数，场景规格（`scene.json`）的任意类型都支持。**不破坏「第 N 帧只是 N 的函数」**：两个 `draw` 都只依赖 N、混合系数也是 N 的函数，所以分片并行、跳帧、全量自检全不受影响——这也是为什么转场在引擎内做而不是用 ffmpeg 的 `xfade`。
+**音视频**
 
-### 修复
+- **配乐混音（自动闪避）**：配置里写 `music` 即可，`mux` 自动把配乐与人声混合——用 ffmpeg `sidechaincompress`，**人声一响就把音乐压下去、说完抬回来**，不需要人工标时间点（改解说词后也不用重调）。可调 `gain` / `duck`（0 = 关）/ `fadeIn` / `fadeOut`；配置校验当场拦下写错的字段。
+- **镜头转场（crossfade / fade）**：镜头声明 `transition: {type, frames}` 或直接给帧数，场景规格的任意类型都支持。**不破坏「第 N 帧只是 N 的函数」**：两个 `draw` 都只依赖 N、混合系数也是 N 的函数——这也是为什么转场在引擎内做而不是用 ffmpeg 的 `xfade`（那会把帧变成依赖前一帧的序列，跳帧就废了）。
 
-- 配乐滤镜链曾多加一层无条件 `volume=-Nd`：结果音乐在**人声停下后仍被永久压低**（实测纯音乐段比 `duck=0` 低 4 dB，闪避根本没释放）。闪避现在只由压缩器完成，并核对 ffmpeg 文档的参数范围（`makeup` ≥1、`ratio` ≤20、用 `mix` 作强度旋钮——曾把 `makeup` 写成 0.25 这种非法值）。
+**渲染可靠性**
 
-- **CI 平台矩阵真跑通了**（ubuntu / macOS / windows 的静态 + ubuntu / windows 的渲染，5 个 job 全绿）。排查中定位并修掉一串真实缺陷，见下面的「修复」。
+- `--shards auto`（按 CPU 核数定分片，留一核给主进程）、`--resume`（复用已完成分片，渲到一半挂掉不用从头来）、`--json` 报性能读数（`msPerFrame` / 每片耗时 `parts[]` / `reused`）——换机器换浏览器后可对比。
+- **`filmwright srt`：外挂字幕导出**。从 `timeline.json` 的 `subs` 出 SRT（字幕本就烧进画面，这份给 B 站/YouTube 投稿用）；块间空隙用下一块开始补齐，避免闪断；`--translation` 合双语轨，译文由框架外产出（框架不翻译，边界不破）。
 
-### 修复
+**AI 自动化**
 
-- **MCP 测试的定时器泄漏**：`call()` 的 300s `setTimeout` 从不清理，`close()` 只 kill 不等退出 —— 断言 4 秒跑完、进程却挂 **302 秒**才结束（CI 上表现为「某步骤跑很久然后失败」）。修后同一命令墙钟 303s → 7.3s。
-- **CI 覆盖入库夹具**：渲染确定性自证会把 `examples/minimal/regression-baseline.json`（本机夹具）覆盖掉。`regression.mjs` 加 `--baseline`，CI 写临时路径；`--baseline` 传空值现在**报错**而不是静默回落（Windows 的 Git Bash 下 `$RUNNER_TEMP` 可能展开为空）。
-- **浏览器断开时永远挂住**：`session.mjs` 没有 `ws.onclose/onerror` 处理，浏览器退出后所有在飞的 CDP 调用永不返回，且 `send` 完全无超时。现在断开即拒绝所有 pending，全部 CDP 调用统一超时（协议 30s、单帧 60s）。负面对照：杀掉浏览器后 **22ms** 报出「浏览器连接已断开」。
-- **分片失败无重试**：长片渲到 90% 时一片抖动就整条失败。现在**自动重试一次**并如实记录（`retried` / `attempts`），两次都失败仍报错并提示 `--resume`。配 6 条行为测试（3 条负面对照），通过依赖注入单测，不依赖伪造 ffmpeg。
-- **诊断步骤永远 skipped**：`if: failure()` 只对**之前**的失败生效，而它被放在 job 中部。移到末尾；失败现场同时写 step summary 与 artifact（未登录时日志/annotation/artifact 下载都拿不到，这是唯一能取到真因的通道）。
-- `regression.mjs` 吞掉子进程输出（`execFileSync` + `stdio: 'pipe'` 只抛 `Command failed`），改为把 stdout/stderr 原样打出。
-- CI 产物检查改用 node + ffprobe 验帧数，不再用 `ls | head -1`（Git Bash 多列输出会截出片段）。
+- **场景规格 `scene.json`**：声明式镜头（现含 15 类模板），AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。
+- **`filmwright schema`**：机器可读的规格说明书（模板 / 字段 / 上限 / 对齐语法 / 错误码），agent 写 scene 前先拿它，不必先读文档。
+- **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致。
+- **`filmwright mcp`：MCP 服务器（stdio）**，把工具链暴露给 agent，返回值与 `--json` 同形状。唯一需要 npm 依赖的子命令（SDK 惰性加载：没装依赖时其余命令照常跑）。其中 `filmwright_stills` 把 PNG 作为 MCP image content 直接回给多模态模型；`filmwright_review` 一轮完成「改 → 验 → 看」（scene 校验 → 静态自检 → 各镜头代表帧回图）。
+- **`filmwright new <目录>`**：项目脚手架，`--template scene`（默认）/ `--template shots` 两种骨架；目录非空直接拒绝，从不覆盖已有文件。
+- **节拍信号（`beats`）解开画质自检的死结**：模板在编译期产出节拍表（与 draw 用同一个 `staggerFrames`，不漂），手写镜头可选声明。**声明了节拍的镜头，末拍稳定期从读数升级为硬判据**；没声明的维持「只报告」（像素推断分不清入场/离场）。模板还会主动压节拍为末拍预留停留时间。
+- **模板镜头扩到 15 类**：`steps` / `table` / `quote` / `terminal` / `chips` / `bars` / `clip` / `comp` 等，每类内建入场错峰与落位后的持续动作。**容量上限进校验**（bullets/steps ≤6、flow ≤5、code/terminal ≤10、table 4×8、chips ≤12、bars ≤6），超了报 `SCENE_TOO_MANY` 并教怎么拆镜头——AI 该被校验告知边界，而不是靠肉眼发现溢出。
 
-- **长片可靠性**：`--shards auto`（按 CPU 核数自动定分片，留一核给主进程）、`--resume`（复用已完成分片，渲到一半挂掉不用从头来）、`--json` 报性能读数（`msPerFrame` / 每片耗时 `parts[]` / `reused`）——换机器换浏览器后可对比。
-- `examples/promo` 渲出成片（2141 帧 / 71.3s / 4.1 MB，4 分片 263 秒），README 用其片头帧作演示。
+**质量网与文档**
 
-### 修复
-
-- **TTS 失败提示不可读**：Windows 上 Python 默认按 CP936 写 stderr，而 Node 按 UTF-8 解码，中文提示整段变乱码（实测「微软侧 TTS 服务不可用」的出路说明全成 `????`）。tts 现在以 `PYTHONIOENCODING=utf-8` 起 Python，并去掉外层重复前缀。
-- **TTS 失败提示不可行动**：`tts` 失败时区分「服务不可用」（403 / 握手失败）与「限流超时」，前者明确说这是微软侧故障并给出三条出路（等 / 自产时间轴 / 先用合成夹具继续做画面）。已核对：edge-tts 7.2.8 为最新、系统时钟与服务器同步（差 <1s）、网络可达，`voices` 端点直接返回 `Our services aren't available right now` —— **不是本机配置问题**。
-- CI 产物检查改用 node 取文件名 + ffprobe 验帧数，不再用 `ls | head -1`（Git Bash 多列输出会截出片段）；新增 `if: failure()` 现场诊断步骤（公开仓库未登录拿不到 job 日志正文）。
-
-- **`examples/promo`：filmwright 自己的介绍片**（狗粮）。全程 `scene.json` 驱动、零镜头代码，制作用的就是自己的工具链（`tts` → `schema` → MCP `review` → `check`）；11 个镜头覆盖 9 类模板，九道自检全过。它同时是模板语料的来源——下面三条修复全是做这条片子时暴露的。
-- **`tools/dogfood-review.mjs`**：通过 MCP 的 `filmwright_review` 跑一轮「改 → 验 → 看」并把回图落盘，狗粮制作的实际回路。
-- 文档：`docs/dogfood.md` 狗粮记录（制作回路、暴露的三个缺陷、以及做真片子时想要的四类模板与「先不做」的判断）。
-
-### 修复
-
-- **`timeline` 静态自检漏查配置的 `hud`**：`drawHud` 每帧都 `S(fromS)`，句 id 写错会让**整片每一帧**都抛错（做 promo 时把 hud 写到 `S11`，标题帧整帧红屏）；此前自检只扫 `shots/`，扫不到配置。现在一并查。
-- **模板节拍可能排到镜头之外**：chips / bars / quote 的动画终点按固定时长算，元素多、句子短时会越界（实测 promo 的 12 颗 chips 排到镜头末之后 12 帧）。统一走 `beatEnd()` 夹进「镜头末 − 停留预留」窗口，并加**结构守卫测试**（断言任何模板的节拍都落在镜头窗口内）——该守卫已做负面对照：去掉夹取立刻变红。
-- **MCP `review` 的代表帧取错**：原来按区间 60% 取，元素是错峰进场的，60% 处可能末拍还没落位（promo 的 compare：右栏 228 帧进场，60% 落在 227 帧，图上只有左栏）。现在按**末拍落位后 8 帧**取，才是内容齐全的帧。
-
-- **`filmwright srt`：外挂字幕导出**。从 `timeline.json` 的 `subs` 出 SRT（字幕本就烧进画面，这份给 B 站/YouTube 投稿用）；块间空隙用下一块开始补齐，避免闪断；`--translation` 合双语轨，译文由框架外产出（框架不翻译，边界不破），两种格式（按 `from` 帧对齐的数组 / 按块序号的映射）都认，缺项只出原文不编内容。MCP 加 `filmwright_srt` 工具。
-
-- **MCP 回图 + `filmwright_review`**：`filmwright_stills` 把 PNG 作为 MCP image content 直接回给多模态模型（默认内联 4 张、`max_images` 可到 8，其余给路径）；新增 `filmwright_review` 一轮完成「改 → 验 → 看」——scene 校验（规格有错就不渲染，直接交回可行动的错）→ 七道静态自检 → 各镜头代表帧（区间 60% 处）回图。此前 agent 只能拿到图片路径，看不到自己做的画面。
-- **节拍信号（`beats`）解开画质自检的死结**：scene 模板在编译期产出节拍表（与 draw 用同一个 `staggerFrames`，不漂），手写镜头可选声明。**声明了节拍的镜头，末拍稳定期从读数升级为硬判据**——停留不足 `--hold-frames`（默认 30）或节拍排到镜头结束之后都判失败；没声明的维持「只报告」（像素推断分不清入场/离场）。模板还会**主动压节拍**为末拍预留停留时间，避免内容多的镜头被自己挤掉。LIMITATIONS 里那条「要做成硬判据得先有节拍信号」就此解除。
-
-### 修复
-
-- `examples/scenecast` 的 code 镜头被新判据抓出真缺陷（末拍后只停留 16 帧）——根因是模板在「元素多于字幕块」时按固定 +18 帧往后铺，把末拍推到句尾。已改为按可用区间等比压缩并预留停留期。
-
-- **模板镜头扩到 13 类**：`steps`（编号步骤 + 生长连接线 + 当前步点亮）、`table`（表头 + 斑马纹 + 行扫描）、`quote`（居中大字折行 + 引号脉动）、`terminal`（终端窗口逐行输出 + 光标）、`chips`（关键词胶囊自动折行）、`bars`（条形图 + 循环描边）。每类内建入场错峰与落位后的持续动作——验收件 `examples/gallery`（13 镜各一，纯规格）九道自检全过、画质零违规。
-- **容量上限进校验**：bullets/steps ≤6、flow ≤5、code/terminal ≤10、table 4 列 × 8 行、chips ≤12、bars ≤6、compare 各 ≤5，超了报 `SCENE_TOO_MANY`（hint 教拆镜头）。AI 该被校验告知边界，而不是靠肉眼发现溢出。
-- **`filmwright schema`**：机器可读的规格说明书（13 类模板 / 字段 / 上限 / 对齐语法 / 错误码），`--json` 输出；MCP 加 `filmwright_schema` 工具——agent 写 scene 前先拿 schema，不必先读文档。
-- **CI 平台矩阵**：静态 job 跑 ubuntu / macOS / windows 三个 OS（核心零依赖，这是跨平台最真的证据）；渲染 job 跑 ubuntu + windows（Edge + 无头）；环境确认改用 `findBrowser()` 真断言 + `set -o pipefail`，杜绝假绿。macOS 渲染暂不进矩阵——没有本地实测证据，不猜。
+- **CI 平台矩阵**：静态 job 跑 ubuntu / macOS / windows（核心零依赖，这是跨平台最真的证据）；渲染 job 跑 ubuntu + windows（无头）。macOS 渲染暂不进矩阵——没有本地实测证据，不猜。
+- **狗粮**：`examples/promo`（filmwright 自己的介绍片，71.3s）全程 `scene.json` 驱动、零镜头代码，制作用的就是自己的工具链；`tools/dogfood-review.mjs` 通过 MCP 跑一轮「改 → 验 → 看」并把回图落盘。
+- **验证夹具**：`tools/verify-*.mjs` 覆盖混音、转场、图层合成、嵌套合成、素材管线、捕获确定性、增量重渲安全性。
 - **`tools/make-timeline-fixture.mjs`**：edge-tts 端点不可达时，按同一套解析规则合成 `timeline.json` 夹具（明确标注非配音；真实项目跑 `tts` 覆盖）。
-- `verify-readme` 扩面：除 minimal 快速开始外，覆盖两个纯 scene 示例的静态自检、`schema --json`（13 类齐）、`new` 冒烟（含「新项目 check 必须报 `NO_TIMELINE` 而不是崩」的错误契约）。
-
-- **场景规格 `scene.json`（AI 自动化的入口）**：声明式镜头，v0 含 7 类模板（title / bullets / stat / flow / code / image / compare）。AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。校验与 boot 共用一份实现（`src/contract/scene.js`），错误带 code/path/hint；静态自检加第 9 道 `scene`（`--static-only` 七道不启浏览器）。示例 `examples/scenecast` 整个项目没有 `shots/`，画面全部来自规格（其 `timeline.json` 是合成夹具；跑 `tts` 会生成真实配音）。
-- **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致；错误带结构化 `code` 与 `where` 路径，给 agent 直接消费（见 docs/cli.md）。
-- **`filmwright new <目录>`**：项目脚手架，`--template scene`（默认）/ `shots` 两种骨架；目录非空直接拒绝（`DIR_NOT_EMPTY`），从不覆盖已有文件。
-- **`filmwright mcp`：MCP 服务器（stdio）**，把工具链暴露给 agent——`filmwright_new / timeline / scene_validate / tts / check / stills / render / all` 八个工具，返回值与 `--json` 同形状。唯一需要 npm 依赖的子命令（`@modelcontextprotocol/sdk` + `zod`），且 SDK 惰性加载：没装依赖时其余命令照常跑，`mcp` 报 `NO_MCP_SDK` 并给出安装提示。`tests/mcp.test.mjs` 走真实 JSON-RPC 握手端到端验证（没装 SDK 时优雅跳过）。
-- 文档：docs/ai.md（agent 接入指南：MCP 配置、推荐回路、错误码速查）。
-- 文档：docs/scene.md 场景规格参考。
+- 文档：入门、教程、配置 / API / 命令参考、架构、场景规格、AI 接入、狗粮记录、质量保障、FAQ、LIMITATIONS。
 
 ### 修复
 
-- `check` 在项目还没有时间轴时，不再深处崩在 `Cannot read properties of null`，而是报 `NO_TIMELINE` 并提示先跑 `tts`。
-- `runChecks` 的 `quiet` 泄漏：失败明细的打印在 quiet 守卫之外，`--json` 时人类文本混在 JSON 前面，stdout 不再是单个文档。
+**确定性（重要）**
 
-- 渲染会话以无头模式（`--headless=new`）启动浏览器。此前注释写的是无头、参数里却从未传过这个旗标，在有显示器的机器上碰巧能跑；CI 的 Ubuntu 没有 X server，浏览器直接退出（`Missing X server or $DISPLAY`）。本机已验证无头渲染与既有像素基准逐字节一致（6/6 帧），基准无需重抓。
-- `tools/verify-assets.mjs`、`tools/verify-preview.mjs` 改为走 `openSession`：此前各自复制了一份浏览器启动逻辑，既漏掉 headless，又在浏览器提前退出时一直空等 30 秒，最后报出 `Failed to parse URL from http://127.0.0.1:null/json/list` —— 一个掩盖真实原因的错。现在启动失败当场报出浏览器 stderr。`tools/boot-error.mjs` 是抓 boot 失败的诊断工具，保留自己的事件流，同样补了无头与快速失败。
-- ffmpeg / ffprobe 的定位与 spawn 收拢到 `src/host/media/ffmpegBin.mjs`：此前三处 spawn 都没挂 `error` 监听，ffmpeg 缺失时以 unhandled `error` event 崩掉，只见 `spawn ffmpeg ENOENT` 堆栈。现在 `render` / `mux` / `sheet` 在干活**前**先用 `which` 断言，缺了当场报「装什么、怎么指定」；spawn 层再兜底。路径可用 `FFMPEG_BIN` / `FFPROBE_BIN` 指定。CI 的「确认环境」一步同时修了一个假检查：`ffmpeg -version | head -1` 在 ffmpeg 缺失时也绿（管道退出码取的是 `head` 的 0），现改为 `command -v` 硬断言并显式安装 ffmpeg。
+- **截图竞态**：`drawFrame` 是同步绘制到 canvas 的，但 `Page.captureScreenshot` 取的是**合成器已呈现的那一帧**，而合成是异步的——偶尔还没提交就截了，于是**取到上一帧**。实测 8 轮 × 60 帧里有 3 帧不稳定，特征都是「7 次一致 + 1 次孤例」。危害被有损编码放大：60 帧里 1 帧不同，编出来的 mp4 可能 45/60 帧都不同。改用 **canvas 后备存储直读**（`toDataURL`）：实测 0/60 不稳定，且两者**像素完全相同**（只是 PNG 编码不同）；渲染还从 ~20s/60 帧降到 ~7.2s/60 帧。
+- **像素回归判据改为像素哈希**：原来存 PNG **字节**哈希，但同一画面在不同取像素方式下字节可以不同而像素相同——换捕获方式就会全线报红而画面没变（守卫变噪音）。现在存解码后的 rgb24 哈希，只对**真正的画面变化**报警；旧格式基准会明确提示重抓而不是误报。
+- **渲染会话未真正无头**：注释写的是无头、参数里却从未传 `--headless=new`，在有显示器的机器上碰巧能跑；CI 的 Ubuntu 没有 X server，浏览器直接退出（`Missing X server or $DISPLAY`）。
+- **浏览器断开时永远挂住**：`session.mjs` 没有 `ws.onclose/onerror` 处理，浏览器退出后所有在飞的 CDP 调用永不返回，且 `send` 完全无超时。现在断开即拒绝所有 pending，全部 CDP 调用统一超时。负面对照：杀掉浏览器后 **22ms** 报出「浏览器连接已断开」。
+
+**渲染与素材**
+
+- **片段预解码区间整体偏移**：`preloadClipFrames` 漏传 `clipFrom`（「全局帧 X 对应片段第 1 帧」），按「全局帧 == 源帧」算导致区间偏移、前若干帧没解——实测表现为「镜头前 18 帧取不到图」而后面正常，很难一眼看出。
+- **实例长度被当成循环周期**（嵌套合成）：`frames: 720` 的实例配 30 帧子合成时，把 720 当周期 → 本地帧一路涨到 720 → 第 31 帧起什么都不画（表现为「循环实例只在前 30 帧有画面」）。
+- **分片失败无重试**：长片渲到 90% 时一片抖动就整条失败。现在**自动重试一次**并如实记录（`retried` / `attempts`），两次都失败仍报错并提示 `--resume`。
+- **CI 覆盖入库夹具**：渲染确定性自证会覆盖 `examples/minimal/regression-baseline.json`。加 `--baseline`，CI 写临时路径；`--baseline` 传空值现在**报错**而不是静默回落。
+- ffmpeg / ffprobe 的定位与 spawn 收拢到 `src/host/media/ffmpegBin.mjs`：此前三处 spawn 都没挂 `error` 监听，ffmpeg 缺失时以 unhandled `error` event 崩掉，只见 `spawn ffmpeg ENOENT` 堆栈。现在干活**前**先断言，缺了当场报「装什么、怎么指定」。
+
+**音视频**
+
+- **配乐滤镜链曾多加一层无条件 `volume=-Nd`**：音乐在人声停下后仍被永久压低（实测纯音乐段比 `duck=0` 低 4dB，即闪避不释放）。现在只由压缩器完成闪避，并照 ffmpeg 文档核对参数范围（`makeup` ≥1、`ratio` ≤20、强度用 `mix`——曾把 `makeup` 写成 0.25 这种非法值）。
+
+**图层与模板**
+
+- **`needsBuffer` 用 `!== undefined` 判断**：`blend: null` / `alpha: null` 被当成「设了非默认值」→ 每个图层都走缓冲、快路径永久失效。
+- **转场 alpha 覆盖图层 alpha**：`drawShotWithAlpha` 曾把转场淡入 alpha 直接当图层 alpha 传，覆盖了 `transform.alpha`（表现：`alpha` 字段设了没反应）。现在两者**相乘**（语义独立）。
+- **`backdrop` 用了硬下标 `C.accents[1]`**：`theme.accents` 长度由使用者定，只给 1 个主色时下标越界成 `undefined`，一路传到 `hexA` 才崩，崩溃点离原因很远。改用 `accent(1)` 回绕——这正是项目里早就记录的坑，`backdrop` 自己犯了。
+- **`timeline` 静态自检漏查配置的 `hud`**：`drawHud` 每帧都 `S(fromS)`，句 id 写错会让**整片每一帧**都抛错（把 hud 写到不存在的 id，标题帧整帧红屏）；此前自检只扫 `shots/`，扫不到配置。
+- **模板节拍可能排到镜头之外**：chips / bars / quote 的动画终点按固定时长算，元素多、句子短时会越界（实测 12 颗 chips 排到镜头末之后 12 帧）。统一走 `beatEnd()` 夹进「镜头末 − 停留预留」窗口，并加**结构守卫测试**（负面对照：去掉夹取立刻变红）。
+- **MCP `review` 的代表帧取错**：原来按区间 60% 取，而元素是错峰进场的，60% 处可能末拍还没落位（compare 镜头：右栏 228 帧进场，60% 落在 227 帧，图上只有左栏）。现在按**末拍落位后 8 帧**取。
+
+**工具与错误信息**
+
+- `tools/verify-assets.mjs`、`tools/verify-preview.mjs` 改为走 `openSession`：此前各自复制了一份浏览器启动逻辑，既漏掉 headless，又在浏览器提前退出时一直空等 30 秒，最后报出 `Failed to parse URL from http://127.0.0.1:null/json/list` —— 一个掩盖真实原因的错。
+- `regression.mjs` 吞掉子进程输出（`execFileSync` + `stdio: 'pipe'` 只抛 `Command failed`），改为把 stdout/stderr 原样打出。
+- `runChecks` 的 `quiet` 泄漏：失败明细的打印在 quiet 守卫之外，`--json` 时人类文本混在 JSON 前面，stdout 不再是单个文档。
+- `check` 在项目还没有时间轴时，不再深处崩在 `Cannot read properties of null`，而是报 `NO_TIMELINE` 并提示先跑 `tts`。
+- **TTS 失败提示不可读**：Windows 上 Python 默认按 CP936 写 stderr，而 Node 按 UTF-8 解码，中文提示整段变乱码。tts 现在以 `PYTHONIOENCODING=utf-8` 起 Python，并区分「服务不可用」（403 / 握手失败）与「限流超时」——前者明确说是微软侧故障并给出三条出路。已核对：edge-tts 7.2.8 为最新、系统时钟同步（差 <1s）、网络可达，`voices` 端点直接返回 `Our services aren't available right now`，**不是本机配置问题**。
+- **MCP 测试 timer 泄漏**：未清理的 300s `setTimeout` 让一个 4s 的测试挂了 302s；`close()` 只 kill 不等退出。修后墙钟 303s → 7.3s。
+- **诊断步骤永远 skipped**：`if: failure()` 只对**之前**的失败生效，而它被放在 job 中部。移到末尾；失败现场同时写 step summary 与 artifact。
+- CI 的「确认环境」修了一个假检查：`ffmpeg -version | head -1` 在 ffmpeg 缺失时也绿（管道退出码取的是 `head` 的 0），现改为 `command -v` 硬断言。
 
 ### 变更
 
-- CI 的渲染 job 用「同一次运行内 capture → verify」自证渲染确定性，取代跨 OS 的基准比对：逐字节像素基准是本机夹具，字体栅格化随操作系统与浏览器版本变，跨 OS 比对必然红。对提交基准的 verify 保留为本机纪律（见 docs/qc.md）。
+- CI 的渲染 job 用「同一次运行内 capture → verify」自证渲染确定性，取代跨 OS 的基准比对：像素基准是本机夹具，字体栅格化随操作系统与浏览器版本变，跨 OS 比对必然红。对提交基准的 verify 保留为本机纪律（见 docs/qc.md）。
 
 ## [0.1.0] - 2026-10-13
 

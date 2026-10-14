@@ -92,6 +92,11 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 两个 `verify-*` 夹具的浏览器会话统一走 `src/host/browser/session.mjs` 的 `openSession`（无头启动、启动失败当场报，不静默等到超时）。**工具里不要再各写一份启动逻辑**——那份拷贝漏掉过 `--headless`，CI 无显示器时挂在一个与真实原因无关的报错上。
 | `verify-reuse.mjs` | 验换分辨率（1080p）与换浏览器（两个浏览器渲同一帧要字节相同） |
 | `verify-mix.mjs` | **验配乐混音**：真跑 ffmpeg，只测音乐那一路，证明「人声在场时被压低、人声停下后恢复、duck 越大压得越深」，并验产物带双流与缺文件报错 |
+| `verify-determinism.mjs` | **验捕获确定性**：多轮渲染同一区间，全部帧必须逐字节一致。钉住「取像素不能有竞态」——曾经用 `Page.captureScreenshot` 时有 3/60 帧偶发取到上一帧 |
+| `verify-incremental.mjs` | **验增量重渲的安全性**：复用出来的段必须与重渲产生**相同帧数据**；改文件必重渲、改回精确复原、改引擎也必重渲；并验代理分辨率 |
+| `verify-comp.mjs` | **验嵌套合成**：用页面内探针观测本地帧换算（不靠像素比对——整帧含随全局时间漂移的背景/HUD） |
+| `verify-clips.mjs` | 验素材管线 host 侧：抽帧帧数、内容寻址缓存命中、改参数重抽、断点安全、源文件缺失与 start 超时长 |
+| `verify-clip-render.mjs` | 验片段在浏览器里真的取到并画出：帧随 n 变化、同一帧两次相同、源帧映射、未声明片段名报错 |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |

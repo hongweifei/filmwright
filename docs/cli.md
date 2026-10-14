@@ -173,6 +173,25 @@ filmwright render --project <项目目录> [--shards N|auto] [--resume] [--from 
 
 实测参考：1280×720 约 81 ms/帧（单实例，Chrome-for-Testing，本机）。
 
+## `render`
+
+```bash
+filmwright render --project <目录> [--out x.mp4] [--shards N|auto] [--from N --to M]
+                  [--resume] [--incremental] [--proxy 0.5] [--seg-frames 300]
+```
+
+| 开关 | 作用 |
+|---|---|
+| `--shards N` | 分片并行（`auto` 按 CPU 数）；每片一个浏览器实例，崩了自动重试一次 |
+| `--resume` | **同一次渲染**被中断后续跑：已渲好的分片直接复用 |
+| `--incremental` | **跨次**复用：按内容哈希切段，只重渲变化了的段。改一两个镜头时不用重渲整片 |
+| `--proxy 0.5` | 代理渲染：半分辨率（或任意 0–1 比例）快速预览。**只改输出尺寸，不改绘制逻辑**，构图与成片一致 |
+| `--seg-frames N` | `--incremental` 的段长（默认 300 帧 ≈ 10 秒） |
+
+`--incremental` 的键覆盖**引擎源码指纹 + 项目全部参与绘制的文件内容 + 段区间 + 输出参数**，所以改了任何影响画面的东西都会自动重渲，不靠启发式判断。段缓存落在 `.work/segments/`，完成后会清掉不再匹配的旧段。
+
+迭代复杂镜头时的推荐组合：`--incremental --proxy 0.5`（先半分辨率快速看节奏，满意后再全分辨率出片）。
+
 ## `mux`
 
 ```bash
