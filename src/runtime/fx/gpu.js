@@ -187,6 +187,43 @@ void main(){
   gl_FragColor = sum / 8.0;
 }`;
 
+/** `displace`：程序化值噪声置换采样位置（热浪 / 水汽 / 有机抖动）。
+ *
+ * 与 `distort` 的区别：`distort` 是**正弦**（规则，像水波/玻璃），
+ * 这里是**值噪声**（不规则，像热浪）。
+ *
+ * ⚠️ 噪声必须是 `uv`/`phase` 的**纯函数**：不能读时钟、不能用随机数。
+ * 流动由可关键帧的 `phase` 驱动。
+ *
+ * ⚠️ **hash 不能用 `fract(sin(x) * 43758.5453)`** —— 那是这类噪声最常见的写法，
+ * 但依赖**大参数的 `sin`**，mediump 下精度实现相关。这里用不含 sin 的 hash。
+ * （`grain` 用的是 sin 版，实测也是稳定的 —— 所以这不是唯一写法，只是更稳的选择。）
+ *
+ * ⚠️ 新增效果时**别忘了三处**：`this.progs` 注册表、`SIMPLE_PASSES`、
+ * 以及契约里的 `EFFECT_TYPES`/`EFFECT_SPECS`。**漏掉注册表那一处会拿到
+ * `undefined` 程序，产出不稳定且看起来像"着色器数学有问题"** ——
+ * 实测在这上面绕过一大圈（见 docs/scene.md 的排查记录）。
+ */
+const FS_DISPLACE = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float amount, frequency, phase;
+float h(vec2 p){
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+float vn(vec2 p){
+  vec2 i = floor(p); vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h(i), h(i + vec2(1.0, 0.0)), f.x),
+             mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main(){
+  float ph = radians(phase);
+  vec2 q = uv * frequency + ph;
+  vec2 d = vec2(vn(q), vn(q + vec2(37.7, 17.3))) - 0.5;
+  gl_FragColor = texture2D(t, clamp(uv + d * amount * 0.06, vec2(0.0), vec2(1.0)));
+}`;
+
 /** 波状扭曲：用正弦把采样位置推开。phase 让波纹平移（仍与时间无关）。 */
 const FS_DISTORT = `precision mediump float; varying vec2 uv;
 uniform sampler2D t; uniform float amount, frequency, phase;
@@ -213,6 +250,7 @@ const SIMPLE_PASSES = {
   pixelate: {prog: 'pixelate', uniforms: ['size', 'texelX', 'texelY']},
   radialBlur: {prog: 'radialBlur', uniforms: ['amount', 'centerX', 'centerY']},
   distort: {prog: 'distort', uniforms: ['amount', 'frequency', 'phase']},
+  displace: {prog: 'displace', uniforms: ['amount', 'frequency', 'phase']},
 };
 
 /** 模糊的趟数与抽头间距。抽头间距 ≤2px 是"采样充分"的保证（见 blurTex 注释）。 */
@@ -262,6 +300,7 @@ class GpuStage {
       pixelate: this._prog(FS_PIXELATE),
       radialBlur: this._prog(FS_RADIAL),
       distort: this._prog(FS_DISTORT),
+      displace: this._prog(FS_DISPLACE),
     };
     this.ok = Object.values(this.progs).every(Boolean);
     if (!this.ok) return;

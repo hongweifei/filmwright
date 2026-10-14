@@ -38,7 +38,8 @@ const PRESETS = {
   vignette: {amount: 0.5}, chromatic: {amount: 0.5}, grain: {amount: 0.35},
   pixelate: {size: 10}, radialBlur: {amount: 0.3}, distort: {amount: 0.5},
   grade: {look: 'noir', amount: 1},
-  // `displace` 还没实现（上一轮回退）；实现后加进这里即可，无需改其它代码。
+  // 实验版：uniform 名沿用 distort 的（amount/frequency/phase）
+  displace: {amount: 0.8, frequency: 8},
 };
 
 const P = join(ROOT, '.work', 'detprobe');

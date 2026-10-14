@@ -440,7 +440,7 @@ test('新效果的参数也能用关键帧，且取值逐个查范围', () => {
 });
 
 test('效果登记表完整（加效果时这条会提醒补齐直通条件与说明）', () => {
-  assert.equal(EFFECT_TYPES.length, 10);
+  assert.equal(EFFECT_TYPES.length, 11);
   assert.deepEqual(Object.keys(EFFECT_SPECS).sort(), [...EFFECT_TYPES].sort());
   for (const t of EFFECT_TYPES) {
     assert.ok(EFFECT_SPECS[t].noopWhen?.length, `${t} 缺直通条件（逐帧短路要用它）`);

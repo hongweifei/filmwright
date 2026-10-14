@@ -22,7 +22,7 @@
 //
 // 为什么是 OR 而不是单个"恒等值"：glow 在 `intensity=0` **或** `radius=0` 时都等于
 // 什么都没做，单个恒等值表达不了这种关系（第一版就卡在这）。
-export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate', 'radialBlur', 'distort', 'grade'];
+export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate', 'radialBlur', 'distort', 'grade', 'displace'];
 
 /**
  * 调色预设（`grade`）。
@@ -145,6 +145,16 @@ export const EFFECT_SPECS = {
         required: true, note: '预设名'},
       amount: {kind: 'num', min: 0, max: 1, required: true,
         note: '强度：在"原样"与该预设之间插值（0=直通，1=全量）'},
+    },
+  },
+
+  displace: {
+    note: '程序化噪声置换（热浪/水汽/有机抖动）。与 distort 的区别：distort 是正弦（像水波），这里是值噪声（像热浪）',
+    noopWhen: [{amount: 0}],
+    params: {
+      amount: {kind: 'num', min: 0, max: 1, required: true, note: '最大位移（0=不变，1≈画面 6%）'},
+      frequency: {kind: 'num', min: 1, max: 40, def: 8, note: '噪声尺度：越大块越碎'},
+      phase: {kind: 'num', min: -180, max: 180, def: 0, note: '相位（度）：噪声场的平移，可写关键帧让热浪流动'},
     },
   },
 };
