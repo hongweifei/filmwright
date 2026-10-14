@@ -140,6 +140,17 @@ jobs:
       - name: 素材（加载就绪 / 真画出来 / 引错名字要报）
         run: node tools/verify-assets.mjs
 
+      # 效果链与命令式入口：这两个能力**最新**，也最容易悄悄退化，
+      # 所以必须自动跑。实测耗时（无 GPU、软件 WebGL）：effects 约 64s、imperative 约 20s。
+      #
+      # 刻意**不加 `--gpu`**：CI runner 拿不到可靠的 GPU，而且默认档（软件 WebGL）
+      # 正是要守住"确定性"的那一档 —— 效果在这档下也必须正确。
+      - name: 效果链（往返保真 / 各效果的量化判据 / 直通帧逐位相同）
+        run: node tools/verify-effects.mjs .
+
+      - name: 命令式入口（与声明式同能力 / 写错当场报）
+        run: node tools/verify-imperative.mjs .
+
       - name: 预览页（拖动 / 播放 / 热重载）
         run: node tools/verify-preview.mjs
 

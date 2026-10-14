@@ -137,5 +137,20 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 别依赖 `$RUNNER_TEMP` | windows 的 Git Bash 下可能展开为空，`--baseline` 会静默回落到入库夹具 |
 | 重浏览器测试与协议层分开 | 前者要真渲染（慢、依赖浏览器），后者毫秒级；混在一起慢机器上必脆 |
 | `--shards auto` 而非硬写片数 | windows runner 只有 2 核，硬写 2 片等于超订资源 |
+| 效果链验收**不加 `--gpu`** | CI runner 拿不到可靠 GPU；而默认档（软件 WebGL）正是要守住确定性的那一档，效果在这档下也必须正确 |
+
+### 哪些验收工具会自动跑、哪些要手动跑
+
+**不跑的守卫等于没有守卫**，所以这张表要如实：
+
+| 状态 | 工具 |
+|---|---|
+| **CI 自动跑** | `verify-encoding`、`verify-docs`（static job）；`quality-negative`、`verify-assets`、`verify-effects`、`verify-imperative`、`verify-preview`（browser job） |
+| **手动跑（需真实环境/较慢）** | `verify-determinism`、`verify-incremental`、`verify-composite`、`verify-comp`、`verify-clips`、`verify-clip-render`、`verify-mix`、`verify-reuse`、`verify-attribution`、`verify-complex`、`verify-voiceover` |
+| **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级，约数分钟）、`verify-tts` / `verify-tts-e2e.py`（真合成，联网且端点可能不可用）、`verify-readme` |
+
+这是一个**已知缺口**：20 个验收工具里只有 7 个进了 CI。改核心路径（尤其是渲染、增量、合成）之后，**手动的那些要自己记得跑**——
+比如 `verify-incremental` 守的是"复用段与重渲必须逐帧一致"，它不跑就没人在守。
+把更多工具接进 CI 需要先按耗时分类（有的要几分钟），那是一件独立的事。
 
 **关于 flaky 的判定纪律**：同一步骤「一次过、一次挂」时必须复跑定性，不能算修好。本次排查中 windows 渲染 job 的失败点曾逐次迁移（端到端出片 → 逐帧+画质 → MCP 测试 → 渲染确定性 → …），**每次的根因都不同且都定位到了**：定时器泄漏（测试进程挂 302 秒）、夹具被 CI 覆盖、`$RUNNER_TEMP` 展开为空、浏览器断开无处理、分片失败无重试。修完后 CI 全绿。
