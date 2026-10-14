@@ -604,7 +604,50 @@ line();
 }
 
 line('═');
-console.log('七、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
+console.log('七、调色预设 grade（编译期展开成 color，不额外开销）');
+line();
+{
+  // noir 的去色用**自参照判据**（与 color saturation=0 同一条）：
+  // 灰度之后再转色相必须**逐位不变** —— 色相旋转矩阵每行系数和为 1，灰进灰出。
+  // 这比"画面变了"锋利：它能区分"真的去色"与"只是变暗/变对比了"。
+  const noir = still([{type: 'grade', look: 'noir', amount: 1}], 100, 'gr-noir');
+  const noirHue = still([{type: 'grade', look: 'noir', amount: 1}, {type: 'color', hue: 90}], 100, 'gr-noir-hue');
+  const dNoir = maskedMeanAbsDiff(noir.rgb, noirHue.rgb, contentMask(noir.rgb, noirHue.rgb));
+  console.log(`  noir：与不写效果的差异 ${maskedMeanAbsDiff(base100.rgb, noir.rgb, mask).toFixed(2)} 级；` +
+    `再转色相的差异 ${dNoir.toFixed(2)} 级`);
+  ok(noir.hash !== base100.hash, 'noir 确实改变了画面');
+  ok(noir.hash === noirHue.hash, 'noir 之后转色相**逐位不变** ⇒ 画面确实被去色了');
+
+  // warm / cool 的方向：比"红减蓝"的均值。warm 应当大于 cool。
+  const warm = still([{type: 'grade', look: 'warm', amount: 1}], 100, 'gr-warm');
+  const cool = still([{type: 'grade', look: 'cool', amount: 1}], 100, 'gr-cool');
+  const rb = (rgb, m) => {
+    let r = 0, b = 0, n = 0;
+    for (let i = 0, j = 0; j < m.length; i += 3, j++) {
+      if (!m[j]) continue;
+      r += rgb[i]; b += rgb[i + 2]; n++;
+    }
+    return {r: r / n, b: b / n};
+  };
+  const w = rb(warm.rgb, mask), c = rb(cool.rgb, mask);
+  console.log(`  warm 红/蓝 ${w.r.toFixed(1)}/${w.b.toFixed(1)}；cool 红/蓝 ${c.r.toFixed(1)}/${c.b.toFixed(1)}`);
+  ok(warm.hash !== cool.hash, 'warm 与 cool 画面不同');
+  ok((w.r - w.b) > (c.r - c.b), `warm 的"红减蓝"更大 ⇒ 方向正确（${(w.r - w.b).toFixed(1)} > ${(c.r - c.b).toFixed(1)}）`);
+
+  // amount 插值：0 直通、半量夹在"原样"与"全量"之间
+  const zero = still([{type: 'grade', look: 'noir', amount: 0}], 100, 'gr-0');
+  ok(zero.hash === base100.hash, 'amount=0 与不写 effects **逐位相同**（展开成全恒等 ⇒ 直通）');
+  const half = still([{type: 'grade', look: 'noir', amount: 0.5}], 100, 'gr-half');
+  ok(half.hash !== base100.hash && half.hash !== noir.hash,
+    '半量与"原样""全量"都不同 ⇒ 插值真的在生效（不是只有 0/1 两档）');
+  // 更强的插值判据：半量的**通道差**应当夹在两者之间（去色程度居中）
+  const sp0 = maskedSpread(base100.rgb, mask), spHalf = maskedSpread(half.rgb, mask), spFull = maskedSpread(noir.rgb, mask);
+  console.log(`  通道差（去色程度）：原样 ${sp0.toFixed(2)} → 半量 ${spHalf.toFixed(2)} → 全量 ${spFull.toFixed(2)}`);
+  ok(spFull < spHalf && spHalf < sp0, '半量的去色程度**夹在中间** ⇒ amount 是连续插值，不是开关');
+}
+
+line('═');
+console.log('八、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
 line();
 const N = 60;
 function bench(effects, tag) {
