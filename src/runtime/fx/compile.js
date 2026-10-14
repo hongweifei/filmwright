@@ -7,9 +7,12 @@
 //
 // 参数可以是**静态数值**，也可以是**关键帧轨道**（让模糊渐入、辉光脉冲）。
 // 轨道的编译直接复用 `compileAnimate` —— 规则不复制第二份。
-import {EFFECT_SPECS} from '../../contract/effects.js';
+import {EFFECT_SPECS, GRADE_LOOKS} from '../../contract/effects.js';
 import {kf} from '../motion/ease.js';
 import {compileAnimate} from '../scene/animate.js';
+
+/** `color` 的恒等值（`grade` 插值的起点）。与 contract 里 color 的 identity 一致。 */
+const COLOR_IDENTITY = {exposure: 0, brightness: 1, contrast: 1, saturation: 1, hue: 0, temperature: 0};
 
 /**
  * @param {Array} effects  scene.json 里的 effects（已过 contract 校验）
@@ -22,6 +25,21 @@ export function compileEffects(effects, node) {
   for (const fx of effects) {
     const spec = EFFECT_SPECS[fx.type];
     if (!spec) continue;                        // 校验期已报，这里跳过
+    // `grade` 是**预设**：编译期展开成一个 `color` 步骤。
+    // 这样它不需要自己的着色器，连短路判据（color 的 noopWhen）都是现成的。
+    // `amount` 在恒等值与该预设之间插值：0 ⇒ 全恒等 ⇒ 被判为直通、根本不进 GPU。
+    if (fx.type === 'grade') {
+      const look = GRADE_LOOKS[fx.look];
+      if (!look) continue;                      // 校验期已报
+      const a = fx.amount ?? 1;
+      const st = {};
+      for (const [k, idv] of Object.entries(COLOR_IDENTITY)) {
+        const target = look.params[k] ?? idv;
+        st[k] = idv + (target - idv) * a;
+      }
+      steps.push({type: 'color', static: st, tracks: {}});
+      continue;
+    }
     const step = {type: fx.type, static: {}, tracks: {}};
     for (const [k, ps] of Object.entries(spec.params)) {
       const v = fx[k];

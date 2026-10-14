@@ -22,7 +22,27 @@
 //
 // 为什么是 OR 而不是单个"恒等值"：glow 在 `intensity=0` **或** `radius=0` 时都等于
 // 什么都没做，单个恒等值表达不了这种关系（第一版就卡在这）。
-export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate', 'radialBlur', 'distort'];
+export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate', 'radialBlur', 'distort', 'grade'];
+
+/**
+ * 调色预设（`grade`）。
+ *
+ * 每个预设就是一**组 `color` 参数** —— 所以 `grade` 不需要自己的着色器：
+ * 编译期把它展开成一个 `color` 步骤即可，连短路判据（`noopWhen`）都是现成的。
+ *
+ * `amount` 在**恒等值与该预设之间插值**：0 直通、1 全量、0.5 一半。
+ * 这样"轻微加一点电影感"不用自己算参数。
+ */
+export const GRADE_LOOKS = {
+  'teal-orange': {note: '青橙（商业片最常见的冷暖对比）',
+    params: {saturation: 1.18, contrast: 1.12, temperature: 0.28, hue: -8}},
+  filmic: {note: '电影感（略压饱和、抬对比）',
+    params: {saturation: 0.88, contrast: 1.22, brightness: 0.97}},
+  noir: {note: '黑白硬调（去色 + 强对比）',
+    params: {saturation: 0, contrast: 1.38}},
+  warm: {note: '偏暖（加红减蓝）', params: {temperature: 0.38, saturation: 1.06}},
+  cool: {note: '偏冷（减红加蓝）', params: {temperature: -0.38, saturation: 1.06}},
+};
 
 export const EFFECT_SPECS = {
   blur: {
@@ -114,6 +134,17 @@ export const EFFECT_SPECS = {
       amount: {kind: 'num', min: 0, max: 1, required: true, note: '扭曲幅度（0=不变，1≈画面 5%）'},
       frequency: {kind: 'num', min: 1, max: 20, def: 4, note: '波纹密度（一个方向上的波数）'},
       phase: {kind: 'num', min: -180, max: 180, def: 0, note: '相位（度）：让波纹的位置平移'},
+    },
+  },
+
+  grade: {
+    note: '调色预设（青橙 / 电影感 / 黑白 / 暖 / 冷）。编译期展开成一个 color 步骤，不额外开销',
+    noopWhen: [{amount: 0}],
+    params: {
+      look: {kind: 'enum', values: ['teal-orange', 'filmic', 'noir', 'warm', 'cool'],
+        required: true, note: '预设名'},
+      amount: {kind: 'num', min: 0, max: 1, required: true,
+        note: '强度：在"原样"与该预设之间插值（0=直通，1=全量）'},
     },
   },
 };

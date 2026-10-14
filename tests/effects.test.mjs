@@ -8,7 +8,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validateEffects, validateScene} from '../src/contract/scene.js';
-import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX} from '../src/contract/effects.js';
+import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, GRADE_LOOKS} from '../src/contract/effects.js';
 import {compileEffects, isNoopEffects, evalEffects} from '../src/runtime/fx/compile.js';
 import {bindShots, setShots} from '../src/runtime/stage/shots.js';
 
@@ -440,10 +440,56 @@ test('新效果的参数也能用关键帧，且取值逐个查范围', () => {
 });
 
 test('效果登记表完整（加效果时这条会提醒补齐直通条件与说明）', () => {
-  assert.equal(EFFECT_TYPES.length, 9);
+  assert.equal(EFFECT_TYPES.length, 10);
   assert.deepEqual(Object.keys(EFFECT_SPECS).sort(), [...EFFECT_TYPES].sort());
   for (const t of EFFECT_TYPES) {
     assert.ok(EFFECT_SPECS[t].noopWhen?.length, `${t} 缺直通条件（逐帧短路要用它）`);
     assert.ok(EFFECT_SPECS[t].note?.length > 4, `${t} 缺说明`);
+  }
+});
+
+// ─────────────────────── 调色预设 grade ───────────────────────
+
+test('grade：look 必须是已知预设名（hint 要列出全部），amount 必填且 0–1', () => {
+  assert.deepEqual(codes([{type: 'grade', look: 'noir', amount: 1}]), []);
+  assert.deepEqual(codes([{type: 'grade', look: 'teal-orange', amount: 0.5}]), []);
+  const e = validateEffects([{type: 'grade', look: 'sepia', amount: 1}]);
+  assert.deepEqual(e.map((x) => x.code), ['SCENE_FX_PARAM']);
+  for (const k of Object.keys(GRADE_LOOKS)) assert.ok(e[0].hint.includes(k), `hint 要列出 ${k}`);
+  assert.ok(codes([{type: 'grade', look: 'noir'}]).includes('SCENE_FX_PARAM'), '缺 amount');
+  assert.deepEqual(codes([{type: 'grade', look: 'noir', amount: 2}]), ['SCENE_FX_RANGE']);
+  // 枚举**不能**用关键帧（关键帧的值是数值，枚举没有插值语义）
+  assert.ok(codes([{type: 'grade', look: [{frame: 1, v: 1}], amount: 1}]).includes('SCENE_FX_PARAM'));
+});
+
+test('grade 在**编译期展开成 color 步骤**（不写新着色器，短路判据也是现成的）', () => {
+  const c = compileEffects([{type: 'grade', look: 'noir', amount: 1}], {from: 1});
+  assert.equal(c.steps.length, 1);
+  assert.equal(c.steps[0].type, 'color', '展开成 color');
+  assert.equal(c.steps[0].static.saturation, 0, 'noir 去色');
+  assert.ok(c.steps[0].static.contrast > 1.3, 'noir 强对比');
+});
+
+test('grade 的 amount 在**恒等值与预设之间插值**（0 直通）', () => {
+  const half = compileEffects([{type: 'grade', look: 'warm', amount: 0.5}], {from: 1});
+  const full = compileEffects([{type: 'grade', look: 'warm', amount: 1}], {from: 1});
+  assert.equal(half.steps[0].static.temperature, full.steps[0].static.temperature / 2,
+    '半量应当是全量的一半（从恒等值 0 起算）');
+  // amount=0 ⇒ 全恒等 ⇒ **直通**（根本不进 GPU）
+  const zero = compileEffects([{type: 'grade', look: 'noir', amount: 0}], {from: 1});
+  assert.equal(isNoopEffects(zero, 1), true, 'amount=0 应当被判为直通');
+  assert.equal(isNoopEffects(full, 1), false);
+});
+
+test('每个预设的参数都在 color 的合法范围内（不然展开后会越界）', () => {
+  // 这条防"预设表写了个 color 不接受的值" —— 展开发生在编译期，
+  // 越界不会经过 validateEffects，所以要在这里钉住。
+  const P = EFFECT_SPECS.color.params;
+  for (const [name, look] of Object.entries(GRADE_LOOKS)) {
+    for (const [k, v] of Object.entries(look.params)) {
+      const ps = P[k];
+      assert.ok(ps, `${name} 的 ${k} 不是 color 的参数`);
+      assert.ok(v >= ps.min && v <= ps.max, `${name}.${k}=${v} 超出 color 的范围 ${ps.min}–${ps.max}`);
+    }
   }
 });

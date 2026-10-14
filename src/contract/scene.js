@@ -284,6 +284,16 @@ export function validateEffects(effects, path = 'effects') {
         }
         continue;
       }
+      // 枚举参数（如 grade.look）：只能是给定值之一，且**不能**用关键帧
+      // （关键帧的值是数值 v，枚举没有插值语义）
+      if (ps.kind === 'enum') {
+        if (!ps.values.includes(v)) {
+          push('SCENE_FX_PARAM', `${fp}.${k}`,
+            `${k} 只能是 ${ps.values.join(' / ')}，收到 ${JSON.stringify(v)}`,
+            `${k}：${ps.note}；可用：${ps.values.join(' / ')}`);
+        }
+        continue;
+      }
       // 参数可以是**静态数值**，也可以是**关键帧轨道**（让模糊渐入、辉光脉冲）。
       // 轨道形状走 validateKeyTrack —— 与 animate 是**同一份**规则，不另写一套。
       if (Array.isArray(v)) {
