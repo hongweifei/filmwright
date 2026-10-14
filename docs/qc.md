@@ -101,7 +101,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-tts.mjs` | 验 TTS 契约：`voices` 报出引擎可用性与回退结果、真跑一遍产出三件套、timeline 如实标注引擎与 `subs_timing`、音频与时间轴一致、逐句缓存命中、换引擎必须让缓存失效 |
 | `verify-tts-e2e.py` | 验 TTS 端到端（真合成）：引擎回退链生效、产物与时间轴自洽、缓存命中、三处负面对照 |
 | `verify-encoding.mjs` | 全仓文本必须是合法 UTF-8 且无 BOM —— 抓肉眼看不见的问题（曾把 `.gitignore` 写成 GBK） |
-| `profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
+| `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |
 | `verify-longform.mjs` | 在 10 分钟量级上量单实例退化、分片加速比、增量段缓存规模、全分辨率吞吐 |
 | `verify-attribution.mjs` | 验增量重渲按段归因：改一个镜头只重渲覆盖它的段，改全局输入则全失效 |

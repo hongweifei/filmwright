@@ -163,7 +163,7 @@ draw(ctx, n, t, accent) {
 所以渲染路径的中间帧默认改用 **JPEG q=0.92**（终点本来就是 h264 有损编码，
 中间再无损一次没有意义）。静帧与像素回归仍走 PNG —— 那两处要的就是无损可复现。
 
-**实测收益**（scenecast，1280×720，逐项归因，见 `tools/bench-render.mjs`）：
+**实测收益**（scenecast，1280×720，逐项归因，见 `tools/probes/bench-render.mjs`）：
 
 | 配置 | ms/帧 | 相对最初 |
 |---|---|---|

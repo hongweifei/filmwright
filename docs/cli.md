@@ -212,7 +212,7 @@ filmwright render --project <目录> [--out x.mp4] [--shards N|auto] [--from N -
 | `--preset <p>` | x264 编码预设（默认 `medium`）。越慢压得越小；渲染瓶颈通常不在这里 |
 
 **性能**：瓶颈是**取像素与搬运**，不是绘制。实测（1280×720）绘制只占 0.6ms，
-而 PNG 编码 50.1ms、载荷 1243KB/帧。三处改动叠加（`tools/bench-render.mjs` 可复现）：
+而 PNG 编码 50.1ms、载荷 1243KB/帧。三处改动叠加（`tools/probes/bench-render.mjs` 可复现）：
 
 | 配置 | ms/帧 | 相对最初 |
 |---|---|---|

@@ -1,6 +1,6 @@
 // 渲染性能剖析：把每帧的时间拆成四段，找真正的瓶颈。
 //
-//   node tools/profile-frame.mjs [<仓库根>] [帧数]
+//   node tools/probes/profile-frame.mjs [<仓库根>] [帧数]
 //
 // 四段：
 //   1) 绘制      —— 页面里 drawFrame 的耗时（能直接量）
