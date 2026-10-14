@@ -30,6 +30,15 @@ export {hexA} from './runtime/draw/color.js';
 // ---- 运行时：素材（图片；boot 时全部加载完）----
 export {img, imgSize, assetNames, assetsReady} from './runtime/assets.js';
 
+// ---- 运行时：片段（视频/图片序列；抽帧在宿主侧，这里按源帧号同步取帧）----
+export {clipFrame, clipInfo, clipNames, clipsReady, decodedCount, sourceIndex} from './runtime/clips.js';
+
+// ---- 运行时：图层合成（变换 / 组透明度 / 混合模式）----
+export {withLayer, applyLayerTransform, applyShotTransform, isValidTransform, BLEND_MODES, bufferStats} from './runtime/composite/layer.js';
+
+// ---- 运行时：嵌套合成（子合成实例与循环）----
+export {bindLocalShots, compLength, localFrame, drawCompInstance, mapBeats} from './runtime/composite/comp.js';
+
 // ---- 运行时：版面 ----
 export {applyDesignScale, scale, scaleFactors, sX, sY, sSize, DESIGN_SAFE} from './runtime/layout/design.js';
 

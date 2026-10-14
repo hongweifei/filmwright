@@ -30,7 +30,7 @@ const MIME = {
   '.mp4': 'video/mp4',
 };
 
-export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null, watch: doWatch = false}) {
+export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null, clips = null, watch: doWatch = false}) {
   // SSE 订阅者：文件变化时推 reload
   const clients = new Set();
   let watchers = [];
@@ -80,15 +80,39 @@ export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null,
         return;
       }
 
-      // 生成的引导模块：配置 + 时间轴 + 场景规格 + 镜头模块地址（纯 scene 项目为 null）
+      // 生成的引导模块：配置 + 时间轴 + 场景规格 + 片段 + 镜头模块地址
       if (p === '/__filmwright/project.js') {
         const body =
           `export const config = ${JSON.stringify(raw)};\n` +
           `export const timeline = ${JSON.stringify(timeline)};\n` +
           `export const scene = ${JSON.stringify(scene ?? null)};\n` +
+          `export const clips = ${JSON.stringify(clips ?? null)};\n` +
           `export const shotsUrl = ${shotsRel ? JSON.stringify('/proj/' + shotsRel) : 'null'};\n`;
         res.writeHead(200, {'Content-Type': MIME['.js'], 'Cache-Control': 'no-store'});
         res.end(body);
+        return;
+      }
+
+      // /clips/<name>/fNNNNN.png → 抽好的帧序列（在项目 .work/clips/<key>/ 下）
+      // 片段目录名带内容哈希，这里只按名字找，避免把哈希暴露给运行时。
+      if (p.startsWith('/clips/') && clips) {
+        const rest = p.slice('/clips/'.length);
+        const slash = rest.indexOf('/');
+        if (slash > 0) {
+          const name = decodeURIComponent(rest.slice(0, slash));
+          const file = rest.slice(slash + 1);
+          const entry = clips[name];
+          if (entry && /^f\d+\.png$/.test(file)) {
+            const full = join(entry.dir, file);
+            if (existsSync(full)) {
+              const buf = await readFile(full);
+              res.writeHead(200, {'Content-Type': MIME['.png'], 'Cache-Control': 'no-store'});
+              res.end(buf);
+              return;
+            }
+          }
+        }
+        res.writeHead(404).end('clip frame not found: ' + p);
         return;
       }
 

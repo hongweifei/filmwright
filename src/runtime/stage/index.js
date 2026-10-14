@@ -7,8 +7,55 @@ import {validateScene} from '../../contract/scene.js';
 import {setShots, bindShots, shotAt, shots} from './shots.js';
 import {setChapterCards, chapterCards} from '../chrome/chapterCard.js';
 import {loadAssets} from '../assets.js';
+import {setClips, preloadClipFrames} from '../clips.js';
 import {compileScene} from '../scene/templates.js';
 import {drawFrame} from './drawFrame.js';
+
+/**
+ * 从 scene 规格里收集「哪里用到了哪个片段」——用来决定预解码哪些帧。
+ *
+ * 只解实际用到的区间（一个 10 秒 30fps 的片段有 300 帧，全解太浪费；
+ * 而镜头往往只用其中几秒）。找不到就整段解，宁可慢也不要缺帧。
+ */
+function collectClipUses(scene, clipMap, outFps) {
+  const uses = [];
+  // from 是「这一帧对应片段的第 1 帧」——与 clipFrame 的 from 参数同一个含义。
+  // 它必须随 uses 一起传下去，否则预解码区间会整体偏移（实测漏解前 18 帧）。
+  const push = (clipName, from, to, clipFrom) => {
+    const c = clipMap[clipName];
+    if (!c) return;
+    uses.push({
+      name: clipName,
+      from: Math.max(1, from),
+      to: Math.max(1, to),
+      clipFrom: clipFrom ?? 1,
+      outFps,
+    });
+  };
+  const shots = scene?.shots ?? [];
+  // 记下每个镜头的起点，`to` 就是下一个镜头的起点 - 1
+  const starts = shots.map((s) => {
+    if (typeof s.at === 'number') return s.at;
+    if (typeof s.at === 'string') return null;    // 需要时间轴，交给下面的兜底
+    return s.at?.s ? null : 1;
+  });
+  shots.forEach((s, i) => {
+    const name = s.clip ?? s.asset;
+    if (!name || !clipMap[name]) return;
+    const from = starts[i] ?? 1;
+    const to = (starts[i + 1] ?? (from + 300)) - 1;
+    // clipFrom = 这个镜头的起始帧（该帧对应片段第 1 帧）—— 与 clipT 里
+    // clipFrame(..., {from: this.from}) 用的是同一个量
+    push(name, from, to, from);
+  });
+  // 拿不到精确区间时：整段解（保证不缺帧，代价是 boot 慢一些）
+  if (uses.length === 0) {
+    for (const [name, c] of Object.entries(clipMap)) {
+      uses.push({name, from: 1, to: Math.max(1, Math.ceil((c.frames / c.fps) * outFps)), clipFrom: 1, outFps});
+    }
+  }
+  return uses;
+}
 
 export {drawFrame, shotAt, shots, chapterCards, timeline, view, tailFrom};
 
@@ -66,10 +113,28 @@ export async function boot(p, resize) {
   const loaded = await loadFonts(cfg.fontFiles);
   const assets = await loadAssets(cfg.assets);
 
+  // 片段素材：注册帧序列（抽帧已在宿主侧完成），并按**实际用到的区间**预解码。
+  // 预解码必须在开画前做完 —— drawImage 一张没解码的图会静默什么都不画
+  // （同图片素材的取舍：宁可 boot 时慢一点，也不要空白帧）。
+  let clipsInfo = null;
+  if (cfg.clips.length && p.clips) {
+    setClips(p.clips, '/clips/');
+    // 用到的区间：scene 里的 image/clip 镜头（或手写镜头自己声明的 clipUses）
+    const uses = collectClipUses(p.scene, p.clips, cfg.fps ?? 30);
+    clipsInfo = await preloadClipFrames(uses, cfg.fps ?? 30);
+  } else if (cfg.clips.length && !p.clips) {
+    throw new Error('filmwright: 配置里声明了 clips，但宿主没提供抽好的帧 —— ' +
+      '跑一次 filmwright clips --project <目录>，或用 render/preview（它们会自动抽）');
+  }
+
   // 时间轴就绪之后才求值镜头模块
   const list = [];
   if (p.scene) {
-    const v = validateScene(p.scene, {timeline, assetNames: cfg.assets.map((a) => a.name)});
+    const v = validateScene(p.scene, {
+      timeline,
+      assetNames: cfg.assets.map((a) => a.name),
+      clipNames: new Set(Object.keys(p.clips ?? {})),
+    });
     if (!v.ok) {
       throw new Error('filmwright: scene.json 校验失败：\n'
         + v.errors.map((e) => `  [${e.code}] ${e.path}：${e.message}${e.hint ? '（' + e.hint + '）' : ''}`).join('\n'));

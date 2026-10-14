@@ -146,6 +146,16 @@ filmwright sheet --project <项目目录> [--from 1] [--to <总帧>] [--step 150
 
 按步长抽帧拼成联络表，默认写到 `.work/qc/sheet.png`。文案错字、数字错、遮挡这类「画质自检看不懂内容」的问题，靠人看联络表抓。
 
+## `clips`
+
+```bash
+filmwright clips --project <项目目录> [--cache-dir <目录>]
+```
+
+把配置里声明的视频类片段抽成图片序列（`ffmpeg`），落在 `.work/clips/<name>-<哈希>/`。**内容寻址**：源文件或抽帧参数（fps/width/start/maxSec）没变就命中缓存、不重抽；改一个参数就是新的键。
+
+`render` 与 `preview` 会**自动**在开会话前跑这一步（抽帧必须在开画前完成，因为页面里的绘制是同步的）。单独跑它是为了：长视频先抽好省得每次等、或只想确认抽帧结果。
+
 ## `render`
 
 ```bash

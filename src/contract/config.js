@@ -127,9 +127,89 @@ export function normalizeConfig(raw) {
     hud: raw.hud ?? [],
     chapterTech: raw.chapterTech ?? [],
     assets: normAssets(raw.assets),
+    clips: normClips(raw.clips),
     endingFade: raw.endingFade ?? 30,
     music: normMusic(raw.music),
   };
+}
+
+/**
+ * 视频 / 图片序列素材（clips）声明。
+ *
+ * ## 为什么需要它、以及它如何不破坏核心不变量
+ *
+ * `assets` 只收图片，且 boot 时全部加载完 —— 视频不行：一段 5 分钟的视频是
+ * 9000 帧，全加载进内存不现实。
+ *
+ * 做法分两层，各守各的规矩：
+ *   - **抽帧是 host 的 I/O**（ffmpeg，异步、慢、有磁盘代价）：`filmwright clips`
+ *     或渲染前自动跑一遍，把帧抽到 `.work/clips/<name>-<hash>/` 下的图片序列，
+ *     并做**内容寻址缓存**（同样的源 + 参数只抽一次）。
+ *   - **绘制仍是同步纯函数**：运行时按 `源帧号 = round(t × clip.fps)` 取一张
+ *     **已经就绪的图片**。源帧号只由 N 决定，所以「第 N 帧只是 N 的函数」不变；
+ *     「取图」这一步的 I/O 由宿主的 prepare 阶段负责（见 runtime/clips.js）。
+ *
+ * 三种写法：
+ *   clips: ['assets/broll.mp4']                                   // 抽帧，默认 30fps
+ *   clips: [{name: 'broll', src: 'assets/broll.mp4', fps: 30, width: 960}]
+ *   clips: [{name: 'seq', src: 'assets/frames/%04d.png', seq: true, fps: 30}]
+ *
+ * 字段：
+ *   name    素材名（镜头里用它引用；默认取文件名不含扩展名）
+ *   src     视频文件，或（seq: true 时）图片序列的路径模式
+ *   seq     true = src 已经是图片序列，不需要抽帧
+ *   fps     抽帧帧率（默认 30）—— 也是运行时「秒 → 源帧号」的换算基准
+ *   width   抽帧宽度（默认不缩放，保留原始尺寸）；高度按比例
+ *   start   从源的第几秒开始抽（默认 0）
+ *   maxSec  最多抽多少秒（默认不限）—— 长视频只用到一小段时能省很多帧
+ */
+function normClips(raw) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new Error('filmwright: clips 必须是数组，收到 ' + JSON.stringify(raw));
+  }
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const c = typeof item === 'string' ? {src: item} : item;
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      throw new Error('filmwright: clips 每项要么是路径字符串，要么是 {name, src, ...}，收到 ' + JSON.stringify(item));
+    }
+    if (typeof c.src !== 'string' || !c.src) {
+      throw new Error('filmwright: clips 每项都要有 src，收到 ' + JSON.stringify(item));
+    }
+    const base = c.src.split('/').pop().replace(/\.[^.]+$/, '');
+    const name = c.name ?? base;
+    if (typeof name !== 'string' || !name || name.includes('%')) {
+      throw new Error(`filmwright: 片段 ${c.src} 的名字算不出来（序列路径带 %04d 时要显式给 name）`);
+    }
+    if (seen.has(name)) {
+      throw new Error(`filmwright: 片段名「${name}」重复了 —— 镜头引用它时无法区分是哪一个`);
+    }
+    seen.add(name);
+    const numOr = (v, def, key, {min = 0, max, integer = false} = {}) => {
+      if (v === undefined) return def;
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw new Error(`filmwright: clips.${name}.${key} 要是数字，收到 ${JSON.stringify(v)}`);
+      }
+      if (integer && !Number.isInteger(v)) {
+        throw new Error(`filmwright: clips.${name}.${key} 要是整数，收到 ${v}`);
+      }
+      if (v < min) throw new Error(`filmwright: clips.${name}.${key} 不能小于 ${min}，收到 ${v}`);
+      if (max !== undefined && v > max) throw new Error(`filmwright: clips.${name}.${key} 不能大于 ${max}，收到 ${v}`);
+      return v;
+    };
+    out.push({
+      name,
+      src: c.src.startsWith('/') ? c.src : '/' + c.src,
+      seq: c.seq === true,
+      fps: numOr(c.fps, 30, 'fps', {min: 1, max: 120}),
+      width: numOr(c.width, 0, 'width', {min: 0, max: 8192, integer: true}),
+      start: numOr(c.start, 0, 'start', {min: 0}),
+      maxSec: numOr(c.maxSec, 0, 'maxSec', {min: 0}),
+    });
+  }
+  return out;
 }
 
 /**

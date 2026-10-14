@@ -1,8 +1,9 @@
 // 幕底：渐变 + 呼吸的色晕 + 网格 + 暗角。所有镜头都画在它上面，不许自己铺不透明底。
-import {theme as C, view} from '../../contract/config.js';
+import {theme as C, view, accent as accentAt} from '../../contract/config.js';
 import {hexA} from '../draw/color.js';
 
-export function drawBackdrop(ctx, t, accent) {
+/** @param {string} chapterAccent 本章主色（由 drawFrame 按章节传入） */
+export function drawBackdrop(ctx, t, chapterAccent) {
   const W = view.W;
   const H = view.H;
   // 按 1280×720 设计的位置等比缩放 —— 换分辨率不用改这里
@@ -17,9 +18,14 @@ export function drawBackdrop(ctx, t, accent) {
   ctx.fillRect(0, 0, W, H);
 
   // 两团缓慢漂移的色晕（周期很长，不会看出循环）
+  //
+  // **第二团用 accent(1) 而不是 C.accents[1]**：theme.accents 的长度由使用者定
+  // （示例只给 1–3 个），直接下标越界就是 undefined，一路传到 hexA 才崩
+  // （`Cannot read properties of undefined (reading 'replace')`），
+  // 而崩溃点离原因很远。accent(i) 会按长度回绕。
   const orbs = [
-    {x: 300 + Math.sin(t / 210) * 180, y: 180 + Math.cos(t / 260) * 90, r: 460, c: accent, a: 0.10},
-    {x: 1010 + Math.cos(t / 250) * 150, y: 520 + Math.sin(t / 300) * 80, r: 420, c: C.accents[1], a: 0.07},
+    {x: 300 + Math.sin(t / 210) * 180, y: 180 + Math.cos(t / 260) * 90, r: 460, c: chapterAccent, a: 0.10},
+    {x: 1010 + Math.cos(t / 250) * 150, y: 520 + Math.sin(t / 300) * 80, r: 420, c: accentAt(1), a: 0.07},
   ];
   for (const o of orbs) {
     const rg = ctx.createRadialGradient(o.x * sx, o.y * sy, 0, o.x * sx, o.y * sy, o.r * sx);

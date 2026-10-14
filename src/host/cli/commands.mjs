@@ -18,6 +18,7 @@ import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
 import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
 import {exportSrt, readTranslation} from '../media/srt.mjs';
+import {prepareClips} from '../media/clips.mjs';
 import {sceneSchema} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';
@@ -151,6 +152,40 @@ export async function srt(ctx) {
   });
   say(`${r.out}  ${r.blocks} 块${r.bilingual ? '（双语）' : ''}`);
   return {code: 0, data: r};
+}
+
+/**
+ * 片段素材抽帧（`filmwright clips`）。
+ *
+ * 抽帧是 host 的 I/O：慢、有磁盘代价，所以**独立成命令**，也可以在渲染前自动跑。
+ * 内容寻址缓存：源文件或参数没变就直接复用，不重抽。
+ */
+export async function clips(ctx) {
+  const say = makeSay(ctx.args);
+  const list = normalizeConfig(ctx.proj.raw).clips ?? [];
+  if (list.length === 0) {
+    say('配置里没有声明 clips（片段素材）—— 什么也不用做');
+    return {code: 0, data: {clips: {}, extracted: 0, cached: 0, totalFrames: 0}};
+  }
+  assertTool(ffmpegPath(), '片段抽帧要 ffmpeg');
+  const cacheRoot = ctx.args['cache-dir']
+    ? resolve(String(ctx.args['cache-dir']))
+    : join(ctx.proj.paths.workDir, 'clips');
+  const t0 = Date.now();
+  const r = await prepareClips(ctx.projectDir, list, {cacheRoot});
+  for (const [name, c] of Object.entries(r.clips)) {
+    say(`  ${name}: ${c.frames} 帧 @${c.fps}fps${c.cached ? '（缓存命中）' : '（新抽）'}`);
+  }
+  say(`共 ${Object.keys(r.clips).length} 个片段，新抽 ${r.extracted} / 命中 ${r.cached}，` +
+    `${r.totalFrames} 帧，${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  return {
+    code: 0,
+    data: {
+      clips: r.clips, extracted: r.extracted, cached: r.cached,
+      totalFrames: r.totalFrames, cacheRoot: r.cacheRoot,
+      seconds: +((Date.now() - t0) / 1000).toFixed(1),
+    },
+  };
 }
 
 /** 新建项目骨架。不需要 --project：目标目录就是位置参数。 */

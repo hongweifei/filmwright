@@ -39,6 +39,7 @@ async function load() {
     config: p.config,
     timeline: p.timeline,
     scene: p.scene ?? null,
+    clips: p.clips ?? null,
     loadShots: p.shotsUrl ? () => import(p.shotsUrl) : undefined,
   }, (w, h) => {
     canvas.width = w;

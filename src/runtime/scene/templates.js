@@ -13,9 +13,10 @@ import {bindLocalShots, compLength, drawCompInstance, mapBeats} from '../composi
 import {theme as C, fonts as F, accentFor} from '../../contract/config.js';
 import {inv, easeOut3} from '../motion/ease.js';
 import {applyDesignScale, DESIGN_SAFE} from '../layout/design.js';
-import {text, panel, rule, codeBlock, caret, measure, font, terminal as terminalDraw, bars as barsDraw} from '../draw/primitives.js';
+import {text, panel, rule, codeBlock, caret, measure, font, terminal as terminalDraw, bars as barsDraw, roundRect} from '../draw/primitives.js';
 import {bigStat, flow, section, chips as chipsW} from '../draw/widgets.js';
-import {picture} from '../draw/picture.js';
+import {picture, fitBox} from '../draw/picture.js';
+import {clipFrame} from '../clips.js';
 import {hexA} from '../draw/color.js';
 
 const W = () => 1280;
@@ -504,6 +505,65 @@ const barsT = {
 };
 
 /**
+ * `clip` 模板：把视频/图片序列片段摆进画面，随时间播放。
+ *
+ * **取帧是同步的纯函数**：`clipFrame(name, n, {from, fps})` 按「全局帧 → 源帧号」
+ * 查一张**已预解码**的图（见 runtime/clips.js）。源帧号只由 n 决定，所以
+ * 「第 N 帧只是 N 的函数」不受影响 —— 抽帧那步 I/O 已经在宿主侧做完了。
+ */
+const clipT = {
+  beats: (shot, start) => [start + 6, start + 30],
+  draw(ctx, n, shot, accent) {
+    const frames = staggerFrames(shot.sid, 1, this.from);
+    const p = enterAt(n, frames[0]);
+    if (shot.heading) {
+      text(ctx, shot.heading, W() / 2, 150, {
+        size: 30, weight: 900, color: C.text, align: 'center', baseline: 'middle',
+        alpha: p, maxW: DESIGN_SAFE.w,
+      });
+    }
+    if (p <= 0.01) return;
+    ctx.save();
+    ctx.globalAlpha = p;
+    const box = {x: 220, y: 200, w: 840, h: 400};
+    // 取帧：from 默认 1（片段从它自己的第 1 帧开始放），fps 默认按输出帧率
+    // 取帧：`from` = 本镜头起始帧（全局帧 this.from 对应片段的第 1 帧）。
+    // 与 boot 里 collectClipUses 的 clipFrom 是同一个量 —— 两处必须一致，
+    // 否则「预解码的区间」与「实际取用的帧」会错位（实测漏解前 18 帧）。
+    const im = clipFrame(shot.clip, n, {from: this.from, fps: shot.fps ?? 30});
+    drawImageFit(ctx, im, box, shot.fit ?? 'contain', accent);
+    ctx.restore();
+    if (shot.note) {
+      text(ctx, shot.note, W() / 2, 626, {
+        size: 19, family: F.mono, color: C.faint, align: 'center', baseline: 'middle', alpha: p,
+      });
+    }
+  },
+};
+
+/** 把一张图按 fit 规则摆进框，带描边与发光（与 picture 同一套观感）。 */
+function drawImageFit(ctx, im, box, fit, accent) {
+  const natW = im.naturalWidth || im.width || box.w;
+  const natH = im.naturalHeight || im.height || box.h;
+  const {dw, dh} = fitBox(natW, natH, box.w, box.h, fit);
+  const dx = box.x + (box.w - dw) / 2;
+  const dy = box.y + (box.h - dh) / 2;
+  ctx.save();
+  roundRect(ctx, box.x, box.y, box.w, box.h, 12);
+  ctx.clip();
+  ctx.drawImage(im, dx, dy, dw, dh);
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = hexA(accent, 0.4);
+  ctx.lineWidth = 1.6;
+  ctx.shadowColor = hexA(accent, 0.35);
+  ctx.shadowBlur = 24;
+  roundRect(ctx, box.x, box.y, box.w, box.h, 12);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
  * 模板注册表。键必须与 contract/scene.js 的 SHOT_TYPES 一致 —— 但 `comp` 例外：
  * 它不是模板（没有固定的 draw），而是「引用子合成」的实例化声明，由 compileScene
  * 单独处理（同一份 comps 定义可被多处实例化，还可能带不同的 loop/frames）。
@@ -512,6 +572,7 @@ const barsT = {
 export const TEMPLATES = {
   title, bullets, stat, flow: flowT, code, image, compare,
   steps, table, quote, terminal: terminalT, chips, bars: barsT,
+  clip: clipT,
   // comp 由 compileScene 特判，不该走到这里；留着是为了键集一致 + 误用时明确报错
   comp: {draw(ctx, n, shot) { void ctx; void n; void shot;
     throw new Error('filmwright: comp 类型由 compileScene 特判，不应直接调用模板 draw'); }},

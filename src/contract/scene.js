@@ -23,6 +23,7 @@ export const SHOT_TYPES = [
   'title', 'bullets', 'stat', 'flow', 'code', 'image', 'compare',
   'steps', 'table', 'quote', 'terminal', 'chips', 'bars',
   'comp',   // 嵌套合成实例：引用 comps 里定义的一个子合成
+  'clip',   // 视频/图片序列片段：按源帧号取图（见配置的 clips）
 ];
 
 /** 每类的容量上限（版面算出来的，超了会挤/溢出）。 */
@@ -44,6 +45,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_TOO_MANY', 'SCENE_TABLE_WIDTH', 'SCENE_NO_ASSET', 'SCENE_FIRST_NOT_1', 'SCENE_NOT_INCREASING',
   'SCENE_BAD_TRANSITION', 'SCENE_BAD_TRANSFORM',
   'SCENE_BAD_COMP', 'SCENE_NO_COMP', 'SCENE_COMP_CYCLE', 'SCENE_COMP_LOCAL_AT',
+  'SCENE_NO_CLIP',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
   'SCENE_NO_SENTENCE', 'SCENE_NO_BLOCK',
 ];
@@ -110,6 +112,7 @@ const FIELDS = {
   chips: {heading: 'str?', items: 'arr<chip>'},
   bars: {heading: 'str?', items: 'arr<bar>', unit: 'str?'},
   comp: {comp: 'compName', loop: 'bool?', frames: 'num?'},
+  clip: {clip: 'clipName', heading: 'str?', note: 'str?', fit: 'fit?', from: 'num?', fps: 'num?'},
 };
 
 /** 每类的说明（schema 输出给 agent 看，一句话讲清"什么时候用它"）。 */
@@ -128,6 +131,7 @@ const TYPE_NOTES = {
   chips: '标签胶囊（≤12 个）：关键词平铺，自动折行',
   bars: '竖向条形图（2–6 根）：数值 + 标签，适合性能/占比对比',
   comp: '嵌套合成实例：引用 comps 里定义的可复用子合成（可循环）',
+  clip: '视频/图片序列片段：按源帧号取图，随时间播放（片段在配置的 clips 里声明）',
 };
 
 /** 转场声明是否合法（与 runtime/stage/shots.js 的 normalizeTransition 同一套规则）。 */
@@ -290,7 +294,7 @@ function validateSide(v, path, errors, owner) {
  * @param {{timeline: object, assetNames?: string[]}} ctx
  * @returns {{ok: boolean, errors: Array<{code, path, message, hint}>}}
  */
-export function validateScene(raw, {timeline, assetNames} = {}) {
+export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
   const errors = [];
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     errors.push(err('SCENE_NOT_OBJECT', 'scene', '场景规格必须是一个对象', '形如 {"shots": [...]}'));
@@ -426,6 +430,19 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
         } else if (kind === 'bool?') {
           if (v !== undefined && typeof v !== 'boolean') {
             errors.push(err('SCENE_BAD_FIELD', p, `${k} 必须是 true/false，收到 ${JSON.stringify(v)}`, ''));
+          }
+        } else if (kind === 'fit?') {
+          if (v !== undefined && !['contain', 'cover', 'stretch'].includes(v)) {
+            errors.push(err('SCENE_BAD_FIELD', p, `fit 只能是 contain / cover / stretch，收到 ${JSON.stringify(v)}`, ''));
+          }
+        } else if (kind === 'clipName') {
+          if (v === undefined) {
+            errors.push(err('SCENE_MISSING_FIELD', p, 'clip 必填', '写配置 clips 里声明的片段名，例如 "broll"'));
+          } else if (typeof v !== 'string' || !v) {
+            errors.push(err('SCENE_BAD_FIELD', p, 'clip 必须是非空字符串', ''));
+          } else if (clipNames && !clipNames.has(v)) {
+            errors.push(err('SCENE_NO_CLIP', p, `引用了不存在的片段 ${JSON.stringify(v)}`,
+              `已声明：${[...clipNames].join(' / ') || '（无，先在 film.config.mjs 的 clips 里声明）'}`));
           }
         } else if (kind === 'compName') {
           // comp 类型引用 comps 里定义的子合成；不存在就报错（否则运行期才炸）

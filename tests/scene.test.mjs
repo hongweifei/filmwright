@@ -82,7 +82,7 @@ test('validateScene：最小合法规格通过', () => {
   assert.equal(r.ok, true, JSON.stringify(r.errors));
 });
 
-test('validateScene：14 类模板的最小实例都合法', () => {
+test('validateScene：15 类模板的最小实例都合法', () => {
   // 每类单独成一个规格：单镜头规格里它就是第一个镜头，必须从第 1 帧起。
   const shots = {
     title: {type: 'title', at: 1, title: 't'},
@@ -99,13 +99,41 @@ test('validateScene：14 类模板的最小实例都合法', () => {
     chips: {type: 'chips', at: 1, items: ['关键词', {label: '另一个'}]},
     bars: {type: 'bars', at: 1, unit: 'ms', items: [{v: 81, label: 'a'}, {v: 120, label: 'b'}]},
     comp: {type: 'comp', at: 1, comp: 'sub'},
+    clip: {type: 'clip', at: 1, clip: 'broll'},
   };
   assert.deepEqual(Object.keys(shots).sort(), [...SHOT_TYPES].sort(), '测试要覆盖全部类型');
   for (const s of Object.values(shots)) {
-    const r = validateScene({comps: {sub: {shots: [{type: 'title', at: 1, title: 'x'}]}}, shots: [s]},
-      {timeline: tl, assetNames: ['a']});
+    const r = validateScene(
+      {comps: {sub: {shots: [{type: 'title', at: 1, title: 'x'}]}}, shots: [s]},
+      {timeline: tl, assetNames: ['a'], clipNames: new Set(['broll'])});
     assert.equal(r.ok, true, s.type + ' → ' + JSON.stringify(r.errors));
   }
+});
+
+// ---------- 片段素材（clip） ----------
+
+test('负面对照：clip 引用不存在的片段要报 SCENE_NO_CLIP 并列出已声明的', () => {
+  const r = validateScene({shots: [{type: 'clip', at: 1, clip: 'nope'}]},
+    {timeline: tl, clipNames: new Set(['broll', 'screen'])});
+  const e = r.errors.find((x) => x.code === 'SCENE_NO_CLIP');
+  assert.ok(e, '应报 SCENE_NO_CLIP：' + JSON.stringify(r.errors.map((x) => x.code)));
+  assert.ok(e.hint.includes('broll'), 'hint 要列出已声明的片段');
+});
+
+test('clip 的 fit 字段只认 contain / cover / stretch', () => {
+  const good = validateScene({shots: [{type: 'clip', at: 1, clip: 'b', fit: 'cover'}]},
+    {timeline: tl, clipNames: new Set(['b'])});
+  assert.equal(good.ok, true, JSON.stringify(good.errors));
+  const bad = validateScene({shots: [{type: 'clip', at: 1, clip: 'b', fit: 'zoom'}]},
+    {timeline: tl, clipNames: new Set(['b'])});
+  assert.ok(bad.errors.some((e) => e.code === 'SCENE_BAD_FIELD' && e.path.endsWith('.fit')),
+    '应报 fit 非法：' + JSON.stringify(bad.errors));
+});
+
+test('clip 缺 clip 字段要报必填', () => {
+  const r = validateScene({shots: [{type: 'clip', at: 1}]}, {timeline: tl, clipNames: new Set(['b'])});
+  assert.ok(r.errors.some((e) => e.code === 'SCENE_MISSING_FIELD' && e.path.endsWith('.clip')),
+    JSON.stringify(r.errors));
 });
 
 // ---------- 嵌套合成（comps / comp） ----------

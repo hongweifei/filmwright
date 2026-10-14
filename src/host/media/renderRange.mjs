@@ -5,16 +5,30 @@ import {serveProject} from '../project/server.mjs';
 import {shotsRelOrNull} from '../project/load.mjs';
 import {openSession} from '../browser/session.mjs';
 import {spawnTool, ffmpegPath, checkSpawned} from './ffmpegBin.mjs';
+import {prepareClips} from './clips.mjs';
+import {normalizeConfig} from '../../contract/config.js';
 
 /** 起服务 + 开会话；调用方负责 close()。 */
 export async function openProjectSession(projectDir, proj, opts = {}) {
   const cfgSize = proj.raw.size ?? {width: 1280, height: 720};
+  // 片段素材：抽帧是 host 的 I/O，必须在开会话**之前**做完 ——
+  // 页面里的绘制是同步的，帧没抽好就只能画空白。
+  // 内容寻址缓存保证同一份源+参数只抽一次，所以每次都调也不亏。
+  const clipList = normalizeConfig(proj.raw).clips ?? [];
+  let clips = null;
+  if (clipList.length) {
+    const r = await prepareClips(projectDir, clipList, {
+      cacheRoot: join(proj.paths.workDir, 'clips'),
+    });
+    clips = r.clips;
+  }
   // serveProject 返回 Promise，要 await —— 否则拿到的是 Promise 不是 server
   const server = await serveProject(projectDir, {
     raw: proj.raw,
     timeline: proj.timeline,
     shotsRel: shotsRelOrNull(proj),
     scene: proj.scene ?? null,
+    clips,
   });
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/`;

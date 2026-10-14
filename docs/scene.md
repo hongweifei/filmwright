@@ -155,6 +155,9 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 - **`alpha` 走离屏缓冲**：`ctx.globalAlpha` 是逐绘制操作生效的，一个图层里画两个重叠矩形、alpha=0.5 时重叠处会被混合两次——那不是「整组半透明」而是视觉 bug。所以组透明度先画进缓冲再整体合成。
 - **不声明 `transform`（或声明了但都是默认值）时走快路径**：直接在主画布上画，不建缓冲。**所以没用到这个特性的项目输出逐字节不变**——像素回归基线就是靠这条守住的（[verify-composite.mjs](../tools/verify-composite.mjs) 里有「无副作用 transform 与基线逐字节相同」的断言）。
 
+### `clip` 视频/图片序列片段
+`clip`（必填，须在配置 `clips` 里声明——引用没声明的名字，静态自检就报）、`heading?`、`note?`、`fit?`（`contain`/`cover`/`stretch`）。**按源帧号同步取图**，随时间播放；抽帧那步由宿主完成（`filmwright clips` 或渲染时自动），所以跳帧、分片、全量自检都不受影响。
+
 ## 校验与错误码
 
 `filmwright check` 的 `scene` 一道（不启浏览器）跑校验；boot 在浏览器里查的是**同一份实现**（`src/contract/scene.js`）。每条错误带 `code / path / message / hint`——错误信息是给模型读的，读完能直接改。

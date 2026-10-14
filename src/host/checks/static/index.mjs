@@ -240,6 +240,66 @@ export function checkAssets(projectDir, rawConfig, scene = null) {
 }
 
 /**
+ * 片段素材（clips）的静态校验：
+ *   - 源文件在不在（视频或序列路径）
+ *   - scene 里引用的 clip 名字声明过没有
+ *   - 已抽的帧是否就绪（没抽就提示跑 filmwright clips —— 不是错误，渲染会自动抽）
+ */
+export function checkClips(projectDir, rawConfig, scene) {
+  let cfg;
+  try {
+    cfg = normalizeConfig(rawConfig);
+  } catch {
+    return {name: 'clips', ok: true, checked: 0, problems: [], notes: ['配置读不了，assets 那道会报']};
+  }
+  const clips = cfg.clips ?? [];
+  const bad = [];
+  const notes = [];
+  let checked = 0;
+
+  for (const c of clips) {
+    checked++;
+    const rel = c.src.replace(/^\//, '');
+    if (c.seq) {
+      // 序列：目录里应该有 fNNNNN.png（抽好的帧），不检查视频文件
+      const dir = join(projectDir, 'public', rel.replace(/\/[^/]*%0?\d*d[^/]*$/, ''));
+      const has = existsSync(dir) && readdirSync(dir).some((f) => /^f\d+\.png$/.test(f));
+      if (!has) bad.push(`片段「${c.name}」声明为 seq，但 ${dir} 下没有 fNNNNN.png 序列`);
+      continue;
+    }
+    const srcFile = join(projectDir, 'public', rel);
+    if (!existsSync(srcFile)) {
+      bad.push(`片段「${c.name}」的源文件不在：public/${rel}`);
+    }
+  }
+
+  // scene 里引用的片段名
+  const declared = new Set(clips.map((c) => c.name));
+  for (const [i, s] of (scene?.shots ?? []).entries()) {
+    if (s?.type === 'clip' && s.clip) {
+      checked++;
+      if (!declared.has(s.clip)) {
+        bad.push(`shots[${i}].clip 引用了没声明的片段「${s.clip}」` +
+          (declared.size ? `（已声明：${[...declared].join('、')}）` : '（配置里一个片段都没声明）'));
+      }
+    }
+  }
+
+  // 已抽帧就绪情况：只提示，不算错（render/preview 会自动抽）
+  if (clips.length) {
+    const cacheRoot = join(projectDir, '.work', 'clips');
+    if (!existsSync(cacheRoot)) {
+      notes.push(`配置里有 ${clips.length} 个片段但还没抽帧 —— render/preview 会自动抽（或先跑 filmwright clips）`);
+    } else {
+      const done = readdirSync(cacheRoot).filter((d) => !d.endsWith('.tmp')).length;
+      notes.push(`片段缓存：${done} 个条目在 .work/clips/（内容寻址，源或参数变了会重抽）`);
+    }
+  }
+
+  return {name: 'clips', ok: bad.length === 0, checked, problems: bad, notes};
+}
+
+/**
  * 场景规格（scene.json）的静态校验。
  *
  * 没有这个文件就跳过（纯镜头表项目）。有的话，boot 在浏览器里查的是
