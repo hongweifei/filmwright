@@ -16,6 +16,7 @@ import {spawnSync} from 'node:child_process';
 import {cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {join, resolve} from 'node:path';
+import {EFFECT_TYPES} from '../src/contract/effects.js';
 
 // resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
 // 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
@@ -604,7 +605,37 @@ line();
 }
 
 line('═');
-console.log('七、调色预设 grade（编译期展开成 color，不额外开销）');
+console.log('七、**每个效果**都必须"同一帧两次渲染逐字节一致"（核心不变量）');
+line();
+{
+  // 为什么单列一节、且**遍历全部效果**：
+  // 原来只有 grain 一条确定性判据（"噪点不读时钟"），其余效果**没人验过**。
+  // 而 `displace` 的一次实现正是栽在这里 —— 同一帧两次渲染像素不同，
+  // 直接违反"第 N 帧只是 N 的函数"。**这条若覆盖全部效果，它当场就会被抓住。**
+  //
+  // 顺带排除两个常见猜测（都**有证据**、不是推断）：
+  //   · grain 用 `fract(sin(dot(...)) * 43758.5453)` 这种 hash ⇒ 它一致，**hash 没问题**；
+  //   · distort 会偏移纹理采样坐标 ⇒ 它一致，**偏移采样也没问题**。
+  const PARAMS = {
+    blur: {radius: 12}, glow: {intensity: 0.6, threshold: 0.6}, color: {saturation: 0.6},
+    vignette: {amount: 0.5}, chromatic: {amount: 0.5}, grain: {amount: 0.35},
+    pixelate: {size: 10}, radialBlur: {amount: 0.3}, distort: {amount: 0.5},
+    grade: {look: 'noir', amount: 1},
+  };
+  let inconsistent = 0;
+  for (const t of EFFECT_TYPES) {
+    const fx = [{type: t, ...PARAMS[t]}];
+    const a = still(fx, 100, `det-${t}-a`);
+    const b = still(fx, 100, `det-${t}-b`);
+    const same = a.hash === b.hash;
+    if (!same) inconsistent++;
+    ok(same, `${t}：同一帧两次渲染${same ? '逐字节一致' : `**不一致**（${a.hash} ≠ ${b.hash}）`}`);
+  }
+  console.log(`  覆盖 ${EFFECT_TYPES.length} 个效果，${inconsistent} 个不一致`);
+}
+
+line('═');
+console.log('八、调色预设 grade（编译期展开成 color，不额外开销）');
 line();
 {
   // noir 的去色用**自参照判据**（与 color saturation=0 同一条）：
@@ -647,7 +678,7 @@ line();
 }
 
 line('═');
-console.log('八、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
+console.log('九、代价：同一次运行内配对测有/无效果的端到端 ms/帧');
 line();
 const N = 60;
 function bench(effects, tag) {
