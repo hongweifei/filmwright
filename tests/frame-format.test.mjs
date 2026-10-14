@@ -54,6 +54,30 @@ test('isValidFrameFormat 与 frameFormatExpr 的白名单一致（不能两处�
   }
 });
 
+test('**已知例外**：h264 白名单认它，但 frameFormatExpr 必须明确报错（不是漂移）', () => {
+  // 这条是补的：原来那条一致性测试的候选清单是**硬编码的**，没包含 h264，
+  // 所以上一轮把 h264 加进白名单、却没管解析器时，漂移**没被发现**。
+  // h264 不是 canvas 的 MIME 类型（它由 streamFrames 特判走 WebCodecs），
+  // 所以"白名单认 + 解析器报错"是**有意的**，但报错必须说清缘由，
+  // 不能返回一个假的 MIME 去喂 canvas.toBlob（那会静默产出错的帧）。
+  assert.equal(isValidFrameFormat('h264'), true, 'CLI 认这个值');
+  assert.throws(() => frameFormatExpr('h264'), /不是 canvas 的编码格式/,
+    '必须明确报错，并说清它由 streamFrames 特判');
+  // 顺带钉住：报错信息要指出去哪儿（取单帧用 png/jpeg）
+  assert.throws(() => frameFormatExpr('h264'), /png \/ jpeg/);
+});
+
+test('白名单不能悄悄写宽：常见的"想当然"值必须都被拒', () => {
+  // ⚠️ 别把这条说成"新增格式一定会被抓住" —— 它抓的是**列出来的**这些。
+  // 真要抓"任意新增"，得让实现导出接受集合、测试与它比对，但那样测试就成了实现的镜子
+  // （加值时两边一起改，照样漏）。所以这里选**列出最可能被误加的值**，够用且不假装。
+  const accepted = ['png', 'jpeg', 'jpg', 'h264', 'jpeg:80', 'jpeg:0', 'jpeg:100', 'jpeg:999'];
+  for (const c of accepted) assert.equal(isValidFrameFormat(c), true, `${c} 应被接受`);
+  for (const c of ['webp', 'gif', 'bmp', 'h265', 'hevc', 'av1', 'jpeg:', 'h264:80', 'webm', 'mp4']) {
+    assert.equal(isValidFrameFormat(c), false, `${c} 不该被接受`);
+  }
+});
+
 test('CLI 的 --frame-format：默认 jpeg（渲染路径的优化），可显式 png', () => {
   assert.equal(frameFormatOf({args: {}}), 'jpeg', '渲染路径默认 JPEG');
   assert.equal(frameFormatOf({args: {'frame-format': 'png'}}), 'png');

@@ -36,6 +36,14 @@ import {findBrowser} from './find.mjs';
 export function frameFormatExpr(frameFormat) {
   const f = String(frameFormat ?? 'png').toLowerCase();
   if (f === 'png') return `'image/png'`;
+  // h264 **不是** canvas 的 MIME 类型：它由 streamFrames 特判（走 WebCodecs 编码器）。
+  // 这里必须**明确报错**而不是返回一个假的 MIME —— 否则调用方会拿它去
+  // `canvas.toBlob()`，静默产出错的帧。白名单认它（isValidFrameFormat=true），
+  // 但"能解析成 toBlob 参数"是另一回事，两者不同不是漂移。
+  if (f === 'h264') {
+    throw new Error('filmwright: h264 不是 canvas 的编码格式 —— 它由 streamFrames 特判'
+      + '（页面里用 WebCodecs 编 H.264）；要取单帧请用 png / jpeg');
+  }
   const m = /^jpe?g(?::(\d{1,3}))?$/.exec(f);
   if (m) {
     const q = m[1] === undefined ? 0.92 : Math.max(0.1, Math.min(1, Number(m[1]) / 100));
