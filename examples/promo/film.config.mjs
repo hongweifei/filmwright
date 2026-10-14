@@ -29,7 +29,7 @@ export default {
   },
   builtBy: '',
 
-  tts: {engine: 'edge', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
+  tts: {engine: 'auto', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
   assets: ['assets/filmstrip.png'],
   theme: {accents: ['#3FA7FF', '#35D07F', '#F5B942']},
 };

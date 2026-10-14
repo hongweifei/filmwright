@@ -54,7 +54,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 | `new` | 新建项目骨架（scene / shots 两种模板） |
 | `schema` | 输出 scene 规格的机器可读 schema（15 类模板、字段、上限、错误码） |
 | `mcp` | MCP 服务器（stdio），把工具链暴露给 agent |
-| `check` | 九道自检（[质检文档](qc.md)） |
+| `check` | 十道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
 | `tts` | 解说词 → 配音 + 时间轴（引擎可换、可回退） |
 | `voices` | 列出 TTS 引擎可用性与音色（做片子前先探路） |
@@ -85,7 +85,7 @@ filmwright mcp       # stdio 服务器，日志走 stderr，Ctrl+C 结束
 ## `schema`
 
 ```bash
-filmwright schema          # 人读：13 类模板的用途、字段、上限、对齐语法、错误码
+filmwright schema          # 人读：15 类模板的用途、字段、上限、对齐语法、错误码
 filmwright schema --json   # 机读：同一份数据的 JSON（agent 写 scene 前先拿它）
 ```
 
@@ -98,7 +98,7 @@ filmwright check --project <项目目录> [--static-only] [--no-quality]
                  [--static-frames N] [--hold-frames N] [--ink-min N] [--quality-step N]
 ```
 
-- `--static-only`：只跑读文件的前七道，不启浏览器，秒级。CI 与改完镜头的快速验证用。
+- `--static-only`：只跑读文件的前八道，不启浏览器，秒级。CI 与改完镜头的快速验证用。
 - `--no-quality`：跑逐帧自检但跳过画质统计。
 - 四个数值参数覆盖画质阈值（默认按 1280×720 的 32×18 网格校准）。含义见 [LIMITATIONS](../LIMITATIONS.md)。
 

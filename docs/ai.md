@@ -3,7 +3,7 @@
 filmwright 为 AI 自动化设计的三条底座性质，先说清楚，因为它们决定了你应该怎么用：
 
 1. **确定性**：第 N 帧只是 N 的函数。模型生成的东西可以被逐帧重放、抽查、全量自检——错了能定位到帧。
-2. **质量下限在引擎侧**：模板镜头内建了入场节奏、呼吸动效、配色与缩放；九道自检 + 画质检查把「不崩但不好看」也拦下来。模型不需要懂动画，只需要填对内容。
+2. **质量下限在引擎侧**：模板镜头内建了入场节奏、呼吸动效、配色与缩放；十道自检 + 画质检查把「不崩但不好看」也拦下来。模型不需要懂动画，只需要填对内容。
 3. **错误是给模型读的 prompt**：所有命令支持 `--json`，错误带 `code / where / hint`；改错了，返回值直接告诉你改哪个文件的哪个字段。
 
 ## 两条接入路径
@@ -49,11 +49,11 @@ filmwright mcp                     # stdio 服务器
 | 工具 | 用途 |
 |---|---|
 | `filmwright_new` | 建项目骨架（scene / shots 模板） |
-| `filmwright_schema` | **写 scene 前先拿它**：13 类模板、字段、容量上限、错误码 |
+| `filmwright_schema` | **写 scene 前先拿它**：15 类模板、字段、容量上限、错误码 |
 | `filmwright_timeline` | 读句 id / 帧区间 / 字幕块数——写 `at` 之前看这个 |
 | `filmwright_scene_validate` | 只查 scene.json，秒级，不启浏览器 |
 | `filmwright_tts` | 解说词 → 配音 + 时间轴 |
-| `filmwright_check` | 九道自检（`static_only` 可选） |
+| `filmwright_check` | 十道自检（`static_only` 可选） |
 | `filmwright_stills` | 出静帧，**并把 PNG 直接回给模型**（默认 4 张，`max_images` 可到 8）——多模态自查的关键 |
 | `filmwright_review` | **一轮「改 → 验 → 看」**：scene 校验 + 静态自检 + 各镜头代表帧（末拍落位后）回图。改完 scene.json 就调它 |
 | `filmwright_srt` | 导出外挂字幕（SRT），可合双语轨 |
@@ -63,7 +63,7 @@ filmwright mcp                     # stdio 服务器
 ## 推荐的 agent 工作回路
 
 ```
-filmwright_schema（拿 13 类模板与上限）→ filmwright_new → 写 narration.txt → filmwright_tts
+filmwright_schema（拿 15 类模板与上限）→ filmwright_new → 写 narration.txt → filmwright_tts
   → filmwright_timeline（拿准句 id 与块数）→ 写 scene.json
   → filmwright_review（一轮搞定：校验 + 静态自检 + 代表帧回图，直接看图改）
   → 满意后 filmwright_all

@@ -20,7 +20,7 @@ git clone <本仓库> filmwright && cd filmwright
 pip install edge-tts numpy          # 要配音时才需要
 
 node bin/filmwright.mjs tts    --project examples/minimal   # 解说词 -> 配音 + 时间轴
-node bin/filmwright.mjs check  --project examples/minimal   # 九道自检
+node bin/filmwright.mjs check  --project examples/minimal   # 十道自检
 node bin/filmwright.mjs all    --project examples/minimal --shards 3
 # -> examples/minimal/renders/minimal.mp4
 ```

@@ -15,7 +15,7 @@ export default {
   credit: {kicker: 'GALLERY', title: '13 templates', byline: 'examples/gallery', note: 'scene.json 驱动，零镜头代码'},
   builtBy: '',
 
-  tts: {engine: 'edge', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
+  tts: {engine: 'auto', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
   assets: ['assets/filmstrip.png'],
   theme: {accents: ['#3FA7FF', '#35D07F', '#F5B942']},
 };

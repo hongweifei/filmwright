@@ -1,6 +1,6 @@
 # 常见问题
 
-报错类的问题先跑 `filmwright check --project <项目目录> --static-only`，九道自检里有七道不启浏览器、秒级就能定位引用错。这里收「为什么」类问题；明确不做的功能见 [LIMITATIONS](../LIMITATIONS.md)。
+报错类的问题先跑 `filmwright check --project <项目目录> --static-only`，十道自检里有七道不启浏览器、秒级就能定位引用错。这里收「为什么」类问题；明确不做的功能见 [LIMITATIONS](../LIMITATIONS.md)。
 
 ## 报错：时间轴未装载就查询了 S01
 

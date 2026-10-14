@@ -116,7 +116,7 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `assetNames()` | 全部已声明素材名 |
 | `assetsReady()` | 素材是否全部就绪 |
 
-素材在配置里声明、文件放 `public/` 下；`boot()` 会**全部加载完才开画**（图片加载失败是抛错——该有的东西没了必须响）。视频没有内建支持，原因见[架构](architecture.md)。
+素材在配置里声明、文件放 `public/` 下；`boot()` 会**全部加载完才开画**（图片加载失败是抛错——该有的东西没了必须响）。视频走 `clips`（宿主抽帧 + 运行时按源帧同步取图，见 [clips 段](config.md#clips视频--图片序列素材)），不直接用 `video` 元素，原因见[已知限制](../LIMITATIONS.md)。
 
 ## 版面缩放
 

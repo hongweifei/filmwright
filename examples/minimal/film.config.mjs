@@ -30,7 +30,10 @@ export default {
   builtBy: '',
 
   tts: {
-    engine: 'edge',
+    // 'auto' = 依次尝试 edge → sapi → command，用第一个可用的。
+    // edge 音质最好但会整段不可用（实测 403），这时自动降级到离线引擎，
+    // 配音与时间轴照常产出。要确定性（宁可失败也不降级）就写 'edge'。
+    engine: 'auto',
     voice: 'zh-CN-YunxiNeural',
     rate: '+0%',
   },

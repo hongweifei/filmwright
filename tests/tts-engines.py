@@ -17,7 +17,8 @@ def ok(c, m):
     if not c: bad += 1
 
 print('=== 1) 引擎注册表 ===')
-ok(set(E.ENGINES) == {'edge', 'sapi', 'command'}, '注册了 edge / sapi / command：%s' % sorted(E.ENGINES))
+ok(set(E.ENGINES) == {'edge', 'sapi', 'http', 'command'},
+   '注册了 edge / sapi / http / command：%s' % sorted(E.ENGINES))
 try:
     E.make_engine('nope', {})
     ok(False, '不认识的引擎应报错')

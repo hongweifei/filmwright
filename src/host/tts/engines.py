@@ -24,11 +24,13 @@ edge 会给 WordBoundary（每个词的起始秒与时长），所以字幕块�
 让时间轴生成选择不同的切分策略，并在 timeline.json 里如实标注
 （`subs_timing: "word" | "estimated"`）—— 使用者的字幕切换点是否精确，不该靠猜。
 """
+import base64
 import json
 import os
 import shutil
 import subprocess
 import sys
+import time
 
 
 class TtsError(Exception):
@@ -331,11 +333,246 @@ class CommandEngine(Engine):
                                 'format': self.cfg.get('format') or _ext_format(out_file)}
 
 
+# ------------------------------------------------------------ http（云 TTS）
+
+class HttpEngine(Engine):
+    """通用 HTTP TTS：把请求发出去、把音频拿回来。适配常见的云服务。
+
+    为什么做成一等公民而不是让你写 `command` 调 curl：
+      - **凭据走环境变量**，不写进配置（配置会进 git，密钥不该进 git）；
+      - 常见服务的请求形状差别很大，但都是「POST JSON → 拿音频字节」，
+        用 `style` 预设覆盖，不必每家写一份代码；
+      - 失败时能区分「鉴权失败（401/403，要检查密钥）」与「限流（429，等一等）」
+        与「服务端错（5xx，重试可能有用）」—— 出路完全不同。
+
+    ## 配置
+
+        tts: {
+          engine: 'http',
+          style: 'openai',            // 'openai' | 'azure' | 'custom'
+          // 密钥从环境变量读（不写在这里）。变量名可自定义：
+          apiKeyEnv: 'OPENAI_API_KEY',
+          // 可选覆盖端点与模型/音色
+          url: 'https://api.openai.com/v1/audio/speech',
+          model: 'tts-1',
+          voice: 'alloy',
+          format: 'mp3',
+        }
+
+    ## 预设的请求形状
+
+    | style | 方法 | 端点 | 请求体 | 鉴权 |
+    |---|---|---|---|---|
+    | `openai` | POST | `{url}`（默认 OpenAI speech） | `{model, input, voice, response_format}` | `Authorization: Bearer {key}` |
+    | `azure` | POST | `{url}`（你的区域端点，含 `X-Microsoft-OutputFormat`） | SSML 或纯文本 | `Ocp-Apim-Subscription-Key: {key}` |
+    | `custom` | POST | `{url}` | `{bodyTemplate}` 渲染后的 JSON | `{headerName}: {headerValue}` |
+
+    `custom` 用 `{text}` / `{voice}` / `{model}` / `{format}` 占位，
+    音频既可以直接是响应体（默认），也可以是 JSON 里的 base64
+    （`responseAudioPath: 'data.audio'`）。
+    """
+
+    name = 'http'
+    has_word_boundary = False     # 通用实现不保证有词边界；下面有需要时可加
+    sample_rate = 48000
+
+    def available(self):
+        cfg = self.cfg
+        style = cfg.get('style', 'openai')
+        if style not in ('openai', 'azure', 'custom'):
+            return False, '不认识的 style「%s」；可用：openai / azure / custom' % style
+        url = self._url()
+        if not url:
+            return False, '没配 tts.url（或用 style 的默认端点）'
+        if style != 'custom':
+            key = self._key()
+            if not key:
+                return False, ('没读到 API 密钥：环境变量 %s 是空的。'
+                               '密钥只从环境变量读（不写进配置 —— 配置会进 git）'
+                               % self._key_env())
+        return True, ''
+
+    def _key_env(self):
+        return self.cfg.get('apiKeyEnv') or {
+            'openai': 'OPENAI_API_KEY',
+            'azure': 'AZURE_SPEECH_KEY',
+            'custom': 'TTS_API_KEY',
+        }.get(self.cfg.get('style', 'openai'), 'TTS_API_KEY')
+
+    def _key(self):
+        return os.environ.get(self._key_env(), '').strip()
+
+    def _url(self):
+        if self.cfg.get('url'):
+            return self.cfg['url']
+        style = self.cfg.get('style', 'openai')
+        if style == 'openai':
+            return 'https://api.openai.com/v1/audio/speech'
+        return ''
+
+    def _request(self, text):
+        """构造 (url, headers, body_bytes)。拆出来便于单测（不必真发请求）。"""
+        style = self.cfg.get('style', 'openai')
+        url = self._url()
+        voice = self.cfg.get('voice') or {'openai': 'alloy'}.get(style, '')
+        fmt = self.cfg.get('format') or ('mp3' if style == 'openai' else 'wav')
+        model = self.cfg.get('model') or {'openai': 'tts-1'}.get(style, '')
+
+        if style == 'openai':
+            headers = {'Content-Type': 'application/json',
+                       'Authorization': 'Bearer ' + self._key()}
+            body = {'model': model or 'tts-1', 'input': text,
+                    'voice': voice or 'alloy', 'response_format': fmt}
+        elif style == 'azure':
+            headers = {'Content-Type': 'application/ssml+xml',
+                       'X-Microsoft-OutputFormat': self.cfg.get('outputFormat')
+                       or 'riff-24khz-16bit-mono-pcm',
+                       'Ocp-Apim-Subscription-Key': self._key()}
+            # Azure 的语音名在 SSML 的 voice 里
+            ssml_voice = voice or 'zh-CN-XiaoxiaoNeural'
+            body = ('<speak version="1.0" xml:lang="zh-CN"><voice name="%s">%s</voice></speak>'
+                    % (ssml_voice, _xml_escape(text)))
+            return url, headers, body.encode('utf-8'), 'ssml'
+        else:  # custom
+            headers = {'Content-Type': 'application/json'}
+            hn = self.cfg.get('headerName')
+            if hn:
+                headers[hn] = str(self.cfg.get('headerValue', '')).replace('{key}', self._key())
+            tmpl = self.cfg.get('bodyTemplate') or '{"text": "{text}"}'
+            raw = (tmpl.replace('{text}', _json_escape(text))
+                       .replace('{voice}', _json_escape(voice))
+                       .replace('{model}', _json_escape(model))
+                       .replace('{format}', _json_escape(fmt)))
+            # 先验证是合法 JSON（配置写错要当场报）。
+            # **必须包成 TtsError**：直接抛 JSONDecodeError 的话，上层只会看到
+            # 一个没有出路的异常名（实测就是这么漏出去的）。
+            try:
+                body = json.loads(raw)
+            except ValueError as e:
+                raise TtsError('tts.bodyTemplate 渲染后不是合法 JSON：%s\n  渲染结果：%s'
+                               % (e, raw[:200]), kind='config')
+        return url, headers, json.dumps(body, ensure_ascii=False).encode('utf-8'), 'json'
+
+    def synth(self, text):
+        import urllib.error
+        import urllib.request
+
+        url, headers, body, _kind = self._request(text)
+        tries = int(self.cfg.get('tries', 3))
+        timeout = float(self.cfg.get('timeout', 60))
+        why = ''
+        for attempt in range(1, tries + 1):
+            try:
+                req = urllib.request.Request(url, data=body, headers=headers, method='POST')
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = resp.read()
+                    ctype = resp.headers.get('Content-Type', '')
+                if len(data) < 100 and not (data[:1] == b'{'):
+                    # 注意判据顺序：**先看是不是 JSON**，再看大小。
+                    # 「JSON 但取不到音频」与「响应太小」是两种完全不同的错，
+                    # 前者要检查 responseAudioPath，后者是服务端异常 ——
+                    # 实测把它们混在一起报「响应体过小（26 字节）」，误导排查方向。
+                    why = '响应体过小（%d 字节）' % len(data)
+                elif 'json' in ctype or data[:1] == b'{':
+                    # 有些服务把音频放在 JSON 里（base64）
+                    data2 = self._extract_from_json(data)
+                    if data2 is None:
+                        why = ('响应是 JSON 但取不到音频（检查 tts.responseAudioPath，'
+                               '当前为 %r）：%s'
+                               % (self.cfg.get('responseAudioPath') or 'data', data[:160]))
+                    else:
+                        return data2, None, {'engine': 'http', 'voice': self.cfg.get('voice', ''),
+                                             'format': self.cfg.get('format') or 'mp3',
+                                             'style': self.cfg.get('style', 'openai')}
+                elif len(data) < 100:
+                    why = '响应体过小（%d 字节）' % len(data)
+                else:
+                    return data, None, {'engine': 'http', 'voice': self.cfg.get('voice', ''),
+                                        'format': self.cfg.get('format') or _guess_format(ctype),
+                                        'style': self.cfg.get('style', 'openai')}
+            except urllib.error.HTTPError as e:
+                detail = ''
+                try:
+                    detail = e.read().decode('utf-8', 'replace')[:200]
+                except Exception:
+                    pass
+                why = 'HTTP %d %s' % (e.code, detail)
+                # 鉴权失败重试没用 —— 立刻抛，并说清要检查什么
+                if e.code in (401, 403):
+                    raise TtsError('TTS 服务拒绝鉴权（%s）：检查环境变量 %s 是否正确、'
+                                   '是否已过期、以及该密钥有没有这个服务的权限'
+                                   % (why, self._key_env()), kind='auth')
+                if e.code == 404:
+                    raise TtsError('TTS 端点不存在（%s）：检查 tts.url 与 tts.model'
+                                   % why, kind='config')
+                if e.code == 429:
+                    why = '限流（429）：%s' % detail
+            except Exception as e:
+                why = '%s: %s' % (type(e).__name__, str(e)[:150])
+            if attempt < tries:
+                back = min(8.0, 1.5 * attempt)
+                self.log('  http 第 %d/%d 次失败（%s），等 %.1fs' % (attempt, tries, why, back))
+                time.sleep(back)
+        kind = 'throttled' if '429' in why else 'engine'
+        raise TtsError('TTS 服务试了 %d 次仍失败（%s）' % (tries, why), kind=kind)
+
+    def _extract_from_json(self, data):
+        """从 JSON 响应里取音频（base64）。路径由 responseAudioPath 指定，如 'data.audio'。"""
+        try:
+            j = json.loads(data.decode('utf-8'))
+        except Exception:
+            return None
+        path = self.cfg.get('responseAudioPath') or 'data'
+        cur = j
+        for part in path.split('.'):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur[part]
+            elif isinstance(cur, list) and part.isdigit() and int(part) < len(cur):
+                cur = cur[int(part)]
+            else:
+                return None
+        if not isinstance(cur, str):
+            return None
+        try:
+            return base64.b64decode(cur)
+        except Exception:
+            return None
+
+    def voices(self):
+        # 通用实现不枚举音色：各服务的列表端点与形状都不一样，猜不如让用户查文档。
+        # 但把**当前配置会用到的音色**报出来，至少能确认配置读到了。
+        v = self.cfg.get('voice')
+        return [{'id': v, 'name': v, 'gender': '', 'locale': ''}] if v else []
+
+
+def _xml_escape(s):
+    return (s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+             .replace('"', '&quot;').replace("'", '&apos;'))
+
+
+def _json_escape(s):
+    """把文本塞进 JSON 模板里时转义（只转必要字符，避免破坏模板结构）。"""
+    return (str(s).replace('\\', '\\\\').replace('"', '\\"')
+            .replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t'))
+
+
+def _guess_format(content_type):
+    ct = (content_type or '').lower()
+    if 'mpeg' in ct or 'mp3' in ct:
+        return 'mp3'
+    if 'wav' in ct or 'x-wav' in ct:
+        return 'wav'
+    if 'ogg' in ct or 'opus' in ct:
+        return 'ogg'
+    return 'mp3'
+
+
 # ------------------------------------------------------------------ 注册与回退
 
 ENGINES = {
     'edge': EdgeEngine,
     'sapi': SapiEngine,
+    'http': HttpEngine,
     'command': CommandEngine,
 }
 
@@ -354,14 +591,19 @@ def resolve_chain(cfg, log=None):
       'edge'               只用 edge（失败即失败 —— 要确定性时用这个）
       'sapi'               只用 sapi
       ['edge','sapi']      按顺序回退（推荐：联网好就用好的，断了自动降级）
-      'auto'               等价于 ['edge','sapi','command']
+      'auto'               等价于 ['edge','http','sapi','command']
+
+    auto 的顺序有讲究：**音质优先，其次离线可用**。
+    edge（神经音色）→ http（你自己的云服务，通常音质最好且稳定）→
+    sapi（离线兜底，音质一般）→ command（逃生舱）。
+    注意 http 需要密钥，没配密钥就自动跳过 —— 不会因为没配而让整条链失败。
 
     返回 (engine 实例, 说明文字)。全都不可用时抛 TtsError 并列出**每个引擎为什么不行**
     —— 「都不可用」这种信息没用，要知道具体缺什么才能修。
     """
     raw = cfg.get('engine', 'edge')
     if raw == 'auto':
-        order = ['edge', 'sapi', 'command']
+        order = ['edge', 'http', 'sapi', 'command']
     elif isinstance(raw, (list, tuple)):
         order = list(raw)
     else:

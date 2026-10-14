@@ -125,10 +125,48 @@ tts: {
 | 引擎 | 平台 | 音质 | 词边界 | 说明 |
 |---|---|---|---|---|
 | `edge` | 全平台 | 神经音色，最好 | **有** | 需要联网；服务会不可用 |
+| `http` | 全平台 | **取决于你的云服务**（通常最好且稳定） | 无 | 接 OpenAI / Azure / 任何 HTTP TTS，密钥走环境变量 |
 | `sapi` | Windows | 桌面合成，一般 | 无 | 系统自带，**完全离线**，兜底用 |
 | `command` | 全平台 | 取决于你的命令 | 无 | 逃生舱：piper / 自训模型 / 内部服务都能接 |
 
-**词边界意味着什么**：edge 会给每个词的起始时间，所以字幕块的切换点能**精确**对齐到词；`sapi` 与 `command` 没有，只能按字数比例估算（标点折算成停顿，比纯字符数准）。时间轴里会如实标注 `subs_timing: "word" | "estimated"` —— 你据此知道字幕能不能卡得很准，不用猜。
+`'auto'` 的顺序是 **`edge` → `http` → `sapi` → `command`**：音质优先、其次离线可用。
+`http` 没配密钥时会**自动跳过**（不会因为没配密钥让整条链失败）。
+
+### 接云服务：`http` 引擎
+
+密钥**只从环境变量读**，不写进配置——配置会进 git，密钥不该进 git。
+
+```js
+// OpenAI 兼容（也适用于任何返回音频字节的服务）
+tts: {engine: 'http', style: 'openai', apiKeyEnv: 'OPENAI_API_KEY',
+      model: 'tts-1', voice: 'alloy', format: 'mp3'}
+
+// Azure 语音（请求体是 SSML）
+tts: {engine: 'http', style: 'azure', apiKeyEnv: 'AZURE_SPEECH_KEY',
+      url: 'https://<你的区域>.tts.speech.microsoft.com/cognitiveservices/v1',
+      voice: 'zh-CN-XiaoxiaoNeural', outputFormat: 'riff-24khz-16bit-mono-pcm'}
+
+// 任何其它 HTTP 服务（自定义请求体）
+tts: {engine: 'http', style: 'custom', url: 'https://内部服务/tts',
+      apiKeyEnv: 'TTS_API_KEY', headerName: 'X-API-Key', headerValue: 'k-{key}',
+      bodyTemplate: '{"text": "{text}", "speaker": "{voice}"}',
+      responseAudioPath: 'data.audio'}   // 音频在 JSON 的哪个字段（base64）
+```
+
+| 字段 | 说明 |
+|---|---|
+| `style` | `openai` / `azure` / `custom` |
+| `url` | 端点；`openai` 有默认值 |
+| `apiKeyEnv` | 读哪个环境变量当密钥（有默认名） |
+| `headerName` / `headerValue` | `custom` 的鉴权头，`{key}` 会被替换 |
+| `bodyTemplate` | `custom` 的请求体，占位：`{text}` `{voice}` `{model}` `{format}` |
+| `responseAudioPath` | 音频在 JSON 响应的哪个路径（默认 `data`），值须是 base64 |
+| `model` / `voice` / `format` / `outputFormat` | 各服务的具体参数 |
+| `tries` / `timeout` | 重试次数（默认 3）与超时秒数（默认 60） |
+
+**失败会分类，因为出路不同**：`401/403` → 鉴权（重试没用，要检查密钥，报错会指出是哪个环境变量）；`429` → 限流（等一等）；`404` → 配置错（端点或模型写错）；`5xx` → 服务端错（重试可能有用）。
+
+### 词边界意味着什么：edge 会给每个词的起始时间，所以字幕块的切换点能**精确**对齐到词；`sapi` 与 `command` 没有，只能按字数比例估算（标点折算成停顿，比纯字符数准）。时间轴里会如实标注 `subs_timing: "word" | "estimated"` —— 你据此知道字幕能不能卡得很准，不用猜。
 
 `command` 引擎的写法（模板里用 `{out}` 与 `{text_file}` 占位）：
 

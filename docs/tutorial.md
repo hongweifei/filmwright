@@ -171,7 +171,9 @@ picture(ctx, 'filmstrip', 320, 492, 640, 96, {
 });
 ```
 
-视频没有内建支持——先用 ffmpeg 抽成图片序列再按图片用，原因见[架构](architecture.md)。
+**视频素材**走 `clips`：在 `film.config.mjs` 里声明视频，宿主会用 ffmpeg 抽帧（内容寻址缓存），
+再用 `clip` 模板按源帧取图。不直接用 `video` 元素（原因见[已知限制](../LIMITATIONS.md)）。
+图片仍走 `assets`。详见[配置参考的 clips 段](config.md#clips视频--图片序列素材)。
 
 ## 8. 日常迭代节奏
 

@@ -28,7 +28,7 @@ export default {
   },
   builtBy: '',
 
-  tts: {engine: 'edge', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
+  tts: {engine: 'auto', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
 
   assets: ['assets/filmstrip.png'],
 

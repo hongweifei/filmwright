@@ -28,7 +28,7 @@
 
 ## 你写什么、引擎给你什么
 
-你只写三样：**配置**（`film.config.mjs`）、**解说词**（`script/narration.txt`）、**画面**——要么填声明式的 `scene.json`（13 类模板镜头，AI 的主干道），要么写 `shots/index.js`（手写镜头的逃生舱）。
+你只写三样：**配置**（`film.config.mjs`）、**解说词**（`script/narration.txt`）、**画面**——要么填声明式的 `scene.json`（15 类模板镜头，AI 的主干道），要么写 `shots/index.js`（手写镜头的逃生舱）。
 
 引擎给你：字幕、章节卡、HUD、进度条、片尾、模板的节奏（入场错峰、停留呼吸、配色、缩放）、**镜头转场**（crossfade / fade）、**配乐混音**（自动闪避，说话时压低音乐）、**图层合成**（位移/缩放/旋转/组透明度/15 种混合模式）、**嵌套合成**（可复用子合成与循环）、**素材管线**（视频/图片序列按源帧取图）、分片并行渲染、**增量重渲与代理预览**、逐帧自检与画质自检、像素回归守卫、可拖动可热重载的预览页。
 
@@ -53,7 +53,7 @@ pip install edge-tts numpy          # 要配音时
 
 node bin/filmwright.mjs voices --project examples/minimal  # 先看有哪些 TTS 可用
 node bin/filmwright.mjs tts    --project examples/minimal   # 解说词 -> 配音 + 时间轴
-node bin/filmwright.mjs check  --project examples/minimal   # 八道自检
+node bin/filmwright.mjs check  --project examples/minimal   # 十道自检
 node bin/filmwright.mjs all    --project examples/minimal --shards 3
 # -> examples/minimal/renders/minimal.mp4
 ```
@@ -71,9 +71,9 @@ node bin/filmwright.mjs preview --project examples/minimal
 | 命令 | 作用 |
 |---|---|
 | `new` | 新建项目骨架（scene / shots 模板），目录非空直接拒绝 |
-| `schema` | 输出 scene 规格的机器可读 schema（13 类模板 / 字段 / 上限 / 错误码） |
+| `schema` | 输出 scene 规格的机器可读 schema（15 类模板 / 字段 / 上限 / 错误码） |
 | `mcp` | MCP 服务器（stdio），把整条工具链暴露给 agent |
-| `check` | 九道自检：导出、模块路径、时间轴引用、场景规格、素材、主题键、全帧绘制、画质（明细见[质量保障](docs/qc.md)） |
+| `check` | 十道自检：导出、模块路径、时间轴引用、场景规格、素材、主题键、全帧绘制、画质（明细见[质量保障](docs/qc.md)） |
 | `preview` | 预览页：拖动时间轴 / 播放 / 热重载（SSE 推送，不是轮询） |
 | `tts` | 解说词 → `audio.wav` + `timeline.json`（逐句缓存） |
 | `stills` | `--frames 40,470` 出静帧 |
@@ -120,7 +120,7 @@ my-film/
 ## 质量网
 
 - `npm test` —— 72 个单元测试，纯函数、零依赖，秒级；
-- `filmwright check` —— 九道自检，`--static-only` 七道不启浏览器；画质自检带负面对照（故意做坏，证明真的会报）；
+- `filmwright check` —— 十道自检，`--static-only` 七道不启浏览器；画质自检带负面对照（故意做坏，证明真的会报）；
 - `tools/regression.mjs` —— 像素回归：纯结构改动必须逐字节复现基准，改一个像素都不算重构。
 
 细节见[质量保障](docs/qc.md)。CI 在 GitHub Actions 上分「静态 / 渲染」两个 job 跑同一套。
