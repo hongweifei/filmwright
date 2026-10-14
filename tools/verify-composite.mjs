@@ -10,7 +10,9 @@ import {join, resolve} from 'node:path';
 
 // resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
 // 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
-const ROOT = resolve(process.argv[2]).replace(/\\/g, '/');
+// ⚠️ 必须给兜底：CI 里这个工具是**不带参数**跑的（`node tools/verify-X.mjs`），
+// 而 `resolve(undefined)` 会抛 ERR_INVALID_ARG_TYPE（CI 实测红过）。
+const ROOT = resolve(process.argv[2] ?? process.cwd()).replace(/\\/g, '/');
 const W = `${ROOT}/.work/layer-e2e`;
 rmSync(W, {recursive: true, force: true});
 mkdirSync(W, {recursive: true});

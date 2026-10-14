@@ -8,7 +8,9 @@ import {join, relative, resolve} from 'node:path';
 
 // resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
 // 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
-const ROOT = resolve(process.argv[2]).replace(/\\/g, '/');
+// ⚠️ 必须给兜底：CI 里这个工具是**不带参数**跑的（`node tools/verify-X.mjs`），
+// 而 `resolve(undefined)` 会抛 ERR_INVALID_ARG_TYPE（CI 实测红过）。
+const ROOT = resolve(process.argv[2] ?? process.cwd()).replace(/\\/g, '/');
 const SKIP_DIRS = new Set(['node_modules', '.git', '.work', 'renders', '__pycache__', 'out', 'qc']);
 const TEXT_EXT = /\.(md|json|mjs|js|py|txt|yml|yaml|html|css|ts|ps1|gitignore|srt)$/i;
 const NAMES = new Set(['.gitignore', 'LICENSE']);

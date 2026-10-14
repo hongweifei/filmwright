@@ -5,7 +5,9 @@ import {createInterface} from 'node:readline';
 import {writeFileSync, mkdirSync} from 'node:fs';
 import {join} from 'node:path';
 
-const ROOT = process.argv[2];
+// ⚠️ 给兜底：不带参数时 `process.argv[2]` 是 undefined（同类问题在
+// `verify-encoding` 上让 CI 红过一次 —— `resolve(undefined)` 直接抛）。
+const ROOT = process.argv[2] ?? process.cwd();
 const PROJECT = process.argv[3];
 const MAX_IMAGES = Number(process.argv[4] ?? 6);
 
