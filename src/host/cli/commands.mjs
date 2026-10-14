@@ -142,6 +142,16 @@ export async function schema(ctx) {
     console.log(`  ${name.padEnd(9)} ${t.container ? '【容器】' : ''}${t.note}`);
     console.log(`  ${''.padEnd(9)} 字段：${fields}${max}`);
   }
+  if (s.effects) {
+    const names = Object.keys(s.effects.types);
+    console.log(`\n效果链 effects —— ${names.length} 个效果（数组顺序即应用顺序，最多 ${s.effects.chainMax} 条）：\n`);
+    for (const [name, e] of Object.entries(s.effects.types)) {
+      const ps = Object.entries(e.params)
+        .map(([k, p]) => `${k}${p.required ? '' : '?'}(${p.min}–${p.max})`).join(' / ');
+      console.log(`  ${name.padEnd(9)} ${e.note}`);
+      console.log(`  ${''.padEnd(9)} 参数：${ps || '（无）'}`);
+    }
+  }
   console.log('\n对齐 at：' + JSON.stringify(s.at, null, 2).replace(/\n/g, '\n  '));
   console.log('\n错误码：' + s.errorCodes.join(' / '));
   console.log('\n机器可读版：filmwright schema --json');

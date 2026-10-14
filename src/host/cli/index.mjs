@@ -18,7 +18,7 @@ const COMMANDS = [
   ['clips', '片段素材抽帧（视频 → 图片序列，内容寻址缓存）', 'clips'],
   ['stills', '出静帧        --frames 1,300  --dir <目录>', 'stills'],
   ['sheet', '抽帧联络表    --from 1 --to 900 --step 150 --out <png>', 'sheet'],
-  ['render', '渲染          [--out <mp4>] [--shards N|auto] [--resume] [--incremental] [--proxy 0.5] [--frame-format jpeg|png] [--frame-transport stream|cdp] [--preset medium]', 'render'],
+  ['render', '渲染          [--out <mp4>] [--shards N|auto] [--resume] [--incremental] [--proxy 0.5] [--frame-format jpeg|png] [--frame-transport stream|cdp] [--preset medium] [--gpu]', 'render'],
   ['mux', '画面配音合流  --video <mp4> [--out <mp4>]', 'mux'],
   ['srt', '导出字幕      [--out <srt>] [--translation <json>]（双语轨）', 'srt'],
   ['all', '一条龙：check → render → mux', 'all'],
@@ -37,6 +37,8 @@ function usage() {
     '通用选项：',
     '  --project <目录>   项目目录（含 film.config.mjs）',
     '  --browser <路径>   指定浏览器（默认自动找；也可用环境变量 CHROME_BIN）',
+    '  --gpu              放开 GPU（默认关闭以保确定性）。效果链要用它才跑在真 GPU 上；',
+    '                     代价是 2D 像素会变、像素基线不再跨机器成立',
     '  --json             机器可读输出：stdout 恰好一个 JSON 文档（给 agent / 脚本用）',
     '',
     '项目形状：',
@@ -116,6 +118,10 @@ export async function main(argv) {
 
     const projectDir = resolve(str(args, 'project'));
     const opts = {browser: args.browser ? String(args.browser) : undefined};
+    // `--gpu`：放开 GPU（默认**不开**，见 session.mjs 里 `--disable-gpu` 的说明）。
+    // 开了才能让 WebGL / WebGPU / 硬件编码跑在真 GPU 上 —— 效果链要用到。
+    // 代价：2D 像素会变（实测 67.66% 像素差 1 级），像素基线不再跨机器成立。
+    if (args.gpu) opts.gpu = true;
 
     // tts 只跟解说词打交道，不要求时间轴已存在
     const proj = await loadProject(projectDir);

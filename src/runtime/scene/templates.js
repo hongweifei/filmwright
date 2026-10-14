@@ -20,6 +20,8 @@ import {clipFrame} from '../clips.js';
 import {hexA} from '../draw/color.js';
 import {compileAnimate, mergeAnimate} from './animate.js';
 import {withLayer} from '../composite/layer.js';
+import {compileEffects, isNoopEffects} from '../fx/compile.js';
+import {paintWithEffects} from '../fx/gpu.js';
 
 const W = () => 1280;
 
@@ -805,6 +807,7 @@ export function compileScene(scene, tl) {
           tpl: tpl2,
           transform: layer.transform,
           anim: compileAnimate(layer.animate, {beats: contentShot.beats, from: ls}),
+          fx: compileEffects(layer.effects),
         };
       });
       // 由远到近：z 小的先画（在下），同 z 按声明顺序
@@ -830,12 +833,19 @@ export function compileScene(scene, tl) {
               const hasLayer = !!tr && (tr.x || tr.y || tr.rotate
                 || (tr.scale !== undefined && tr.scale !== 1)
                 || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
-              if (!hasLayer) {
-                L.tpl.draw.call(this, ctx, n, L.contentShot, accent ?? accentFor(1));
-              } else {
-                withLayer(ctx, {transform: tr, alpha: tr?.alpha ?? 1, blend: tr?.blend ?? null, mode: 'shot'},
-                  (cc) => L.tpl.draw.call(this, cc, n, L.contentShot, accent ?? accentFor(1)));
+              const paint = (cc) => {
+                if (!hasLayer) {
+                  L.tpl.draw.call(this, cc, n, L.contentShot, accent ?? accentFor(1));
+                } else {
+                  withLayer(cc, {transform: tr, alpha: tr?.alpha ?? 1, blend: tr?.blend ?? null, mode: 'shot'},
+                    (ccc) => L.tpl.draw.call(this, ccc, n, L.contentShot, accent ?? accentFor(1)));
+                }
+              };
+              // 层自己的效果链：与镜头级走**同一个助手**（否则两处合成逻辑会漂移）
+              if (L.fx && !isNoopEffects(L.fx)) {
+                if (paintWithEffects(ctx, L.fx, tr?.alpha ?? 1, paint)) continue;
               }
+              paint(ctx);
             }
           } finally {
             ctx.restore();
@@ -859,6 +869,8 @@ export function compileScene(scene, tl) {
       ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
       // 关键帧动画也透传（否则 scene.json 里写了 animate 到不了镜头 —— 这一步漏过）
       ...(raw.animate !== undefined ? {animate: raw.animate} : {}),
+      // 效果链同理：不透传的话 scene.json 写了 effects 也不会生效
+      ...(raw.effects !== undefined ? {effects: raw.effects} : {}),
       scene: shot,
       draw(ctx, n, t, accent) {
         ctx.save();

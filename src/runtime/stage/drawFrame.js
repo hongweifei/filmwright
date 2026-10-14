@@ -8,6 +8,8 @@ import {isReady, chapterAt, timeline, tailFrom} from '../../contract/timeline.js
 import {shotAt, shots, normalizeTransition} from './shots.js';
 import {withLayer} from '../composite/layer.js';
 import {mergeAnimate} from '../scene/animate.js';
+import {applyEffects, getScratch, paintWithEffects} from '../fx/gpu.js';
+import {isNoopEffects} from '../fx/compile.js';
 import {drawBackdrop} from '../chrome/backdrop.js';
 import {drawHud} from '../chrome/hud.js';
 import {drawChapterCard} from '../chrome/chapterCard.js';
@@ -133,6 +135,22 @@ function withClip(ctx, clip, fn) {
   }
 }
 
+/** 把一个镜头画到给定上下文上（含图层变换/混合，可选走 withLayer）。 */
+function paintShot(ctx, shot, n, t, accent, tr, hasLayer, alpha) {
+  if (!hasLayer) {
+    ctx.save();
+    shot.draw.call(shot, ctx, n, t, accent);
+    ctx.restore();
+    return;
+  }
+  withLayer(ctx, {
+    transform: tr,
+    alpha,
+    blend: tr?.blend ?? null,
+    mode: 'shot',
+  }, (c) => shot.draw.call(shot, c, n, t, accent));
+}
+
 /** 用给定 alpha 画一个镜头（含各自的 this 绑定、图层变换与混合模式）。 */
 function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
   if (!shot || fadeAlpha <= 0.001) return;
@@ -147,6 +165,15 @@ function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
   const hasLayer = !!tr && (tr.x || tr.y || tr.rotate || (tr.scale !== undefined && tr.scale !== 1)
     || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
 
+  // 有效果链且**不全直通** ⇒ 先把镜头画进离屏画布，过 GPU，再贴回主画布。
+  // 这样做效果只作用于这一个镜头，主画布上引擎已画的背景不受影响。
+  if (shot.fx && !isNoopEffects(shot.fx)) {
+    const done = paintWithEffects(ctx, shot.fx, combined,
+      (c) => paintShot(c, shot, n, t, accent, tr, hasLayer, combined));
+    if (done) return;
+    // 全短路 → 落到下面的常规路径
+  }
+
   // 未声明 transform 且无需淡入 → 与「没有图层合成」时逐字节一致（快路径）。
   // 这是像素回归基线不被打破的关键：老项目一个字段都不用改。
   if (!hasLayer && combined >= 1) {
@@ -155,12 +182,7 @@ function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
     ctx.restore();
     return;
   }
-  withLayer(ctx, {
-    transform: tr,
-    alpha: combined,
-    blend: tr?.blend ?? null,
-    mode: 'shot',
-  }, (c) => shot.draw.call(shot, c, n, t, accent));
+  paintShot(ctx, shot, n, t, accent, tr, true, combined);
 }
 
 export function drawFrame(ctx, n) {

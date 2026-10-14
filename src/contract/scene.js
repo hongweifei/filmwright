@@ -4,6 +4,7 @@
 //
 // 规格是 AI 的落点：AI 只填内容与节拍，节奏（入场/呼吸/离场/配色）由模板镜头负责。
 // 因此校验必须**可行动**：每条错误带 code / path / hint，模型读完能直接改。
+import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES} from './effects.js';
 // 容量上限也在这里钉死 —— AI 该被校验告知边界，而不是靠肉眼发现画面溢出。
 //
 // 对齐 token（at）：
@@ -62,6 +63,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_ANIM_ORDER', 'SCENE_ANIM_CONFLICT', 'SCENE_ANIM_VALUE',
   'SCENE_ANIM_RANGE', 'SCENE_ANIM_NO_BEATS',
   'SCENE_LAYER_SHAPE', 'SCENE_LAYER_CONTENT', 'SCENE_LAYER_RANGE', 'SCENE_LAYER_NEST',
+  ...EFFECT_ERROR_CODES,
   'SCENE_BAD_COMP', 'SCENE_NO_COMP', 'SCENE_COMP_CYCLE', 'SCENE_COMP_LOCAL_AT',
   'SCENE_NO_CLIP',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
@@ -215,6 +217,72 @@ export const ANIM_PROPS = ['x', 'y', 'scale', 'rotate', 'alpha'];
 export const EASE_NAMES = ['linear', 'out3', 'out4', 'in3', 'inout3', 'back', 'step'];
 
 /**
+ * 校验一处 `effects`（效果链）。
+ *
+ * 形状：`[{"type": "blur", "radius": 8}, …]` —— 顺序即应用顺序。
+ *
+ * 为什么单独一个函数而不是走通用字段机制：**每个效果的参数不同**，
+ * 通用机制只表达得了"元素有哪几个键"，表达不了"blur 有 radius、glow 有 radius/intensity"。
+ *
+ * @returns {Array} 错误数组（可能为空）
+ */
+export function validateEffects(effects, path = 'effects') {
+  const out = [];
+  const push = (code, where, message, hint) => out.push(err(code, where, message, hint));
+  if (!Array.isArray(effects) || !effects.length) {
+    push('SCENE_FX_SHAPE', path, 'effects 必须是非空数组',
+      '形如 [{"type":"blur","radius":8}]；顺序即应用顺序');
+    return out;
+  }
+  if (effects.length > EFFECT_CHAIN_MAX) {
+    push('SCENE_FX_CHAIN', path, `效果链最多 ${EFFECT_CHAIN_MAX} 条，收到 ${effects.length} 条`,
+      '链越长越慢；多数观感两三条就够 —— 检查是不是写重了');
+  }
+  effects.forEach((fx, i) => {
+    const fp = `${path}[${i}]`;
+    if (!fx || typeof fx !== 'object' || Array.isArray(fx)) {
+      push('SCENE_FX_SHAPE', fp, '每条效果必须是对象', '形如 {"type":"blur","radius":8}');
+      return;
+    }
+    const spec = EFFECT_SPECS[fx.type];
+    if (!spec) {
+      push('SCENE_FX_TYPE', `${fp}.type`, `不认识的效果 ${JSON.stringify(fx.type)}`,
+        `可用：${EFFECT_TYPES.join(' / ')}`);
+      return;
+    }
+    for (const k of Object.keys(fx)) {
+      if (k === 'type') continue;
+      if (!(k in spec.params)) {
+        push('SCENE_FX_PARAM', `${fp}.${k}`, `${fx.type} 没有参数 ${JSON.stringify(k)}`,
+          `可用：${Object.keys(spec.params).join(' / ')}`);
+      }
+    }
+    for (const [k, ps] of Object.entries(spec.params)) {
+      const v = fx[k];
+      if (v === undefined) {
+        if (ps.required) {
+          push('SCENE_FX_PARAM', `${fp}.${k}`, `${fx.type} 需要参数 ${k}`,
+            `${k}：${ps.note}（${ps.min}–${ps.max}）`);
+        }
+        continue;
+      }
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        push('SCENE_FX_PARAM', `${fp}.${k}`,
+          `${k} 必须是数值，收到 ${JSON.stringify(v)}`,
+          `${k}：${ps.note}（${ps.min}–${ps.max}）`);
+        continue;
+      }
+      if (v < ps.min || v > ps.max) {
+        push('SCENE_FX_RANGE', `${fp}.${k}`,
+          `${k} 超出范围：${v}（允许 ${ps.min}–${ps.max}）`,
+          `${k}：${ps.note} —— 允许范围就是 ${ps.min}–${ps.max}`);
+      }
+    }
+  });
+  return out;
+}
+
+/**
  * 校验 `type: "layers"` 的容器镜头。
  *
  * 每层：`{z?, from?, to?, transform?, animate?, content: {type, ...字段}}`
@@ -279,6 +347,9 @@ export function validateLayers(raw, path = 'shots') {
     }
     if (layer.animate !== undefined) {
       out.push(...validateAnimate(layer.animate, layer.transform, `${lp}.animate`));
+    }
+    if (layer.effects !== undefined) {
+      out.push(...validateEffects(layer.effects, `${lp}.effects`));
     }
   });
   return out;
@@ -493,7 +564,7 @@ function validateArr(v, path, shape, errors, {min = 1, maxName, shot} = {}) {
 const SHAPE_KEYS = {
   // 容器里的一层。**键级**检查走这里（未知字段），**语义**检查在 validateLayers
   // （content 必须是模板调用且不带 at、from/to 范围、z 类型、嵌套容器禁用）。
-  layer: ['content', 'z', 'from', 'to', 'transform', 'animate'],
+  layer: ['content', 'z', 'from', 'to', 'transform', 'animate', 'effects'],
   '{t, d?}': ['t', 'd'],
   step: ['t', 'd'],
   '{label, sub?}': ['label', 'sub'],
@@ -638,13 +709,16 @@ export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
     if (shot.type === 'layers') {
       errors.push(...validateLayers(shot, path));
     }
+    if (shot.effects !== undefined) {
+      errors.push(...validateEffects(shot.effects, `${path}.effects`));
+    }
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {
       errors.push(err('SCENE_UNKNOWN_TYPE', `${path}.type`, `不认识的镜头类型 ${JSON.stringify(type)}`,
         `可用：${SHOT_TYPES.join(' / ')}`));
     } else {
       const spec = FIELDS[type];
-      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && k !== 'transform' && k !== 'animate' && !(k in spec));
+      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && k !== 'transform' && k !== 'animate' && k !== 'effects' && !(k in spec));
       if (unknown.length) {
         errors.push(err('SCENE_UNKNOWN_FIELD', `${path}.${unknown[0]}`,
           `${type} 没有字段 ${unknown.join(', ')}`, `可用：${Object.keys(spec).map((k) => k.replace(/\?$/, '')).join(' / ')}`));
@@ -767,6 +841,21 @@ export function sceneSchema() {
       max: SHOT_MAXES[t] ?? {},
     }])),
     containers: CONTAINER_TYPES,
+    // 效果词汇表：AI 写 effects 之前必须查得到（有界词汇表的全部意义就在这）。
+    // 参数带范围，所以模型能自己判断合不合法，而不是写完撞校验。
+    effects: {
+      chainMax: EFFECT_CHAIN_MAX,
+      types: Object.fromEntries(EFFECT_TYPES.map((t) => [t, {
+        note: EFFECT_SPECS[t].note,
+        params: Object.fromEntries(Object.entries(EFFECT_SPECS[t].params).map(([k, p]) => [k, {
+          kind: p.kind,
+          min: p.min,
+          max: p.max,
+          required: !!p.required,
+          note: p.note,
+        }])),
+      }])),
+    },
     errorCodes: SCENE_ERROR_CODES,
   };
 }

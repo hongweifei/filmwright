@@ -2,6 +2,7 @@
 import {isValidTransform} from '../composite/layer.js';
 import {compileAnimate} from '../scene/animate.js';
 import {validateAnimate} from '../../contract/scene.js';
+import {compileEffects} from '../fx/compile.js';
 
 let SHOTS = [];
 
@@ -148,7 +149,7 @@ export function bindShots(declared, totalFrames) {
   SHOTS = declared.map((s, i) => {
     const from = s.start;
     const to = i + 1 < declared.length ? declared[i + 1].start - 1 : totalFrames;
-    return {...s, from, to, anim: compileShotAnimate(s)};
+    return {...s, from, to, anim: compileShotAnimate(s), fx: compileEffects(s.effects)};
   });
   let cursor = 1;
   for (const s of SHOTS) {
