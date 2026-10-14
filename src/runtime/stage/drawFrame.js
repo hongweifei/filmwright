@@ -6,6 +6,7 @@
 import {config, accentFor, view} from '../../contract/config.js';
 import {isReady, chapterAt, timeline, tailFrom} from '../../contract/timeline.js';
 import {shotAt, shots, normalizeTransition} from './shots.js';
+import {withLayer} from '../composite/layer.js';
 import {drawBackdrop} from '../chrome/backdrop.js';
 import {drawHud} from '../chrome/hud.js';
 import {drawChapterCard} from '../chrome/chapterCard.js';
@@ -46,13 +47,32 @@ export function transitionAt(n, list = shots()) {
   return {cur: p, prevShot: prev, prevAlpha: 1 - p};
 }
 
-/** 用给定 alpha 画一个镜头（含各自的 this 绑定）。 */
-function drawShotWithAlpha(ctx, shot, n, t, accent, alpha) {
-  if (!shot || alpha <= 0.001) return;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  shot.draw.call(shot, ctx, n, t, accent);
-  ctx.restore();
+/** 用给定 alpha 画一个镜头（含各自的 this 绑定、图层变换与混合模式）。 */
+function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
+  if (!shot || fadeAlpha <= 0.001) return;
+  const tr = shot.transform ?? null;
+  // 图层自身透明度与转场淡入**相乘**：两者是独立的语义
+  // （转场是「这一帧该露多少」，transform.alpha 是「这个图层半透明」）。
+  // 曾把转场 alpha 直接当图层的 alpha 传，把 transform.alpha 覆盖掉了 ——
+  // 表现是「alpha 字段设了没反应」。
+  const combined = fadeAlpha * (tr?.alpha ?? 1);
+  const hasLayer = !!tr && (tr.x || tr.y || tr.rotate || (tr.scale !== undefined && tr.scale !== 1)
+    || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
+
+  // 未声明 transform 且无需淡入 → 与「没有图层合成」时逐字节一致（快路径）。
+  // 这是像素回归基线不被打破的关键：老项目一个字段都不用改。
+  if (!hasLayer && combined >= 1) {
+    ctx.save();
+    shot.draw.call(shot, ctx, n, t, accent);
+    ctx.restore();
+    return;
+  }
+  withLayer(ctx, {
+    transform: tr,
+    alpha: combined,
+    blend: tr?.blend ?? null,
+    mode: 'shot',
+  }, (c) => shot.draw.call(shot, c, n, t, accent));
 }
 
 export function drawFrame(ctx, n) {

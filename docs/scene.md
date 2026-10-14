@@ -131,6 +131,30 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 
 手写镜头同样支持：`{start, transition: {type: 'crossfade', frames: 12}, draw}`。
 
+## 图层变换与混合模式（`transform`）
+
+任何镜头都可以声明 `transform`（同样是通用字段）：
+
+```json
+{"type": "stat", "at": "S03", "value": 81, "label": "ms",
+ "transform": {"x": 200, "y": -40, "scale": 1.2, "rotate": 8, "alpha": 0.85,
+               "blend": "screen", "origin": [640, 360]}}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `x` / `y` | **设计坐标**位移（1280×720 那套），不管输出多少分辨率 |
+| `scale` | 缩放，必须 > 0 |
+| `rotate` | 旋转角度（度），正值顺时针 |
+| `alpha` | 图层不透明度 0–1，与转场的淡入**相乘**（两者独立） |
+| `blend` | 混合模式：`multiply` / `screen` / `overlay` / `darken` / `lighten` / `color-dodge` / `color-burn` / `hard-light` / `soft-light` / `difference` / `exclusion` / `hue` / `saturation` / `color` / `luminosity` |
+| `origin` | 旋转与缩放的中心 `[x, y]`（设计坐标），默认画布中心 |
+
+两个实现细节值得知道（都是踩过才这么写的）：
+
+- **`alpha` 走离屏缓冲**：`ctx.globalAlpha` 是逐绘制操作生效的，一个图层里画两个重叠矩形、alpha=0.5 时重叠处会被混合两次——那不是「整组半透明」而是视觉 bug。所以组透明度先画进缓冲再整体合成。
+- **不声明 `transform`（或声明了但都是默认值）时走快路径**：直接在主画布上画，不建缓冲。**所以没用到这个特性的项目输出逐字节不变**——像素回归基线就是靠这条守住的（[verify-composite.mjs](../tools/verify-composite.mjs) 里有「无副作用 transform 与基线逐字节相同」的断言）。
+
 ## 校验与错误码
 
 `filmwright check` 的 `scene` 一道（不启浏览器）跑校验；boot 在浏览器里查的是**同一份实现**（`src/contract/scene.js`）。每条错误带 `code / path / message / hint`——错误信息是给模型读的，读完能直接改。
@@ -144,6 +168,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 | `SCENE_TOO_MANY` | 超出容量上限（见上表） |
 | `SCENE_TABLE_WIDTH` | 表格某行的单元格数与表头不符 |
 | `SCENE_BAD_TRANSITION` | 转场形状不对，或第一个镜头用了 crossfade |
+| `SCENE_BAD_TRANSFORM` | 图层变换形状不对（scale ≤ 0、alpha 越界、origin 不是两元数组……） |
 | `SCENE_NO_SENTENCE` / `SCENE_NO_BLOCK` | 对齐到不存在的句 / 块（说共几块） |
 | `SCENE_NO_ASSET` | `image.asset` 没在配置里声明（列出已声明的） |
 | `SCENE_FIRST_NOT_1` | 第一个镜头不从第 1 帧起 |

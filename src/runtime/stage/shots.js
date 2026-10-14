@@ -1,4 +1,6 @@
 // 镜头注册与串接。只声明 start，区间由这里算 —— 手算 from/to 会让区间重叠。
+import {isValidTransform} from '../composite/layer.js';
+
 let SHOTS = [];
 
 /**
@@ -30,6 +32,11 @@ export function setShots(list) {
         throw new Error('filmwright: 镜头 transition 形状不对（start=' + s.start +
           '）：要 {type:"crossfade"|"fade", frames:N}，或直接给帧数');
       }
+    }
+    // 可选的图层变换 / 混合模式（同样不破坏纯函数不变量：它只是 N 的函数）。
+    if (s.transform !== undefined && !isValidTransform(s.transform)) {
+      throw new Error('filmwright: 镜头 transform 形状不对（start=' + s.start + '）：' +
+        JSON.stringify(s.transform) + '；可用字段 x/y/scale/rotate/alpha/blend/origin');
     }
   }
   for (let i = 1; i < declared.length; i++) {

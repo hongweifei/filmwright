@@ -531,6 +531,8 @@ export function compileScene(scene, tl) {
       // 场景规格里的 transition 透传给镜头层（crossfade/fade + frames）。
       // 它**不破坏纯函数不变量**：两个 draw 都只依赖 n，混合系数也是 n 的函数。
       ...(raw.transition !== undefined ? {transition: raw.transition} : {}),
+      // 图层变换（位移/缩放/旋转/透明度/混合模式）同样透传。
+      ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
       scene: shot,
       draw(ctx, n, t, accent) {
         ctx.save();

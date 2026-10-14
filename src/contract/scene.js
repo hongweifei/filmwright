@@ -41,7 +41,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_NOT_OBJECT', 'SCENE_SCHEMA', 'SCENE_UNKNOWN_FIELD', 'SCENE_NO_SHOTS', 'SCENE_BAD_SHOT',
   'SCENE_UNKNOWN_TYPE', 'SCENE_MISSING_FIELD', 'SCENE_MISSING_AT', 'SCENE_BAD_FIELD',
   'SCENE_TOO_MANY', 'SCENE_TABLE_WIDTH', 'SCENE_NO_ASSET', 'SCENE_FIRST_NOT_1', 'SCENE_NOT_INCREASING',
-  'SCENE_BAD_TRANSITION',
+  'SCENE_BAD_TRANSITION', 'SCENE_BAD_TRANSFORM',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
   'SCENE_NO_SENTENCE', 'SCENE_NO_BLOCK',
 ];
@@ -133,6 +133,28 @@ export function isValidTransition(v) {
   const type = v.type ?? 'crossfade';
   if (type !== 'crossfade' && type !== 'fade') return false;
   return Number.isInteger(v.frames) && v.frames >= 1;
+}
+
+/**
+ * 图层变换是否合法。
+ *
+ * 与 runtime/composite/layer.js 的 isValidTransform **必须一致** —— 但 contract
+ * 不能 import runtime（分层规则），所以这里重写一份，并由测试钉住两者一致
+ * （tests/composite-layer.test.mjs 有交叉断言）。规则很简单，重复的代价小于破层。
+ */
+export function isValidTransform(t) {
+  if (t === undefined || t === null) return true;
+  if (typeof t !== 'object' || Array.isArray(t)) return false;
+  const num = (v) => v === undefined || (typeof v === 'number' && Number.isFinite(v));
+  if (!num(t.x) || !num(t.y) || !num(t.scale) || !num(t.rotate)) return false;
+  if (t.scale !== undefined && t.scale <= 0) return false;
+  if (t.alpha !== undefined && !(typeof t.alpha === 'number' && t.alpha >= 0 && t.alpha <= 1)) return false;
+  if (t.blend !== undefined && typeof t.blend !== 'string') return false;
+  if (t.origin !== undefined) {
+    if (!Array.isArray(t.origin) || t.origin.length !== 2) return false;
+    if (!t.origin.every((v) => typeof v === 'number' && Number.isFinite(v))) return false;
+  }
+  return true;
 }
 
 /** 各种形状错误的说明（校验与 schema 共用）。 */
@@ -268,11 +290,16 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
       errors.push(err('SCENE_BAD_SHOT', path, '镜头必须是对象', '形如 {"type": "bullets", "at": "S02", …}'));
       return;
     }
-    // transition 是所有类型共用的字段（不是某个模板的），单独校验
+    // transition / transform 是所有类型共用的字段（不是某个模板的），单独校验
     if (shot.transition !== undefined && !isValidTransition(shot.transition)) {
       errors.push(err('SCENE_BAD_TRANSITION', `${path}.transition`,
         `转场形状不对：${JSON.stringify(shot.transition)}`,
         '要 {type:"crossfade"|"fade", frames:N}（N≥1），或直接给帧数；第一个镜头不能用 crossfade'));
+    }
+    if (shot.transform !== undefined && !isValidTransform(shot.transform)) {
+      errors.push(err('SCENE_BAD_TRANSFORM', `${path}.transform`,
+        `图层变换形状不对：${JSON.stringify(shot.transform)}`,
+        '可用字段：x / y（设计坐标位移）、scale（>0）、rotate（度）、alpha（0–1）、blend（混合模式名）、origin（[x,y] 旋转缩放中心）'));
     }
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {
@@ -280,7 +307,7 @@ export function validateScene(raw, {timeline, assetNames} = {}) {
         `可用：${SHOT_TYPES.join(' / ')}`));
     } else {
       const spec = FIELDS[type];
-      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && !(k in spec));
+      const unknown = Object.keys(shot).filter((k) => k !== 'type' && k !== 'at' && k !== 'transition' && k !== 'transform' && !(k in spec));
       if (unknown.length) {
         errors.push(err('SCENE_UNKNOWN_FIELD', `${path}.${unknown[0]}`,
           `${type} 没有字段 ${unknown.join(', ')}`, `可用：${Object.keys(spec).map((k) => k.replace(/\?$/, '')).join(' / ')}`));
