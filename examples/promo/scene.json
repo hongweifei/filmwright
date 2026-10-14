@@ -2,7 +2,12 @@
   "$schema": "filmwright/scene-v0",
   "shots": [
     {"type": "title", "at": 1, "kicker": "FILMWRIGHT", "title": "把内容变成帧",
-     "sub": "AI 写内容，引擎保证确定性", "en": "content in, frames out"},
+     "sub": "AI 写内容，引擎保证确定性", "en": "content in, frames out",
+     "effects": [{"type": "glow", "intensity": 0.4, "threshold": 0.7},
+                 {"type": "grade", "look": "teal-orange", "amount": 0.35},
+                 {"type": "vignette", "amount": 0.32}],
+     "animate": {"y": [{"frame": 1, "v": -16}, {"frame": 20, "v": 0, "ease": "out3"}],
+                 "alpha": [{"frame": 1, "v": 0}, {"frame": 12, "v": 1, "ease": "out3"}]}},
 
     {"type": "compare", "at": "S01", "heading": "说明片的成本在哪",
      "left": {"title": "写文案", "items": ["想清楚要说什么", "改一句成本很低"]},
@@ -63,6 +68,9 @@
 
     {"type": "compare", "at": "S10", "heading": "分工",
      "left": {"title": "模型负责", "items": ["说什么", "要点与数据", "对齐到哪一句"]},
-     "right": {"title": "引擎负责", "items": ["怎么动", "配色与缩放", "确定性"]}}
+     "right": {"title": "引擎负责", "items": ["怎么动", "配色与缩放", "确定性"]},
+     "effects": [{"type": "grade", "look": "teal-orange", "amount": 0.35},
+                 {"type": "vignette", "amount": 0.32}],
+     "animate": {"y": [{"frame": 1, "v": -10}, {"frame": 16, "v": 0, "ease": "out3"}]}}
   ]
 }
