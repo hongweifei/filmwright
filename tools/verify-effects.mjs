@@ -621,6 +621,7 @@ line();
     vignette: {amount: 0.5}, chromatic: {amount: 0.5}, grain: {amount: 0.35},
     pixelate: {size: 10}, radialBlur: {amount: 0.3}, distort: {amount: 0.5},
     grade: {look: 'noir', amount: 1},
+    displace: {amount: 0.8, frequency: 8},
   };
   let inconsistent = 0;
   for (const t of EFFECT_TYPES) {
@@ -632,6 +633,26 @@ line();
     ok(same, `${t}：同一帧两次渲染${same ? '逐字节一致' : `**不一致**（${a.hash} ≠ ${b.hash}）`}`);
   }
   console.log(`  覆盖 ${EFFECT_TYPES.length} 个效果，${inconsistent} 个不一致`);
+
+  // ── displace：参数真的生效吗（与上面那条确定性判据合起来才算验完）──
+  // ⚠️ 只用**站得住**的判据。原本想写"frequency 大 ⇒ 高频含量上升"，
+  // 但实测**不成立**（位移类效果对边缘能量的影响不稳定），
+  // 改成"不同 frequency 输出不同" —— 能证伪、也不会假阳性。
+  const dA = still([{type: 'displace', amount: 0.8, frequency: 8}], 100, 'dsp-a');
+  ok(dA.hash !== base100.hash, 'displace 确实改变了画面');
+  const d0 = still([{type: 'displace', amount: 0}], 100, 'dsp-0');
+  ok(d0.hash === base100.hash, 'displace amount=0 与不写 effects **逐位相同**（直通）');
+  const dF = still([{type: 'displace', amount: 0.8, frequency: 30}], 100, 'dsp-f');
+  ok(dF.hash !== dA.hash, `frequency 真的在起作用（8 → ${dA.hash}，30 → ${dF.hash}）`);
+  const dD = still([{type: 'distort', amount: 0.8, frequency: 8}], 100, 'dsp-dist');
+  ok(dA.hash !== dD.hash,
+    `同参数下 displace 与 distort **输出不同**（${dA.hash} ≠ ${dD.hash}）—— 不是同一个效果`);
+  const ph = [{frame: 1, v: 0}, {frame: 40, v: 150, ease: 'linear'}];
+  const p1 = still([{type: 'displace', amount: 0.8, phase: ph}], 100, 'dsp-p1');
+  const p2 = still([{type: 'displace', amount: 0.8, phase: ph}], 130, 'dsp-p2');
+  const p1b = still([{type: 'displace', amount: 0.8, phase: ph}], 100, 'dsp-p1b');
+  ok(p1.hash !== p2.hash, 'phase 关键帧让不同帧的画面不同（热浪在流动）');
+  ok(p1.hash === p1b.hash, '带 phase 轨道时同一帧仍逐字节一致');
 }
 
 line('═');
