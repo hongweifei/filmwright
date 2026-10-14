@@ -214,6 +214,13 @@ jobs:
       - name: H.264 编码器（WebCodecs：有效视频 / 帧数一致 / 背压 / 报出编码配置）
         run: node tools/verify-h264.mjs
 
+      # 长片：单实例跑几千帧会不会退化、分片是否真的按比例加速、增量段缓存会不会失效、内存会不会涨。
+      # 默认 18000 帧（10 分钟量级）跑不完 CI；但**它是可参数化的** ——
+      # 实测 --frames 2400 --no-big 只要约 3.4 分钟（与 verify-attribution 的 177s 同量级），
+      # 而且这些判据在 2400 帧上同样成立。所以它不再是"只能手动跑"。
+      - name: 长片（单实例不退化 / 分片加速 / 段缓存 / 内存）
+        run: node tools/verify-longform.mjs --frames 2400 --no-big
+
       - name: README 快速开始路径（文档承诺要真的走通）
         run: node tools/verify-readme.mjs
 

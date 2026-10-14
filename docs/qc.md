@@ -104,7 +104,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
 | `tools/probes/profile-current.mjs` | **当前管线的复测**（上面那个量的是 CDP 路径，现在默认是二进制 POST 流，旧数据不准了）：绘制 / JPEG 取像素 / **WebCodecs 编码**三段。实测 720p：绘制 0.19ms、JPEG **16.47ms**（占 99%）、WebCodecs **2.18ms**（快 7.5×） |
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |
-| `verify-longform.mjs` | 在 10 分钟量级上量单实例退化、分片加速比、增量段缓存规模、全分辨率吞吐 |
+| `verify-longform.mjs` | 量单实例退化、分片加速比、增量段缓存规模、全分辨率吞吐。**可参数化**（`--frames N --no-big`）：默认 18000 帧（10 分钟量级）跑不完 CI，但 `--frames 2400` 只要约 3.4 分钟，判据同样成立 —— 所以它**已经进了 CI** |
 | `verify-attribution.mjs` | 验增量重渲按段归因：改一个镜头只重渲覆盖它的段，改全局输入则全失效 |
 | `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |
 | `verify-imperative.mjs` | 验**手写镜头与声明式同能力**：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
@@ -149,11 +149,16 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 | 耗时 |
 |---|---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`（static job） | 秒级 |
-| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、`verify-preview`（browser job） | 合计约 **10 分钟** |
-| **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级）、`verify-tts` / `verify-tts-e2e.py`（真合成、联网）、`verify-voiceover`（要真配音产物） | — |
+| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、**`verify-longform`（约 204s，`--frames 2400 --no-big`）**、`verify-preview`（browser job） | 合计约 **13 分钟** |
+| **手动跑（依赖外部条件）** | `verify-tts` / `verify-tts-e2e.py`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
-**22 个验收工具里 19 个自动跑。** 剩下 3 个都需要外部条件（联网 / 真配音产物 / 十分钟量级的渲染），
+**22 个验收工具里 20 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
+
+（`verify-longform` 原来在这张表里是"手动跑（10 分钟量级）"—— 那说的是它的**默认规模**
+18000 帧。它其实是**可参数化**的：`--frames 2400 --no-big` 只要约 3.4 分钟，
+而"单实例不退化 / 分片加速 / 段缓存 / 内存"这些判据在 2400 帧上同样成立。
+**核实之后把它接进了 CI** —— 之前那个"只能手动跑"的说法我一直没核过。）
 
 `verify-three` 能接进来是因为 `three` 是 **devDependency** —— `npm ci` 本来就会装它
 （运行时它仍是**可选**依赖，不装不影响其它功能）。这条路径以前完全没有自动守卫，
