@@ -11,9 +11,6 @@ import {EFFECT_SPECS} from '../../contract/effects.js';
 import {kf} from '../motion/ease.js';
 import {compileAnimate} from '../scene/animate.js';
 
-/** 默认值来自契约（单一来源），只有契约未规定可选默认时才在这里补。 */
-const DEFAULTS = {};
-
 /**
  * @param {Array} effects  scene.json 里的 effects（已过 contract 校验）
  * @param {{beats?: number[], from: number}} node 宿主节点的时间信息
@@ -34,7 +31,9 @@ export function compileEffects(effects, node) {
         step.tracks[k] = compiled ? compiled[k] : null;
         step.static[k] = null;
       } else {
-        step.static[k] = v === undefined ? (DEFAULTS[`${fx.type}.${k}`] ?? ps.min ?? 0) : v;
+        // 缺省值取契约里的 `def` —— 它**必须是恒等值**（见 contract/effects.js 的说明），
+        // 否则"没写这个参数"会悄悄改变画面。
+        step.static[k] = v === undefined ? (ps.def ?? ps.min ?? 0) : v;
         step.tracks[k] = null;
       }
     }
@@ -60,16 +59,24 @@ export function evalEffects(compiled, n) {
 }
 
 /**
- * 整条链在**这一帧**是否全是直通（每个效果都在它的直通值上）。
+ * 整条链在**这一帧**是否全是直通（每个效果都命中它的直通条件）。
  *
- * 注意要按帧判：`radius` 可以是关键帧轨道，"第 1 帧是 0、第 30 帧是 12" 这种
+ * 判据来自契约里的 `noopWhen`（**数据驱动**，不在这里写死各效果的逻辑）——
+ * 每加一个效果不需要改这个函数。一组条件之间是「任一成立即直通」（OR），
+ * 因为像 glow 这种 `intensity=0` 或 `radius=0` 都等于没做。
+ *
+ * 注意要**按帧**判：`radius` 可以是关键帧轨道，"第 1 帧是 0、第 30 帧是 12" 这种
  * 在第 1 帧确实是直通的 —— 那一帧不该进 GPU（省一趟，也让"从 0 开始"的渐入
  * 在起点上与不写效果**逐位一致**）。
  */
 export function isNoopEffects(compiled, n) {
   if (!compiled) return true;
   for (const s of evalEffects(compiled, n)) {
-    if (s.type === 'blur' && s.radius > 0) return false;
+    const conds = EFFECT_SPECS[s.type]?.noopWhen;
+    if (!conds || !conds.length) return false;      // 没标直通条件的，一律当作有效果
+    const hit = conds.some((cond) =>
+      Object.entries(cond).every(([k, want]) => Math.abs((s[k] ?? want) - want) < 1e-9));
+    if (!hit) return false;
   }
   return true;
 }

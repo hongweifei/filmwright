@@ -29,7 +29,9 @@ test('SCENE_FX_SHAPE：不是数组 / 空数组 / 元素不是对象', () => {
 });
 
 test('SCENE_FX_TYPE：未知效果名，且 hint 要列出全部可用效果', () => {
-  const errs = validateEffects([{type: 'glow', radius: 1}]);
+  // 注意别拿一个**真有效果**当"未知"的例子 —— 早先这里用的是 glow，
+  // 等 glow 真做出来之后这条就变成假失败了。
+  const errs = validateEffects([{type: 'sparkle', radius: 1}]);
   assert.deepEqual(errs.map((e) => e.code), ['SCENE_FX_TYPE']);
   for (const t of EFFECT_TYPES) assert.ok(errs[0].hint.includes(t), `hint 应列出 ${t}`);
 });
@@ -46,10 +48,66 @@ test('SCENE_FX_PARAM：缺必填参数', () => {
   assert.ok(/radius/.test(errs[0].message), '要说清缺的是 radius');
 });
 
-test('SCENE_FX_PARAM：参数既不是数值也不是关键帧数组', () => {
+test('SCENE_FX_PARAM：效果参数既不是数值也不是关键帧数组', () => {
   assert.deepEqual(codes([{type: 'blur', radius: '8'}]), ['SCENE_FX_PARAM']);
   assert.deepEqual(codes([{type: 'blur', radius: {v: 8}}]), ['SCENE_FX_PARAM']);
   assert.deepEqual(codes([{type: 'blur', radius: null}]), ['SCENE_FX_PARAM']);
+});
+
+// ─────────────────────── 三个新效果的契约 ───────────────────────
+
+test('glow：不给参数就是一次**默认辉光**（不是空转，所以不报错）', () => {
+  assert.deepEqual(codes([{type: 'glow'}]), [], '缺省值能做出像样的辉光 ⇒ 合法');
+  assert.deepEqual(codes([{type: 'glow', intensity: 0.8}]), []);
+  assert.deepEqual(codes([{type: 'glow', intensity: 0.8, radius: 20, threshold: 0.6}]), []);
+  assert.ok(codes([{type: 'glow', intensity: 9}]).includes('SCENE_FX_RANGE'));
+  assert.ok(codes([{type: 'glow', intensity: 1, threshold: 2}]).includes('SCENE_FX_RANGE'));
+});
+
+test('color：每个参数都可省，但**一个都不给等于空转** ⇒ 报错并列出可用参数', () => {
+  assert.deepEqual(codes([{type: 'color', saturation: 1.2}]), [], '给一个就合法');
+  assert.deepEqual(codes([{type: 'color', exposure: 1, hue: 30}]), []);
+  const errs = validateEffects([{type: 'color'}]);
+  assert.deepEqual(errs.map((e) => e.code), ['SCENE_FX_PARAM']);
+  assert.ok(/至少/.test(errs[0].message), '消息要说清"至少要给一个"：' + errs[0].message);
+  for (const k of Object.keys(EFFECT_SPECS.color.params)) {
+    assert.ok(errs[0].hint.includes(k), `hint 要列出可用参数 ${k}`);
+  }
+});
+
+test('vignette：必须给 amount；radius 有下界（太小会把整幅压黑）', () => {
+  assert.deepEqual(codes([{type: 'vignette', amount: 0.5}]), []);
+  assert.ok(codes([{type: 'vignette'}]).includes('SCENE_FX_PARAM'));
+  assert.ok(codes([{type: 'vignette', amount: 0.5, radius: 0.1}]).includes('SCENE_FX_RANGE'));
+  assert.deepEqual(codes([{type: 'vignette', amount: 0.5, radius: 0.2, softness: 0.01}]), []);
+});
+
+test('新效果的参数也能用关键帧（与 animate 同一套规则）', () => {
+  assert.deepEqual(codes([{type: 'glow', intensity: [{beat: 1, v: 0}, {beat: 2, v: 1}]}]), []);
+  assert.deepEqual(codes([{type: 'color', saturation: [{frame: 1, v: 1}, {frame: 30, v: 0}]}]), []);
+  assert.deepEqual(codes([{type: 'vignette', amount: [{frame: 1, v: 0}, {frame: 20, v: 0.6}]}]), []);
+});
+
+test('缺省值要给"合理的默认效果"，**不是**直通值（这条防的是把两者搞混）', () => {
+  // glow 缺省应当做出一份辉光（radius 16 / intensity 0.8），而不是什么都不做
+  assert.equal(EFFECT_SPECS.glow.params.radius.def, 16);
+  assert.equal(EFFECT_SPECS.glow.params.intensity.def, 0.8);
+  // color 每个参数缺省都落在直通条件里 —— 所以它在 §"至少要给一个"那一条里被要求显式给参数
+  for (const [k, ps] of Object.entries(EFFECT_SPECS.color.params)) {
+    if (ps.def === undefined) continue;
+    const cond = EFFECT_SPECS.color.noopWhen[0];
+    assert.equal(ps.def, cond[k], `color.${k} 的缺省值应落在直通条件里`);
+  }
+});
+
+test('noopWhen 是"任一成立即直通"（OR）—— glow 的两种情形都要被认出来', () => {
+  const N = {from: 1};
+  const noop = (fx) => isNoopEffects(compileEffects([fx], N), 1);
+  assert.equal(noop({type: 'glow', intensity: 0}), true, 'intensity=0 ⇒ 直通');
+  assert.equal(noop({type: 'glow', intensity: 0.5, radius: 0}), true, 'radius=0 也 ⇒ 直通');
+  assert.equal(noop({type: 'glow', intensity: 0.5, radius: 16}), false);
+  // 单元级别也验一遍契约数据本身
+  assert.ok(EFFECT_SPECS.glow.noopWhen.length >= 2, 'glow 的直通条件是 OR 的两条');
 });
 
 // ─────────────────────── 效果参数的关键帧（与 animate 同一套规则）───────────────────────
@@ -180,6 +238,33 @@ test('isNoopEffects 要**按帧**判：从 0 渐入的轨道在起点那一帧�
   // 纯静态的两种情形
   assert.equal(isNoopEffects(compileEffects([{type: 'blur', radius: 0}], {from: 1}), 1), true);
   assert.equal(isNoopEffects(compileEffects([{type: 'blur', radius: 5}], {from: 1}), 1), false);
+});
+
+test('isNoopEffects 是**数据驱动**的：每个效果按契约的 identity 判，不在这里写死逻辑', () => {
+  const N = {from: 1};
+  const noop = (fx) => isNoopEffects(compileEffects([fx], N), 1);
+  // glow：intensity=0 或 radius=0 都是直通
+  assert.equal(noop({type: 'glow', intensity: 0}), true);
+  assert.equal(noop({type: 'glow', intensity: 0.5, radius: 0}), true);
+  assert.equal(noop({type: 'glow', intensity: 0.5}), false);
+  // color：全恒等值是直通（brightness/contrast/saturation=1，其余 0）
+  assert.equal(noop({type: 'color', brightness: 1, contrast: 1, saturation: 1}), true);
+  assert.equal(noop({type: 'color', saturation: 1.01}), false);
+  assert.equal(noop({type: 'color', hue: 0.5}), false);
+  // vignette：amount=0 直通
+  assert.equal(noop({type: 'vignette', amount: 0}), true);
+  assert.equal(noop({type: 'vignette', amount: 0.3}), false);
+});
+
+test('多效果链：任意一个不是恒等值，整链就不是直通', () => {
+  const N = {from: 1};
+  const c = compileEffects([
+    {type: 'blur', radius: 0},                      // 直通
+    {type: 'color', saturation: 1.2},               // 不直通
+  ], N);
+  assert.equal(isNoopEffects(c, 1), false);
+  const c2 = compileEffects([{type: 'blur', radius: 0}, {type: 'vignette', amount: 0}], N);
+  assert.equal(isNoopEffects(c2, 1), true, '全直通 ⇒ 不走 GPU');
 });
 
 // ─────────────────────── 效果参数的 beat 锚点（与 animate 同一套时间基）───────────────────────

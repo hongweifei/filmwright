@@ -1,25 +1,34 @@
-// GPU 效果阶段（最小闭环：只有 blur）。
-//
-// 这一版刻意只做**一条路**，目的是证明
-// 「Canvas 2D 画 → 上传纹理 → GPU 效果 → 画回」这条链在真实渲染里通，并量出
-// 端到端代价 —— 而不是先把 11 个效果铺开。
+// GPU 效果阶段：把画好的画布送进 GPU 过效果链，再贴回主画布。
 //
 // ## 关键实现选择
 //
-// 1. **不读回像素**。两趟高斯之后把最后一趟直接画到 WebGL 画布的默认帧缓冲上，
-//    再用 `ctx.drawImage(glCanvas, 0, 0)` 贴回主画布。这样避免了
-//    `readPixels` + `putImageData`（那是 GPU→CPU→GPU 的往返，最贵的一步）。
-// 2. **离屏缓冲复用**（两张 ping-pong 纹理），不每帧新建。
-// 3. **radius=0 短路**：不产生任何趟，直接返回 null，让调用方走原路。
-// 4. **同任务内 drawImage**。WebGL 画布的绘制缓冲在合成后会被清空，
-//    所以"渲染 + drawImage"必须在同一个同步任务里完成 —— 这里的调用链是
-//    drawFrame → applyEffects → drawImage，全是同步的。
+// 1. **不读回像素**：最后一趟直接画到 WebGL 画布的默认帧缓冲，再用
+//    `ctx.drawImage(glCanvas, 0, 0)` 贴回。避开 `readPixels` + `putImageData`
+//    （GPU→CPU→GPU 往返，最贵的一步）。
+// 2. **4 张离屏缓冲复用**，不每帧新建。为什么是 4 张：辉光要"提亮 → 模糊 → 与原图叠加"，
+//    而模糊本身要两张 ping-pong —— 叠加时必须还留着原图，所以 2 张不够。
+// 3. **预乘 alpha**：上下文用 `premultipliedAlpha: true`、上传时
+//    `UNPACK_PREMULTIPLY_ALPHA_WEBGL = true`。模糊与叠加都是线性运算，
+//    在预乘空间才正确（直通 alpha 会让透明边缘的 RGB 往外渗）。
+//    需要"真实颜色"的效果（调色、辉光阈值）在着色器里反预乘再乘回去。
+// 4. **直通值不产生趟**：由调用方按帧判定（`isNoopEffects`），全直通时不进 GPU。
+// 5. **同任务内 drawImage**：WebGL 画布的绘制缓冲在合成后会被清空，
+//    所以"渲染 + drawImage"必须在同一个同步任务里完成 —— 调用链
+//    drawFrame → applyEffects → drawImage 全是同步的。
 //    （实测这是 WebGL 画布最容易踩的坑：跨任务读会拿到空白，
 //    表现为"效果时有时无"的间歇故障。）
 import {compileEffects, evalEffects} from './compile.js';
 
 const VS = `attribute vec2 p; varying vec2 uv;
 void main(){ uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
+
+// 亮度权重（Rec.709）
+const LUMA = 'vec3(0.2126, 0.7152, 0.0722)';
+
+/** 预乘 → 直通色；配合 `repromote` 使用。 */
+const UNPREMUL = `
+vec3 unpremul(vec4 c) { return c.a > 0.001 ? c.rgb / c.a : c.rgb; }
+vec4 repremul(vec3 rgb, float a) { return vec4(clamp(rgb, 0.0, 1.0) * a, a); }`;
 
 // 9 tap 近似高斯，权重和为 1（避免整体亮度漂移）
 const FS_BLUR = `precision mediump float; varying vec2 uv;
@@ -39,19 +48,108 @@ void main(){
 const FS_COPY = `precision mediump float; varying vec2 uv; uniform sampler2D t;
 void main(){ gl_FragColor = texture2D(t, uv); }`;
 
+/** 辉光第一步：只留下比阈值亮的部分（在直通色空间算亮度，避免受 alpha 影响）。 */
+const FS_BRIGHT = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float threshold;
+${UNPREMUL}
+void main(){
+  vec4 c = texture2D(t, uv);
+  vec3 rgb = unpremul(c);
+  float lum = dot(rgb, ${LUMA});
+  // ⚠️ 不能写 smoothstep(threshold, 1.0, lum)：threshold=1 时 edge0 == edge1，
+  // 那是**未定义行为**（实测可能出 NaN，整帧变黑）。用 knee 保证 edge1 > edge0。
+  float knee = max(0.001, 1.0 - threshold);
+  float k = smoothstep(threshold, threshold + knee, lum);
+  gl_FragColor = c * k;              // 预乘空间：整体乘 k 即可
+}`;
+
+/** 辉光第三步：把模糊后的光晕**加性**叠回原图。 */
+const FS_GLOW_ADD = `precision mediump float; varying vec2 uv;
+uniform sampler2D t;    // 原图
+uniform sampler2D t2;   // 模糊后的光晕
+uniform float intensity;
+void main(){
+  vec4 base = texture2D(t, uv);
+  vec4 glow = texture2D(t2, uv);
+  gl_FragColor = vec4(base.rgb + glow.rgb * intensity, clamp(base.a + glow.a * intensity, 0.0, 1.0));
+}`;
+
+/**
+ * 调色。顺序按设计：曝光 → 亮度 → 对比 → 饱和 → 色相 → 色温。
+ * 色相旋转用 CSS `hue-rotate` 的同一组系数（标准、可核对），不用自创矩阵。
+ */
+const FS_COLOR = `precision mediump float; varying vec2 uv;
+uniform sampler2D t;
+uniform float exposure, brightness, contrast, saturation, hue, temperature;
+${UNPREMUL}
+vec3 hueRotate(vec3 c, float deg) {
+  float a = radians(deg);
+  float cs = cos(a), sn = sin(a);
+  float r = (0.213 + cs*0.787 - sn*0.213) * c.r
+          + (0.715 - cs*0.715 - sn*0.715) * c.g
+          + (0.072 - cs*0.072 + sn*0.928) * c.b;
+  float g = (0.213 - cs*0.213 + sn*0.143) * c.r
+          + (0.715 + cs*0.285 + sn*0.140) * c.g
+          + (0.072 - cs*0.072 - sn*0.283) * c.b;
+  float b = (0.213 - cs*0.213 - sn*0.787) * c.r
+          + (0.715 - cs*0.715 + sn*0.715) * c.g
+          + (0.072 + cs*0.928 + sn*0.072) * c.b;
+  return vec3(r, g, b);
+}
+void main(){
+  vec4 src = texture2D(t, uv);
+  vec3 c = unpremul(src);
+  c *= pow(2.0, exposure);                       // 曝光（EV）
+  c *= brightness;
+  c = (c - 0.5) * contrast + 0.5;                // 围绕中灰
+  float lum = dot(clamp(c, 0.0, 1.0), ${LUMA});
+  c = mix(vec3(lum), c, saturation);
+  if (abs(hue) > 0.001) c = hueRotate(c, hue);
+  float warm = temperature * 0.15;                // 正=暖（加红减蓝）
+  c.r += warm; c.b -= warm;
+  gl_FragColor = repremul(c, src.a);
+}`;
+
+/** 暗角：以中心为原点径向压暗。amount=0 时由调用方短路，不会进这里。 */
+const FS_VIGNETTE = `precision mediump float; varying vec2 uv;
+uniform sampler2D t; uniform float amount, radius, softness;
+void main(){
+  vec4 src = texture2D(t, uv);
+  vec2 p = (uv - 0.5) * 2.0;
+  float d = length(p);
+  // smoothstep 要求 edge0 < edge1，所以写成"1 减去从 [r-soft, r] 的上升"
+  float v = 1.0 - smoothstep(max(radius - softness, 0.0), radius, d);
+  gl_FragColor = vec4(src.rgb * mix(1.0, v, amount), src.a);
+}`;
+
+/** 模糊的趟数与抽头间距。抽头间距 ≤2px 是"采样充分"的保证（见 blurTex 注释）。 */
+function blurPlan(radius) {
+  const sigmaTotal = Math.max(radius, 0) / 3;
+  const SIGMA_PER_PASS = 3;   // 间距 = 3s，要 ≤2px ⇒ s ≤ 2/3 ⇒ σ ≤ 4.5·(2/3) = 3
+  const n = Math.max(1, Math.min(16, Math.ceil((sigmaTotal / SIGMA_PER_PASS) ** 2)));
+  return {n, s: (sigmaTotal / Math.sqrt(n)) / 4.5};
+}
+
 /** 一个可复用的 GPU 阶段实例。尺寸变化时重建缓冲。 */
 class GpuStage {
   constructor() {
     this.canvas = document.createElement('canvas');
-    this.gl = this.canvas.getContext('webgl', {premultipliedAlpha: false, alpha: true});
+    this.gl = this.canvas.getContext('webgl', {premultipliedAlpha: true, alpha: true,
+      preserveDrawingBuffer: false});
     this.w = 0;
     this.h = 0;
     this.ok = !!this.gl;
     if (!this.ok) return;
     const gl = this.gl;
-    this.progBlur = this._prog(VS, FS_BLUR);
-    this.progCopy = this._prog(VS, FS_COPY);
-    this.ok = !!this.progBlur && !!this.progCopy;
+    this.progs = {
+      blur: this._prog(FS_BLUR),
+      copy: this._prog(FS_COPY),
+      bright: this._prog(FS_BRIGHT),
+      glowAdd: this._prog(FS_GLOW_ADD),
+      color: this._prog(FS_COLOR),
+      vignette: this._prog(FS_VIGNETTE),
+    };
+    this.ok = Object.values(this.progs).every(Boolean);
     if (!this.ok) return;
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -59,13 +157,13 @@ class GpuStage {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     this.srcTex = gl.createTexture();
-    this.targets = [this._target(), this._target()];
+    this.targets = [this._target(), this._target(), this._target(), this._target()];
   }
 
-  _prog(vsSrc, fsSrc) {
+  _prog(fsSrc) {
     const gl = this.gl;
     const vs = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vs, vsSrc); gl.compileShader(vs);
+    gl.shaderSource(vs, VS); gl.compileShader(vs);
     const fs = gl.createShader(gl.FRAGMENT_SHADER);
     gl.shaderSource(fs, fsSrc); gl.compileShader(fs);
     if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) return null;
@@ -100,7 +198,25 @@ class GpuStage {
     this.w = w; this.h = h;
   }
 
-  _pass(prog, outTarget, inTex, setUniforms) {
+  /** 把画布传到 srcTex（预乘 + **翻 Y**）。 */
+  _upload(canvas) {
+    const gl = this.gl;
+    // ⚠️ UNPACK_FLIP_Y_WEBGL 必须开：
+    // `texImage2D(canvas)` 默认把画布的**第一行（顶）**放在 v=0，而 GL 的裁剪空间 y 朝上
+    // —— 两者相反，结果整帧**上下翻转**。翻转后"模糊还是模糊"，所以边缘能量、
+    // 端点一致性这些判据全都照样通过，**只有看图才发现**（踩过）。
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return this.srcTex;
+  }
+
+  _pass(prog, inTex, outTarget, setu, inTex2) {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, outTarget ? outTarget.fb : null);
     gl.viewport(0, 0, this.w, this.h);
@@ -108,62 +224,101 @@ class GpuStage {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, inTex);
     gl.uniform1i(gl.getUniformLocation(prog, 't'), 0);
-    if (setUniforms) setUniforms(prog);
+    if (inTex2) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, inTex2);
+      gl.uniform1i(gl.getUniformLocation(prog, 't2'), 1);
+    }
+    if (setu) setu(prog);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  /** 取 n 张不与 `protect` 中任何纹理相同的离屏缓冲。 */
+  _free(protect, n) {
+    const out = this.targets.filter((t) => !protect.includes(t.tex));
+    if (out.length < n) throw new Error('filmwright: GPU 离屏缓冲不足（这是内部错误）');
+    return out.slice(0, n);
+  }
+
   /**
-   * 对 `srcCanvas` 应用模糊，返回**已画好结果的 canvas**（就是 WebGL 画布本身）。
-   * 调用方必须**在同一个同步任务里**立刻 drawImage 它。
+   * 可分离高斯，纹理进、纹理出。返回结果所在的离屏缓冲。
    *
    * ## 为什么要迭代而不是加大抽头间距
    *
    * 第一版把半径直接映射成抽头间距，结果**大半径下模糊反而更"锐"**
-   * （实测边缘能量 1.62 → 1.32 → 1.39，半径 24 处回升）。
-   * 原因是 9 个抽头被摊到很宽的跨度上 —— 抽头间距 8px 时核成了**稀疏采样**，
-   * 出现振铃，高频不降反升。
+   * （实测边缘能量 1.62 → 1.32 → 1.39，半径 24 处回升）：
+   * 9 个抽头被摊到很宽的跨度上成了**稀疏采样**，出现振铃。
    *
    * 修法：**保持抽头间距 ≤2px（采样充分），用多趟迭代逼近大半径**。
    * 高斯可组合：σ_total² = Σσ_i²，所以 N 趟、每趟 σ_total/√N 等价。
-   * 趟数按 `(radius/9)²` 估（σ 与半径按 radius/3 换算）。
-   *
-   * 契约把 radius 上限定在 **36**，正是"16 趟、间距 ≤2px"能保证正确的范围；
-   * 更大的半径要靠**金字塔**（降采样 → 小核模糊 → 升采样），那是下一步。
    */
-  blur(srcCanvas, radius) {
+  blurTex(inTex, radius, protect) {
+    const gl = this.gl;
+    const {n, s} = blurPlan(radius);
+    const [a, b] = this._free([...protect, inTex], 2);
+    const u = (prog, dirX, dirY) => {
+      gl.uniform2f(gl.getUniformLocation(prog, 'dir'), dirX, dirY);
+      gl.uniform2f(gl.getUniformLocation(prog, 'texel'), s / this.w, s / this.h);
+    };
+    let src = inTex;
+    for (let i = 0; i < n; i++) {
+      this._pass(this.progs.blur, src, a, (p) => u(p, 1, 0));
+      this._pass(this.progs.blur, a.tex, b, (p) => u(p, 0, 1));
+      src = b.tex;
+    }
+    return b;
+  }
+
+  /** 走完一整条效果链，返回画布（结果已在默认帧缓冲上）。 */
+  apply(srcCanvas, steps) {
     const gl = this.gl;
     const w = srcCanvas.width, h = srcCanvas.height;
     this._ensure(w, h);
-    // 上传
-    gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, srcCanvas);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    let curTex = this._upload(srcCanvas);
+    let curTarget = null;
+    let touched = false;
 
-    const sigmaTotal = Math.max(radius, 0) / 3;
-    // 每趟的 σ 上限：抽头间距 = 3s，要让间距 ≤2px ⇒ s ≤ 2/3 ⇒ σ ≤ 4.5·(2/3) = 3
-    const SIGMA_PER_PASS = 3;
-    const n = Math.max(1, Math.min(16, Math.ceil((sigmaTotal / SIGMA_PER_PASS) ** 2)));
-    const sigmaPass = sigmaTotal / Math.sqrt(n);
-    const s = sigmaPass / 4.5;                 // 核的抽头间距（像素）
-
-    const texelX = 1 / w, texelY = 1 / h;
-    const pass = (outTarget, inTex, dirX, dirY) => {
-      this._pass(this.progBlur, outTarget, inTex, (p) => {
-        gl.uniform2f(gl.getUniformLocation(p, 'dir'), dirX, dirY);
-        gl.uniform2f(gl.getUniformLocation(p, 'texel'), texelX * s, texelY * s);
-      });
-    };
-    // 逐趟：水平 → 离屏 0，垂直 → 离屏 1（最后一趟垂直直接画到默认帧缓冲）
-    let src = this.srcTex;
-    for (let i = 0; i < n; i++) {
-      const last = i === n - 1;
-      pass(this.targets[0], src, 1, 0);
-      pass(last ? null : this.targets[1], this.targets[0].tex, 0, 1);
-      src = this.targets[1].tex;
+    for (const step of steps) {
+      const u1 = (name, v) => (p) => gl.uniform1f(gl.getUniformLocation(p, name), v);
+      if (step.type === 'blur' && step.radius > 0) {
+        curTarget = this.blurTex(curTex, step.radius, curTarget ? [curTarget.tex] : []);
+        curTex = curTarget.tex;
+        touched = true;
+      } else if (step.type === 'glow' && step.intensity > 0 && step.radius > 0) {
+        // 提亮 → 模糊 → 加性叠加。叠加要读**原图**，所以它全程不能被覆盖。
+        // ⚠️ 输出目标必须在**模糊之后**再取：模糊自己要用两张 ping-pong，
+        // 提前取好的目标可能被它借走（第一版就是这么错的）。
+        const protect0 = [curTex];
+        const [ak] = this._free(protect0, 1);
+        this._pass(this.progs.bright, curTex, ak, u1('threshold', step.threshold));
+        const blurT = this.blurTex(ak.tex, step.radius, [...protect0, ak.tex]);
+        const [out] = this._free([...protect0, blurT.tex], 1);
+        this._pass(this.progs.glowAdd, curTex, out, u1('intensity', step.intensity), blurT.tex);
+        curTarget = out; curTex = out.tex;
+        touched = true;
+      } else if (step.type === 'color') {
+        const [out] = this._free([curTex], 1);
+        this._pass(this.progs.color, curTex, out, (p) => {
+          for (const k of ['exposure', 'brightness', 'contrast', 'saturation', 'hue', 'temperature']) {
+            gl.uniform1f(gl.getUniformLocation(p, k), step[k]);
+          }
+        });
+        curTarget = out; curTex = out.tex;
+        touched = true;
+      } else if (step.type === 'vignette' && step.amount > 0) {
+        const [out] = this._free([curTex], 1);
+        this._pass(this.progs.vignette, curTex, out, (p) => {
+          gl.uniform1f(gl.getUniformLocation(p, 'amount'), step.amount);
+          gl.uniform1f(gl.getUniformLocation(p, 'radius'), step.radius);
+          gl.uniform1f(gl.getUniformLocation(p, 'softness'), step.softness);
+        });
+        curTarget = out; curTex = out.tex;
+        touched = true;
+      }
     }
+    if (!touched) return null;
+    // 最终一趟：复制到默认帧缓冲（画布）
+    this._pass(this.progs.copy, curTex, null);
     return this.canvas;
   }
 }
@@ -201,16 +356,7 @@ export function applyEffects(srcCanvas, compiled, n) {
     // 没有 WebGL 就如实报错，不要静默跳过（静默跳过会让人以为效果生效了）
     throw new Error('filmwright: 这个环境拿不到 WebGL，无法应用 effects');
   }
-  let out = srcCanvas;
-  let applied = false;
-  for (const step of evalEffects(compiled, n)) {
-    if (step.type === 'blur') {
-      if (!(step.radius > 0)) continue;          // **短路**：radius=0 直通，不产生趟
-      out = STAGE.blur(out, step.radius);
-      applied = true;
-    }
-  }
-  return applied ? out : null;
+  return STAGE.apply(srcCanvas, evalEffects(compiled, n));
 }
 
 /**

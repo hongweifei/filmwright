@@ -290,6 +290,28 @@ export function validateEffects(effects, path = 'effects') {
       }
       rangeCheck(v, `${fp}.${k}`, push);
     }
+    // 有些效果（如 color）每个参数都可省，而**全用缺省值恰好是直通** ⇒ 空转、白花一趟。
+    // 这条**从数据推导**，不靠手写标志位：把"全部取缺省值"代入直通条件，命中就要求
+    // 至少显式给一个参数。这样以后加效果不用记得补一个 flag。
+    //
+    // ⚠️ 但要**先确认必填参数都在**：否则缺 radius 的 blur 会同时报"缺少 radius"
+    // 和"至少要给一个参数"，后者既多余又误导（缺的不是"一个"，是那个必填的）。
+    const missingRequired = Object.entries(spec.params)
+      .some(([k, ps]) => ps.required && fx[k] === undefined);
+    if (!missingRequired && spec.noopWhen?.length) {
+      const allDefaults = {};
+      for (const [k, ps] of Object.entries(spec.params)) {
+        allDefaults[k] = ps.def ?? ps.min ?? 0;
+      }
+      const wouldNoop = spec.noopWhen.some((cond) =>
+        Object.entries(cond).every(([k, v]) => Math.abs((allDefaults[k] ?? v) - v) < 1e-9));
+      const given = Object.keys(fx).filter((k) => k !== 'type').length;
+      if (wouldNoop && given === 0) {
+        push('SCENE_FX_PARAM', fp,
+          `${fx.type} 至少要给一个参数（全用缺省值等于什么都没做）`,
+          `可用：${Object.keys(spec.params).join(' / ')} —— 不给参数会白花一趟 GPU`);
+      }
+    }
   });
   return out;
 }
