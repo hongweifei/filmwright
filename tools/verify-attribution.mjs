@@ -18,6 +18,9 @@ import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync}
 import {spawnSync} from 'node:child_process';
 import {dirname, resolve, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+// 期望值从实现里算（镜头覆盖哪几段），不硬编码 —— 见 C) 段的说明。
+import {setTimeline, timeline} from '../src/contract/timeline.js';
+import {resolveAt} from '../src/contract/scene.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = (process.argv[2] ?? resolve(HERE, '..')).replace(/\\/g, '/');
@@ -72,14 +75,25 @@ ok(b && b.reusedSegments === b.segments && b.renderedSegments === 0,
   `应全复用（reused=${b?.reusedSegments}/${b?.segments}, rendered=${b?.renderedSegments}）`);
 
 console.log('\n=== C) 只改中间某个镜头：只有覆盖它的段该重渲 ===');
-// scenecast 的 shots[3] 是 stat@S03（起点 602）→ 落在第 4 段（601-800）
+// **期望从实现里算**，不硬编码：这里曾经写着 `targetStart = 602` 与"必须正好 1 段"，
+// 而镜头布局改过之后 shots[3] 已经跨 2 段（帧 645-854 → 第 3-4 段）——
+// 于是这个守卫一直在失败（它从没进过 CI，所以没人发现）。
+// 现在按"目标镜头覆盖哪几段"来算期望：跨几段就该重渲几段，那才是正确行为。
 const sceneFile = `${P}/scene.json`;
 const sceneOrig = readFileSync(sceneFile);
 const scene = JSON.parse(sceneOrig.toString('utf8'));
 const TARGET = 3;
-const targetStart = 602;
-const wantSeg = Math.floor((targetStart - 1) / SEG_FRAMES);
-console.log(`  目标：shots[${TARGET}]（${scene.shots[TARGET].type}@${scene.shots[TARGET].at}，起点 ${targetStart}）→ 第 ${wantSeg} 段`);
+const tlJson = JSON.parse(readFileSync(join(P, 'script', 'timeline.json'), 'utf8'));
+setTimeline(tlJson);
+const starts = scene.shots.map((s) => resolveAt(s.at, tlJson));
+const total = timeline.totalFrames ?? tlJson.total_frames;
+const targetFrom = starts[TARGET];
+const targetTo = TARGET + 1 < starts.length ? starts[TARGET + 1] - 1 : total;
+const segFrom = Math.floor((targetFrom - 1) / SEG_FRAMES);
+const segTo = Math.floor((targetTo - 1) / SEG_FRAMES);
+const wantSegs = segTo - segFrom + 1;
+console.log(`  目标：shots[${TARGET}]（${scene.shots[TARGET].type}@${scene.shots[TARGET].at}，` +
+  `帧 ${targetFrom}-${targetTo}）→ 第 ${segFrom}-${segTo} 段，**应当重渲 ${wantSegs} 段**`);
 const before = {label: scene.shots[TARGET].label};
 scene.shots[TARGET].label = String(before.label ?? '') + '·改';
 writeFileSync(sceneFile, JSON.stringify(scene, null, 2), 'utf8');
@@ -151,7 +165,8 @@ console.log('\n=== F) 反复改同一个镜头：每次只重渲那一段 ===');
     console.log(`  改第 ${suffix.slice(1)} 次：rendered=${r?.renderedSegments}, reused=${r?.reusedSegments}`);
   }
   writeFileSync(sceneFile, orig);
-  ok(lastRendered.every((n) => n === 1), `每次都应只重渲 1 段（实际 ${lastRendered.join(',')}）`);
+  ok(lastRendered.every((n) => n === wantSegs),
+  `每次都应只重渲**覆盖该镜头的 ${wantSegs} 段**（实际 ${lastRendered.join(',')}）`);
 }
 
 rmSync(SEG, {recursive: true, force: true});

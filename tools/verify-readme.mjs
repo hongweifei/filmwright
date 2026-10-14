@@ -7,6 +7,10 @@ import {existsSync, mkdtempSync, rmSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+// **从实现里读类型清单**，不在工具里硬编码数字 —— 这里曾经写着 `n !== 13`，
+// 而类型已经涨到 18，于是这个"守卫"一直在失败（它从没进过 CI，所以没人发现）。
+// 数字从实现读，加类型时它才跟得上。
+import {SHOT_TYPES} from '../src/contract/scene.js';
 
 // 本文件在 <root>/tools/，所以根要往上两层
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,12 +47,16 @@ for (const ex of ['scenecast', 'gallery']) {
   step(`check --static-only（${ex}）`, () => run(['check', '--project', join(ROOT, 'examples', ex), '--static-only']));
 }
 
-// schema 命令：机器可读规格必须能解析且 13 类齐
+// schema 命令：机器可读规格必须能解析，且**类型清单与实现一致**
+// （这里曾经硬编码 `n !== 13`，类型涨到 18 之后它一直在失败 —— 而它从没进过 CI）
 step('schema', () => {
   const j = JSON.parse(run(['schema', '--json']).toString());
   if (!j.ok) throw new Error('schema --json ok=false');
-  const n = Object.keys(j.data.schema.types).length;
-  if (n !== 13) throw new Error(`schema 类型数 ${n}，不是 13`);
+  const got = Object.keys(j.data.schema.types).sort();
+  const want = [...SHOT_TYPES].sort();
+  if (got.join(',') !== want.join(',')) {
+    throw new Error(`schema 类型清单与实现不一致：\n  实现 ${want.length} 类：${want.join(' ')}\n  输出 ${got.length} 类：${got.join(' ')}`);
+  }
 });
 
 // new 冒烟：脚手架 + 错误契约一起验 —— 新项目没时间轴，check 必须报 NO_TIMELINE 而不是崩

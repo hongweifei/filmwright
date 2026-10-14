@@ -142,19 +142,31 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 ### 哪些验收工具会自动跑、哪些要手动跑
 
-**不跑的守卫等于没有守卫**，所以这张表要如实：
+**不跑的守卫等于没有守卫**，所以这张表要如实（耗时是逐个数出来的实测值）：
 
-| 状态 | 工具 |
-|---|---|
-| **CI 自动跑** | `verify-encoding`、`verify-docs`（static job）；`quality-negative`、`verify-assets`、`verify-effects`、`verify-imperative`、`verify-preview`（browser job） |
-| **手动跑（需真实环境/较慢）** | `verify-determinism`、`verify-incremental`、`verify-composite`、`verify-comp`、`verify-clips`、`verify-clip-render`、`verify-mix`、`verify-reuse`、`verify-attribution`、`verify-complex`、`verify-voiceover`、`verify-three` |
-| **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级，约数分钟）、`verify-tts` / `verify-tts-e2e.py`（真合成，联网且端点可能不可用）、`verify-readme` |
+| 状态 | 工具 | 耗时 |
+|---|---|---|
+| **CI 自动跑** | `verify-encoding`、`verify-docs`（static job） | 秒级 |
+| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、`verify-preview`（browser job） | 合计约 **9 分钟** |
+| **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级）、`verify-tts` / `verify-tts-e2e.py`（真合成、联网）、`verify-voiceover`（要真配音产物）、`verify-three`（要装 three，十几次渲染） | — |
 
-这是一个**已知缺口**：20 个验收工具里只有 7 个进了 CI。改核心路径（尤其是渲染、增量、合成）之后，**手动的那些要自己记得跑**——
-比如 `verify-incremental` 守的是"复用段与重渲必须逐帧一致"，它不跑就没人在守。
-把更多工具接进 CI 需要先按耗时分类（有的要几分钟），那是一件独立的事。
+**21 个验收工具里 17 个自动跑。** 剩下 4 个是有意留在手动的，原因写在上面（慢或要外部依赖）。
 
-`verify-three` 之所以暂时手动：它要装 `three`（可选依赖）并跑十几次渲染，
-耗时明显高于已接入的两个。改 `src/runtime/three/` 或 importmap / vendor 路由之后**必须手动跑它**。
+`verify-readme` / `verify-attribution` 虽然各要两三分钟，但守的是**核心契约**
+（文档承诺的快速开始、增量重渲的按段归因），而且**公开仓库的 CI 不花钱**，
+所以它们也接进来了 —— 慢不是把它们留在手动的充分理由。
+
+### 接进 CI 之后**立刻**抓到两个一直在失败的守卫
+
+这两条以前从不自动跑，所以没人知道它们已经失败了：
+
+| 工具 | 症状 | 真因 | 修法 |
+|---|---|---|---|
+| `verify-readme` | `schema` 步骤失败 | 工具里硬编码 `schema 类型数 !== 13`，而类型已涨到 **18** | 改成**从实现读** `SHOT_TYPES` 并比对清单 |
+| `verify-attribution` | "每次应只重渲 1 段（实际 2）" | 硬编码目标镜头起点 `602`（实际 **645**）与"必须正好 1 段"，而该镜头已**跨 2 段** | 改成**算**目标镜头覆盖哪几段，跨几段就该重渲几段 |
+
+两处的教训是同一个：**验收工具里不要硬编码会随实现变化的数字** ——
+要么从实现读，要么从数据算。硬编码的期望会静默变成假警报（或者更糟：假绿灯）。
+
 
 **关于 flaky 的判定纪律**：同一步骤「一次过、一次挂」时必须复跑定性，不能算修好。本次排查中 windows 渲染 job 的失败点曾逐次迁移（端到端出片 → 逐帧+画质 → MCP 测试 → 渲染确定性 → …），**每次的根因都不同且都定位到了**：定时器泄漏（测试进程挂 302 秒）、夹具被 CI 覆盖、`$RUNNER_TEMP` 展开为空、浏览器断开无处理、分片失败无重试。修完后 CI 全绿。
