@@ -109,6 +109,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |
 | `verify-imperative.mjs` | 验**手写镜头与声明式同能力**：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
 | `verify-three.mjs` | 验 3D 图层（three）：3D 内容确实叠进帧里、**同一帧号两次渲染逐字节一致**、**跳帧渲染与连渲一致**、不用 3D 的项目不加载 three；并带一条**有区分力的负面对照**（故意写成有状态的必须被抓出来）与配对的性能实测 |
+| `verify-h264.mjs` | 验页面侧 H.264 编码器（WebCodecs）：**用 ffprobe 证明产出的是一段有效视频**、帧数与请求一致、**背压生效**（编码队列不超上限）、并**报出实际用的编码配置**（无头下可能只有软编码，不能让人以为走了硬件）。纯函数部分（AVCC→Annex-B）另有 `tests/frame.test.mjs` 的手工字节夹具 |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
 | `make-timeline-fixture.mjs` | 合成 `timeline.json` 夹具：edge-tts 端点不可达时让纯规格示例仍能跑 check 与渲染验收（明确标注非配音，跑 `tts` 会覆盖） |
@@ -148,10 +149,10 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 | 耗时 |
 |---|---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`（static job） | 秒级 |
-| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、`verify-preview`（browser job） | 合计约 **9.5 分钟** |
+| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、`verify-preview`（browser job） | 合计约 **10 分钟** |
 | **手动跑（慢或依赖外部）** | `verify-longform`（10 分钟量级）、`verify-tts` / `verify-tts-e2e.py`（真合成、联网）、`verify-voiceover`（要真配音产物） | — |
 
-**21 个验收工具里 18 个自动跑。** 剩下 3 个都需要外部条件（联网 / 真配音产物 / 十分钟量级的渲染），
+**22 个验收工具里 19 个自动跑。** 剩下 3 个都需要外部条件（联网 / 真配音产物 / 十分钟量级的渲染），
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
 
 `verify-three` 能接进来是因为 `three` 是 **devDependency** —— `npm ci` 本来就会装它
