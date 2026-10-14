@@ -23,7 +23,13 @@ const FIX = process.argv.includes('--fix');
 function facts() {
   const scene = readFileSync(join(ROOT, 'src/contract/scene.js'), 'utf8');
   const typesBlock = scene.match(/export const SHOT_TYPES = \[([\s\S]*?)\];/)[1];
-  const templateCount = (typesBlock.match(/'/g) || []).length / 2;
+  // 「N 类模板」必须只数**模板**，不能数容器。
+  // SHOT_TYPES 里除了模板还有容器（如 layers —— 它没有自己的内容与 TEMPLATES 条目，
+  // 是把别的东西组合起来）。容器在 contract 里用 CONTAINER_TYPES 显式列出。
+  // 早先这里直接数 SHOT_TYPES，加了容器之后会把「16 类模板」误判成过期。
+  const ctrBlock = scene.match(/export const CONTAINER_TYPES = \[([\s\S]*?)\];/);
+  const containerCount = ctrBlock ? (ctrBlock[1].match(/'/g) || []).length / 2 : 0;
+  const templateCount = (typesBlock.match(/'/g) || []).length / 2 - containerCount;
 
   // 自检道数：数 runChecks 里的 results.push。静态那批与浏览器那批分开数，
   // 因为文档里两种说法都有（「N 道自检」指全部，「前 M 道」指静态）。

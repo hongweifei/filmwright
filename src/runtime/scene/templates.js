@@ -18,6 +18,8 @@ import {bigStat, flow, section, chips as chipsW} from '../draw/widgets.js';
 import {picture, fitBox} from '../draw/picture.js';
 import {clipFrame} from '../clips.js';
 import {hexA} from '../draw/color.js';
+import {compileAnimate, mergeAnimate} from './animate.js';
+import {withLayer} from '../composite/layer.js';
 
 const W = () => 1280;
 
@@ -775,6 +777,66 @@ export function compileScene(scene, tl) {
             drawCompInstance(ctx,
               {localShots: inner.shots, len: cycleLen, from: start, loop},
               n, t, accent ?? accentFor(1));
+          } finally {
+            ctx.restore();
+          }
+        },
+      };
+    }
+    // ---- 容器：并发多层（每层有自己的 z 序、时间窗、变换与关键帧）----
+    if (raw.type === 'layers') {
+      const shotStart = resolveAt(raw.at, tl);
+      const built = (raw.layers ?? []).map((layer, i) => {
+        const c = layer.content;
+        const tpl2 = TEMPLATES[c.type];
+        if (!tpl2) throw new Error('filmwright: 层内容用了没有模板的类型 ' + c.type);
+        // 层内容的绝对起点 = 镜头起点 + (层的 from - 1)
+        const ls = shotStart + ((layer.from ?? 1) - 1);
+        // 层内容也是一次模板调用，但**不带 at**（校验已拦）；beats 支持它自己的节奏
+        const contentRaw = {...c, at: ls};
+        const contentShot = {...contentRaw, start: ls, sid: null,
+          beats: tpl2.beats ? tpl2.beats(contentRaw, ls, null) : [ls]};
+        return {
+          z: layer.z ?? i,                       // 不写 z 则按声明顺序（后面的在上）
+          seq: i,                                 // 同 z 时按声明顺序稳定
+          fromOff: (layer.from ?? 1) - 1,         // 层窗口（相对镜头起点的偏移）
+          toOff: layer.to !== undefined ? layer.to - 1 : null,
+          contentShot,
+          tpl: tpl2,
+          transform: layer.transform,
+          anim: compileAnimate(layer.animate, {beats: contentShot.beats, from: ls}),
+        };
+      });
+      // 由远到近：z 小的先画（在下），同 z 按声明顺序
+      built.sort((a, b) => (a.z - b.z) || (a.seq - b.seq));
+      const beats = [...new Set(built.flatMap((b) => b.contentShot.beats))].sort((a, b) => a - b);
+      return {
+        start: shotStart,
+        beats,
+        ...(raw.transition !== undefined ? {transition: raw.transition} : {}),
+        ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
+        ...(raw.animate !== undefined ? {animate: raw.animate} : {}),
+        scene: raw,
+        draw(ctx, n, t, accent) {
+          ctx.save();
+          applyDesignScale(ctx);
+          try {
+            for (const L of built) {
+              // 时间窗：层只在自己的窗口内出现（窗口外的帧不画它，也不报错）
+              const off = n - shotStart;
+              if (off < L.fromOff) continue;
+              if (L.toOff !== null && off > L.toOff) continue;
+              const tr = mergeAnimate(L.transform, L.anim, n);
+              const hasLayer = !!tr && (tr.x || tr.y || tr.rotate
+                || (tr.scale !== undefined && tr.scale !== 1)
+                || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
+              if (!hasLayer) {
+                L.tpl.draw.call(this, ctx, n, L.contentShot, accent ?? accentFor(1));
+              } else {
+                withLayer(ctx, {transform: tr, alpha: tr?.alpha ?? 1, blend: tr?.blend ?? null, mode: 'shot'},
+                  (cc) => L.tpl.draw.call(this, cc, n, L.contentShot, accent ?? accentFor(1)));
+              }
+            }
           } finally {
             ctx.restore();
           }

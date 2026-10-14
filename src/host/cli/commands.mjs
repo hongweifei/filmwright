@@ -131,12 +131,15 @@ export async function mcp() {
 export async function schema(ctx) {
   const s = sceneSchema();
   if (isJson(ctx.args)) return {code: 0, data: {schema: s}};
-  console.log(`scene 规格 ${s.schema} —— ${Object.keys(s.types).length} 类模板：\n`);
+  const containers = s.containers ?? [];
+  const tplCount = Object.keys(s.types).length - containers.length;
+  console.log(`scene 规格 ${s.schema} —— ${tplCount} 类模板` +
+    (containers.length ? ` + ${containers.length} 个容器（${containers.join(' / ')}）` : '') + '：\n');
   for (const [name, t] of Object.entries(s.types)) {
     const fields = Object.entries(t.fields)
       .map(([k, f]) => (f.required ? k : k + '?')).join(' / ');
     const max = Object.keys(t.max).length ? '  上限 ' + JSON.stringify(t.max) : '';
-    console.log(`  ${name.padEnd(9)} ${t.note}`);
+    console.log(`  ${name.padEnd(9)} ${t.container ? '【容器】' : ''}${t.note}`);
     console.log(`  ${''.padEnd(9)} 字段：${fields}${max}`);
   }
   console.log('\n对齐 at：' + JSON.stringify(s.at, null, 2).replace(/\n/g, '\n  '));

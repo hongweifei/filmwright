@@ -1,12 +1,15 @@
 // 模板注册表与规格层的契约测试：两层各自演进时，这里钉住它们不许漂移。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {SHOT_TYPES} from '../src/contract/scene.js';
+import {SHOT_TYPES, TEMPLATE_TYPES} from '../src/contract/scene.js';
 import {setTimeline} from '../src/contract/timeline.js';
 import {TEMPLATES, compileScene} from '../src/runtime/scene/templates.js';
 
-test('TEMPLATES 的键与 SHOT_TYPES 严格一致（多一个少一个都算错）', () => {
-  assert.deepEqual(Object.keys(TEMPLATES).sort(), [...SHOT_TYPES].sort());
+test('TEMPLATES 的键与「SHOT_TYPES 去掉容器」严格一致（多一个少一个都算错）', () => {
+  // 容器（如 layers）**没有** TEMPLATES 条目 —— 它的绘制是组合出来的，不是一个模板。
+  // 容器在 contract 里用 CONTAINER_TYPES 显式列出，所以这条不变量仍然严格，
+  // 只是从「全等」改成「去掉容器后全等」，不是留静默例外。
+  assert.deepEqual(Object.keys(TEMPLATES).sort(), [...TEMPLATE_TYPES].sort());
 });
 
 test('每个模板都有 draw(ctx, n, shot, accent)', () => {

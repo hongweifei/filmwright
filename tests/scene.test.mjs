@@ -101,6 +101,8 @@ test('validateScene：16 类模板的最小实例都合法', () => {
     comp: {type: 'comp', at: 1, comp: 'sub'},
     clip: {type: 'clip', at: 1, clip: 'broll'},
     line: {type: 'line', at: 1, unit: 'ms', points: [{v: 10, label: '一月'}, {v: 40, label: '二月'}]},
+    // 容器：不是模板，但同样要有最小合法实例（它也是 SHOT_TYPES 的一员）
+    layers: {type: 'layers', at: 1, layers: [{content: {type: 'title', title: 'x'}}]},
   };
   assert.deepEqual(Object.keys(shots).sort(), [...SHOT_TYPES].sort(), '测试要覆盖全部类型');
   for (const s of Object.values(shots)) {

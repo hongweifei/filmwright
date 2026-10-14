@@ -25,10 +25,22 @@ export const SHOT_TYPES = [
   'comp',   // 嵌套合成实例：引用 comps 里定义的一个子合成
   'clip',   // 视频/图片序列片段：按源帧号取图（见配置的 clips）
   'line',   // 折线图：逐段绘制 + 数值滚动（适合随时间的趋势）
+  'layers', // **容器**（不是模板）：同一个镜头区间里并发多层，各有 z 序与时间窗
 ];
+
+/**
+ * **容器**类型：它们不是模板（没有自己的内容与 TEMPLATES 条目），
+ * 而是把别的东西组合起来。显式列出来，好让「SHOT_TYPES === TEMPLATES 键」
+ * 这条不变量变成「SHOT_TYPES − 容器 === TEMPLATES 键」，而不是留一个静默例外。
+ */
+export const CONTAINER_TYPES = ['layers'];
+
+/** 真正有模板实现的类型（供测试与 schema 用）。 */
+export const TEMPLATE_TYPES = SHOT_TYPES.filter((t) => !CONTAINER_TYPES.includes(t));
 
 /** 每类的容量上限（版面算出来的，超了会挤/溢出）。 */
 export const SHOT_MAXES = {
+  layers: {layers: 8},   // 并发层上限：每层都是一次完整绘制，太多会拖垮帧时间
   bullets: {items: 6},
   steps: {steps: 6},
   flow: {boxes: 5},
@@ -49,6 +61,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_ANIM_SHAPE', 'SCENE_ANIM_PROP', 'SCENE_ANIM_KEY', 'SCENE_ANIM_EASE',
   'SCENE_ANIM_ORDER', 'SCENE_ANIM_CONFLICT', 'SCENE_ANIM_VALUE',
   'SCENE_ANIM_RANGE', 'SCENE_ANIM_NO_BEATS',
+  'SCENE_LAYER_SHAPE', 'SCENE_LAYER_CONTENT', 'SCENE_LAYER_RANGE', 'SCENE_LAYER_NEST',
   'SCENE_BAD_COMP', 'SCENE_NO_COMP', 'SCENE_COMP_CYCLE', 'SCENE_COMP_LOCAL_AT',
   'SCENE_NO_CLIP',
   'SCENE_AT_FRAME', 'SCENE_AT_SHAPE', 'SCENE_AT_LEAD', 'SCENE_AT_OFFSET',
@@ -103,6 +116,9 @@ export function resolveAt(at, tl) {
 // 'assets' 素材名；'arr<shape>' 数组（shape 见 validateArr）。
 
 const FIELDS = {
+  // **容器**：同一镜头区间里并发多层。每层自己有 z 序、时间窗、变换与关键帧。
+  // 它没有"自己的内容"—— 内容全在 layers 里，所以不存在"镜头自身算不算一层"的歧义。
+  layers: {layers: 'arr<layer>'},
   title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?'},
   bullets: {heading: 'str?', items: 'arr<{t, d?}>'},
   stat: {value: 'num', label: 'str', unit: 'str?', label2: 'str?'},
@@ -123,6 +139,7 @@ const FIELDS = {
 
 /** 每类的说明（schema 输出给 agent 看，一句话讲清"什么时候用它"）。 */
 const TYPE_NOTES = {
+  layers: '容器：同一镜头区间里**并发多层**，每层有 z 序（数值大在上）、时间窗（from/to，是相对本镜头起点的偏移，1 起）、以及自己的 transform 与 animate',
   title: '片头/章头：大标题 + 副题 + 英文行 + 眉题',
   bullets: '要点列表：每行「主文案 + 右侧说明」，跟着字幕块逐行进',
   stat: '一个大数字：滚动计数 + 单位 + 标签（+ 等宽小字）',
@@ -196,6 +213,76 @@ export const ANIM_PROPS = ['x', 'y', 'scale', 'rotate', 'alpha'];
  * 产出会变成"随手填的参数"，也无法静态判断好坏 —— 观感差异主要来自时机与层次。
  */
 export const EASE_NAMES = ['linear', 'out3', 'out4', 'in3', 'inout3', 'back', 'step'];
+
+/**
+ * 校验 `type: "layers"` 的容器镜头。
+ *
+ * 每层：`{z?, from?, to?, transform?, animate?, content: {type, ...字段}}`
+ *   · `content` 是一次**模板调用**，但**不能带 `at`** —— 层的位置由它自己的
+ *     `from`/`to`（相对本镜头起点的偏移）决定，写 `at` 是坐标系统混用，直接报错；
+ *   · `from`/`to` 是 1 起的相对帧；`to` 缺省到镜头末尾（绑定期才知道，见 runtime）；
+ *   · `z` 缺省按声明顺序（后面的在上）；
+ *   · 不允许 `content.type === 'layers'`（嵌套容器先不开，避免无界嵌套）。
+ */
+export function validateLayers(raw, path = 'shots') {
+  const out = [];
+  const push = (code, where, message, hint) => out.push(err(code, where, message, hint));
+  const list = raw?.layers;
+  if (!Array.isArray(list) || !list.length) {
+    push('SCENE_LAYER_SHAPE', `${path}.layers`, 'layers 必须是非空数组',
+      '每层形如 {"content":{"type":"bullets","items":[…]},"z":1,"from":1,"to":60}');
+    return out;
+  }
+  list.forEach((layer, i) => {
+    const lp = `${path}.layers[${i}]`;
+    if (!layer || typeof layer !== 'object' || Array.isArray(layer)) {
+      push('SCENE_LAYER_SHAPE', lp, '层必须是对象', '形如 {"content":{…},"z":0}');
+      return;
+    }
+    if (layer.z !== undefined && !Number.isInteger(layer.z)) {
+      push('SCENE_LAYER_SHAPE', `${lp}.z`, `z 必须是整数，收到 ${JSON.stringify(layer.z)}`,
+        'z 是层序：数值大的画在上面；不写则按声明顺序（后面的在上）');
+    }
+    for (const k of ['from', 'to']) {
+      if (layer[k] !== undefined && (!Number.isInteger(layer[k]) || layer[k] < 1)) {
+        push('SCENE_LAYER_RANGE', `${lp}.${k}`,
+          `${k} 必须是 ≥1 的整数（相对本镜头起点的偏移），收到 ${JSON.stringify(layer[k])}`,
+          'from/to 是层自己的时间窗；不写 from 则从镜头第一帧开始，不写 to 则到镜头末尾');
+      }
+    }
+    if (Number.isInteger(layer.from) && Number.isInteger(layer.to) && layer.to < layer.from) {
+      push('SCENE_LAYER_RANGE', `${lp}.to`, `时间窗是空的：from=${layer.from} > to=${layer.to}`,
+        'to 必须 ≥ from');
+    }
+    const c = layer.content;
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      push('SCENE_LAYER_CONTENT', `${lp}.content`, '层必须给 content（一次模板调用）',
+        `形如 {"content":{"type":"${SHOT_TYPES[0]}",…}}`);
+      return;
+    }
+    if (c.at !== undefined) {
+      push('SCENE_LAYER_CONTENT', `${lp}.content.at`,
+        '层内容里不能写 at —— 层的位置由该层自己的 from/to 决定',
+        '把 at 换成层的 from/to（相对本镜头起点的偏移，1 起）');
+    }
+    if (c.type === 'layers') {
+      push('SCENE_LAYER_NEST', `${lp}.content.type`, '层里不能再放 layers 容器（v1 不开嵌套）',
+        `层的 content 用模板类型：${SHOT_TYPES.filter((t) => t !== 'layers').join(' / ')}`);
+    } else if (!SHOT_TYPES.includes(c.type)) {
+      push('SCENE_LAYER_CONTENT', `${lp}.content.type`,
+        `不认识的层内容类型 ${JSON.stringify(c.type)}`,
+        `可用：${SHOT_TYPES.filter((t) => t !== 'layers').join(' / ')}`);
+    }
+    if (layer.transform !== undefined && !isValidTransform(layer.transform)) {
+      push('SCENE_LAYER_SHAPE', `${lp}.transform`, '层的 transform 形状不对',
+        '与镜头 transform 同一套字段：x / y / scale / rotate / alpha / blend / origin');
+    }
+    if (layer.animate !== undefined) {
+      out.push(...validateAnimate(layer.animate, layer.transform, `${lp}.animate`));
+    }
+  });
+  return out;
+}
 
 /**
  * 校验一处 `animate`（形状层，不需要节拍表）。**导出**是为了让手写镜头
@@ -404,6 +491,9 @@ function validateArr(v, path, shape, errors, {min = 1, maxName, shot} = {}) {
 }
 
 const SHAPE_KEYS = {
+  // 容器里的一层。**键级**检查走这里（未知字段），**语义**检查在 validateLayers
+  // （content 必须是模板调用且不带 at、from/to 范围、z 类型、嵌套容器禁用）。
+  layer: ['content', 'z', 'from', 'to', 'transform', 'animate'],
   '{t, d?}': ['t', 'd'],
   step: ['t', 'd'],
   '{label, sub?}': ['label', 'sub'],
@@ -414,6 +504,7 @@ const SHAPE_KEYS = {
   point: ['v', 'label'],
 };
 const SHAPE_HINT = {
+  layer: '每层形如 {"content":{"type":"bullets","items":[…]},"z":1,"from":1,"to":60}',
   '{t, d?}': '例：{"t": "要点", "d": "说明"}',
   step: '例：{"t": "步骤名", "d": "说明"}',
   '{label, sub?}': '例：{"label": "环节"}',
@@ -544,6 +635,9 @@ export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
     if (shot.animate !== undefined) {
       errors.push(...validateAnimate(shot.animate, shot.transform, `${path}.animate`));
     }
+    if (shot.type === 'layers') {
+      errors.push(...validateLayers(shot, path));
+    }
     const type = shot.type;
     if (!SHOT_TYPES.includes(type)) {
       errors.push(err('SCENE_UNKNOWN_TYPE', `${path}.type`, `不认识的镜头类型 ${JSON.stringify(type)}`,
@@ -662,6 +756,9 @@ export function sceneSchema() {
       object: '{s, block?, lead?=8, offset?=0}：锚到句或字幕块起点，提前 lead 帧，再加 offset',
     },
     types: Object.fromEntries(SHOT_TYPES.map((t) => [t, {
+      // 容器与模板要分开标出来：容器**没有自己的内容**，是把别的东西组合起来，
+      // 所以「N 类模板」不能把容器算进去（早先 CLI 与文档检查都数错了这一点）。
+      container: CONTAINER_TYPES.includes(t),
       note: TYPE_NOTES[t],
       fields: Object.fromEntries(Object.entries(FIELDS[t]).map(([k, kind]) => [k, {
         kind,
@@ -669,6 +766,7 @@ export function sceneSchema() {
       }])),
       max: SHOT_MAXES[t] ?? {},
     }])),
+    containers: CONTAINER_TYPES,
     errorCodes: SCENE_ERROR_CODES,
   };
 }
