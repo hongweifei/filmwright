@@ -155,6 +155,33 @@ const FACT_CLAIMS = [
 const problems = [];
 let fixedCount = 0;
 
+/**
+ * 匹配到的数字是否**在引号里**（引述旧值，不是当前断言）。
+ *
+ * ⚠️ **检测与修正两条路径必须共用这一个判断** —— 第一版我只在"检测"里加了引号豁免，
+ * "修正"路径没加，于是 `--fix` **照样把引述改坏**（同一个 bug 犯了两次，实测踩到）。
+ * 现在两边都调这个函数，不会再分叉。
+ */
+const isQuoted = (line, index, len) => {
+  const before = line.slice(Math.max(0, index - 1), index);
+  const after = line.slice(index + len, index + len + 1);
+  return /[「“『"]/.test(before) || /[」”』"]/.test(after);
+};
+
+/**
+ * 整行是否应当跳过（**检测与修正两条路径共用**）。
+ *
+ * 两条理由：
+ *   1. CHANGELOG 的**已发布区**是历史 —— 那里写「72 个单元测试」是当时的事实，
+ *      跟着实现改等于篡改历史；
+ *   2. 行里有**引述类动词**（修正/修复/原来/而实际…）—— 那是被引述的旧说法。
+ */
+const shouldSkip = (rel, line, i) => {
+  const releasedFrom = RELEASED_FROM.get(rel);
+  if (releasedFrom !== undefined && i >= releasedFrom) return true;
+  return QUOTING_CONTEXT.test(line);
+};
+
 // CHANGELOG 的**已发布区**是历史：那里写着"72 个单元测试"是**当时的事实**，
 // 跟着实现改等于篡改历史。所以只检查 `[未发布]` 那一节（及其上方）。
 // 判定：找到第一个不是 `[未发布]` 的版本标题行，从那里开始跳过。
@@ -175,12 +202,8 @@ for (const file of DOC_FILES) {
   const lines = text.split('\n');
 
   lines.forEach((line, i) => {
-    // CHANGELOG 的已发布区是**历史**，整段跳过（见上面 RELEASED_FROM 的说明）。
-    if (RELEASED_FROM.get(rel) !== undefined && i >= RELEASED_FROM.get(rel)) return;
-    // 引述历史的行（CHANGELOG 的修复记录等）跳过：那些是被引述的旧说法，
-    // 不是当前断言。判定用「同一行里有修正类动词」这个近似 ——
-    // 宁可漏报几行，也不要让记录修复的文字永远报红。
-    if (QUOTING_CONTEXT.test(line)) return;
+    // 跳过判断与修正路径**共用**（见 shouldSkip 的说明）
+    if (shouldSkip(rel, line, i)) return;
     // 数字类：可自动修
     for (const rule of fixes) {
       for (const m of line.matchAll(rule.re)) {
@@ -188,9 +211,7 @@ for (const file of DOC_FILES) {
         // 实测踩到：CHANGELOG 里写着「写着「九道自检」（实际十道）」，
         // 自动修正把引号里那个也改成"十道"，变成"写着「十道自检」（实际十道）」——
         // **把一句正确的话改成了错的**。只豁免"引述类动词"不够（那行没有触发词）。
-        const before = line.slice(Math.max(0, m.index - 1), m.index);
-        const after = line.slice(m.index + m[0].length, m.index + m[0].length + 1);
-        const quoted = /[「“『"]/.test(before) || /[」”』"]/.test(after);
+        const quoted = isQuoted(line, m.index, m[0].length);
         const got = Number(CN[m[rule.numIdx]] ?? m[rule.numIdx]);
         if (quoted || got === rule.want) continue;
         problems.push({
@@ -213,14 +234,21 @@ for (const file of DOC_FILES) {
 
   if (FIX) {
     // 逐行替换（保留缩进与其它内容）
-    const out = lines.map((line) => {
-      // 引述历史的行不改（同上面的跳过理由）
-      if (QUOTING_CONTEXT.test(line)) return line;
+    // ⚠️ **必须与检测路径用同一套跳过判断**。第一版只把"引号豁免"与"已发布区豁免"
+    // 加在检测路径，修正路径没有 —— 于是 `--fix` **照样篡改历史**（同一个结构问题犯了两次）。
+    // 现在两边都调 `shouldSkip`，不会再分叉。
+    const out = lines.map((line, i) => {
+      if (shouldSkip(rel, line, i)) return line;
       let l = line;
       for (const rule of fixes) {
         // 用 replace 的回调做「只在值不对时替换」，避免把正确数字也重写
         l = l.replace(rule.re, (m0, ...args) => {
           const m = [m0, ...args];
+          // replace 回调的最后两个参数是 offset 与整个字符串（`rule.re` 没有命名组）
+          const offset = args[args.length - 2];
+          const whole = args[args.length - 1];
+          // ⚠️ 引号里的**不改**（引述旧值）—— 与检测路径同一个判断
+          if (typeof offset === 'number' && isQuoted(whole, offset, m0.length)) return m0;
           const got = Number(CN[m[rule.numIdx]] ?? m[rule.numIdx]);
           if (!Number.isFinite(got) || got === rule.want) return m0;
           return rule.make(m);
