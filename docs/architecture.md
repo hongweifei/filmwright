@@ -83,7 +83,9 @@ shots/index.js ──┘
 - **视频素材**：逐帧渲染要求「画第 N 帧时素材已就位」，而 video 元素是异步定位的——半吊子的 seek 直接破坏核心不变量。要用的画面先用 `ffmpeg -i b-roll.mp4 frames/%05d.png` 抽成图片序列，再按普通图片摆。
 - **富文本排版**：`text()` 是 `fillText` 加字距、发光、描边、按宽缩字号；换行用 `wrap()`，不做段落排版引擎。
 - **主题包机制**：换主题就是改 `theme` 的值，结构只有一套。
-- **外挂字幕**：字幕烧进画面；要 SRT 从 `timeline.json` 的 `subs` 自己导出。
+- **外挂字幕**：成片里字幕是**烧进画面**的（这是刻意的：观众不该能关掉它）。
+  但要 SRT 有现成命令 —— `filmwright srt --project <目录>`（还支持 `--translation` 出双语轨）。
+  （这一段原来写着"要 SRT 从 `timeline.json` 的 `subs` 自己导出"，已过期。）
 
 完整清单与原因见 [LIMITATIONS](../LIMITATIONS.md)。
 
