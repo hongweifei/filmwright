@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {parseArgs, num, str} from '../src/host/cli/args.mjs';
 import {
   aggregateShots, judgeQuality, THRESHOLDS,
-} from '../src/host/checks/runtime/quality.mjs';
+} from '../src/host/checks/browser/quality.mjs';
 
 // ---------- 参数解析 ----------
 

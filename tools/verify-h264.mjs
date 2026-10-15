@@ -1,4 +1,4 @@
-// 验收：页面侧 H.264 编码器（src/runtime/frame/h264.js）。
+// 验收：页面侧 H.264 编码器（src/runtime/encode/h264.js）。
 //
 //   node tools/verify-h264.mjs [<仓库根>] [帧数] [--gpu]
 //
@@ -105,7 +105,7 @@ await withSession(PROJECT, proj, {gpu: USE_GPU}, async (sess) => {
   // 在页面里用**产品模块**跑：编码 → 收集 chunk（base64 回传，量很小）
   const r = await sess.evaluate(`(async () => {
     const cv = document.getElementById('c');
-    const {createH264Encoder, h264Available} = await import('/kit/runtime/frame/h264.js');
+    const {createH264Encoder, h264Available} = await import('/kit/runtime/encode/h264.js');
     if (!h264Available()) return {err: '这个环境没有 WebCodecs'};
     const parts = [];
     let desc = null;
@@ -164,7 +164,7 @@ await withSession(PROJECT, proj, {gpu: USE_GPU}, async (sess) => {
     `报出了实际用的编码配置（${r.stat.config.codec}）—— 不让人以为走了硬件`);
 
   // 落盘：**必须转 Annex-B**（WebCodecs 给的是 AVCC 长度前缀；直接拼不是有效裸流）
-  const {annexBFromChunk} = await import('../src/runtime/frame/h264.js');
+  const {annexBFromChunk} = await import('../src/runtime/encode/h264.js');
   const descBytes = r.desc ? new Uint8Array(Buffer.from(r.desc, 'base64')) : null;
   /** chunk 列表 → Annex-B 字节（第一帧再前置 SPS/PPS；负面对照换掉 desc 就是"没 SPS/PPS"那个缺陷）。 */
   const toAnnexB = (parts, desc) => parts.map((p, i) => annexBFromChunk(

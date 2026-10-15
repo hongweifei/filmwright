@@ -312,10 +312,11 @@ function selfCheck() {
   TMP_ROOTS.push(tmp);
   console.log(`\n  负面对照：临时仓库根 ${tmp}`);
   try {
-    // 临时仓库根：渲染页 + 运行时源码 + 入口 + 夹具 + **库自带的字体**。`src` 必须**拷一份** ——
-    // 缺陷只注进副本。字体要拷是因为临时根就是新的「库根」，`/fonts/` 的兜底落在这里：
-    // 不拷的话页面静默回退系统字体，CI 的 ubuntu 上没有中文字体 ⇒ 标题一个字都画不出来。
-    for (const rel of ['index.html', 'src', 'bin', 'fonts']) {
+    // 临时仓库根：运行时源码（渲染页 `src/host/pages/render.html` 在里面）+ 入口 + 夹具
+    // + **库自带的字体**。`src` 必须**拷一份** —— 缺陷只注进副本。字体要拷是因为临时根
+    // 就是新的「库根」，`/fonts/` 的兜底落在这里：不拷的话页面静默回退系统字体，
+    // CI 的 ubuntu 上没有中文字体 ⇒ 标题一个字都画不出来。
+    for (const rel of ['src', 'bin', 'fonts']) {
       cpSync(join(ROOT, rel), join(tmp, rel), {recursive: true});
     }
     cpSync(join(ROOT, 'examples', 'gallery'), join(tmp, 'examples', 'gallery'), {recursive: true});

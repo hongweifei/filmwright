@@ -6,7 +6,7 @@
 // 所以用手工构造的字节夹具把它钉死，而不是靠"跑一遍没报错"。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {annexBFromChunk, h264Available, createH264Encoder} from '../src/runtime/frame/h264.js';
+import {annexBFromChunk, h264Available, createH264Encoder} from '../src/runtime/encode/h264.js';
 
 const START = [0, 0, 0, 1];
 /** 造一个 AVCC 格式的 chunk：每个 NAL 前是 4 字节大端长度。 */

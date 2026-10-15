@@ -70,7 +70,7 @@ for (const f of srcFiles) {
 const SELF = fileURLToPath(import.meta.url);
 
 // ⚠️ **先去掉注释再数引用**：注释里提一次符号名**不该**算「有人用」。
-// 实测漏过一次：`runtime/checks/analysis.js` 导出的 `STATIC_THR` 没有任何代码读它，
+// 实测漏过一次：`runtime/qc/analysis.js` 导出的 `STATIC_THR` 没有任何代码读它，
 // 但同一文件顶部的注释里写了一次它的名字 ⇒ 计数把它当成「有人用」⇒ 棘轮放行，
 // 那个常量就一直在源码里躺着（真正生效的阈值在 host 侧的 THRESHOLDS 里）。
 // 粗糙但够用：`[^:]` 那一段是防 `http://` 被当成注释开头。

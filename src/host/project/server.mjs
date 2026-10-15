@@ -157,15 +157,17 @@ export function serveProject(projectDir, {raw, timeline, shotsRel, scene = null,
         return;
       }
 
-      // 渲染页 / 预览页
+      // 渲染页 / 预览页。两份宿主页面都在 `src/host/pages/` 下 —— 原先一份在仓库根、
+      // 一份在 `host/project/`，同一个运行时的两个前端却分居两处。
+      // ⚠️ **对外路由不变**（`/`、`/index.html`、`/preview`），只有磁盘位置变了。
       if (p === '/' || p === '/index.html') {
-        const html = await readFile(join(KIT_ROOT, 'index.html'), 'utf8');
+        const html = await readFile(join(RUNTIME_ROOT, 'host', 'pages', 'render.html'), 'utf8');
         res.writeHead(200, {'Content-Type': MIME['.html'], 'Cache-Control': 'no-store'});
         res.end(html);
         return;
       }
       if (p === '/preview' || p === '/preview.html') {
-        const html = await readFile(join(RUNTIME_ROOT, 'host', 'project', 'preview.html'), 'utf8');
+        const html = await readFile(join(RUNTIME_ROOT, 'host', 'pages', 'preview.html'), 'utf8');
         res.writeHead(200, {'Content-Type': MIME['.html'], 'Cache-Control': 'no-store'});
         res.end(html);
         return;

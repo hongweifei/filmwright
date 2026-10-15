@@ -35,7 +35,7 @@ for (const mode of ['quality', 'realtime']) {
     const r = await sess.evaluate(`(async () => {
       try {
         const canvas = document.querySelector('canvas');
-        const {createH264Encoder, annexBFromChunk} = await import('/kit/runtime/frame/h264.js');
+        const {createH264Encoder, annexBFromChunk} = await import('/kit/runtime/encode/h264.js');
         const N = ${N};
         const p50 = (a) => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
         const avg = (a) => a.reduce((x, y) => x + y, 0) / a.length;

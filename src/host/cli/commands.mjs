@@ -15,7 +15,7 @@ import {muxVideo} from '../media/mux.mjs';
 import {muxWithMusic} from '../media/mix.mjs';
 import {spawnTool, ffmpegPath, checkSpawned} from '../media/ffmpegBin.mjs';
 import {runChecks} from '../checks/index.mjs';
-import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/runtime/quality.mjs';
+import {THRESHOLDS as QUALITY_THRESHOLDS} from '../checks/browser/quality.mjs';
 import {preview as previewCmd} from './preview.mjs';
 import {scaffoldProject} from '../project/scaffold.mjs';
 import {exportSrt, readTranslation} from '../media/srt.mjs';

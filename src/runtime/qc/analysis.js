@@ -8,7 +8,7 @@
 //   ink  — 内容区里与主色调明显不同的像素占比；接近 0 说明画面几乎是空的
 //
 // ⚠️ **阈值不在这里**：这个文件只负责「在浏览器里采样、把标量交出去」，判定在
-// `src/host/checks/runtime/quality.mjs` 的 `THRESHOLDS`（判定放 Node 侧才单测得动）。
+// `src/host/checks/browser/quality.mjs` 的 `THRESHOLDS`（判定放 Node 侧才单测得动）。
 // 这里曾另有一个 `STATIC_THR = 0.5`，**没有任何代码读它** —— 真正生效的是 quality.mjs
 // 的 `staticThr`。它之所以没被 `dead-exports` 棘轮抓到，是因为上面注释里提了一次
 // 它的名字（那个棘轮按「符号名出现次数」判，分不清注释与代码）。已删。
@@ -101,7 +101,7 @@ export function installAnalysis(ctx, render) {
    *   ink    与主色调明显不同的像素占比
    *
    * 判定「静止」要靠调用方**累加**这些量：缓慢漂移的画面每个窗口看都很小，
-   * 累加才看得出「3 秒里一直在动」。见 host/checks/runtime/quality.mjs。
+   * 累加才看得出「3 秒里一直在动」。见 host/checks/browser/quality.mjs。
    */
   window.__sampleFrames = (opts) => {
     const {from, to, step = 3, rect, windowFrames = 90} = opts;

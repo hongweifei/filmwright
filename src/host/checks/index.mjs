@@ -3,8 +3,8 @@
 // 分三层看结果：静态（读文件）/ 逐帧（真画）/ 画面质量（真画并看像素）。
 // 汇总行跟着实际道数走 —— 写死数字会在加了检查之后自己骗自己。
 import {checkPublicApi, checkImports, checkTimeline, checkThemeKeys, checkAssets, checkScene, checkClips} from './static/index.mjs';
-import {checkFrames} from './runtime/frames.mjs';
-import {checkQuality} from './runtime/qualityCheck.mjs';
+import {checkFrames} from './browser/frames.mjs';
+import {checkQuality} from './browser/qualityCheck.mjs';
 
 /**
  * @param {string} projectDir

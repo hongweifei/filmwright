@@ -7,7 +7,7 @@
 //   - 空白帧：内容区几乎没有与主色调不同的像素（等于没画东西）
 //
 // **聚合与判定是纯函数**（不碰浏览器），所以能被单元测试覆盖；
-// 只有采样那一步要真开浏览器（在 runtime/checks/analysis.js 里做）。
+// 只有采样那一步要真开浏览器（在 runtime/qc/analysis.js 里做）。
 
 /** 默认阈值。可用 check 的 --quality-* 覆盖。 */
 export const THRESHOLDS = {

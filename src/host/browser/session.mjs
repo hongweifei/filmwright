@@ -70,7 +70,7 @@ export function isValidFrameFormat(s) {
   const f = String(s ?? '').toLowerCase();
   // 注意要认 jpg 这个别名 —— 只认 jpeg 会让「白名单说不行、解析器说行」
   // 的不一致（测试抓到的真问题）。
-  // `h264`：页面里用 WebCodecs 直接编 H.264（见 src/runtime/frame/h264.js）——
+  // `h264`：页面里用 WebCodecs 直接编 H.264（见 src/runtime/encode/h264.js）——
   // 省掉"编 JPEG + ffmpeg 再编一遍"两道。**只用于成片**，不能用于静帧/像素回归
   // （那两处要无损可复现）。
   return f === 'png' || f === 'jpeg' || f === 'jpg' || f === 'h264' || /^jpe?g:\d{1,3}$/.test(f);
@@ -218,7 +218,7 @@ export async function openSession(url, size, opts = {}) {
 
   let info = null;
   let bootError = null;
-  // 页面侧的结构化字段（`code` / `hint`）要单独带回来 —— 见 index.html 里的说明。
+  // 页面侧的结构化字段（`code` / `hint`）要单独带回来 —— 见 src/host/pages/render.html 里的说明。
   let bootCode = null;
   let bootHint = null;
   let ready = false;
@@ -363,7 +363,7 @@ export async function openSession(url, size, opts = {}) {
         // 主机侧因此可以 -c:v copy 直接封装，**不重编**。
         const canvas = document.querySelector('canvas');
         const {createH264Encoder, annexBFromChunk, h264Available} =
-          await import('/kit/runtime/frame/h264.js');
+          await import('/kit/runtime/encode/h264.js');
         if (!h264Available()) throw new Error('这个环境没有 WebCodecs；用 --frame-format jpeg');
         let desc = null, descUsed = false;
         const pending = [];

@@ -5,7 +5,7 @@ import {install as installConfig, config, view} from '../../contract/config.js';
 import {setTimeline, timeline, cardRange, tailFrom} from '../../contract/timeline.js';
 import {validateScene, needsThree} from '../../contract/scene.js';
 import {setShots, bindShots, shotAt, shots} from './shots.js';
-import {setChapterCards, chapterCards} from '../chrome/chapterCard.js';
+import {setChapterCards, chapterCards} from '../overlay/chapterCard.js';
 import {loadAssets} from '../assets.js';
 import {setClips, preloadClipFrames} from '../clips.js';
 import {compileScene} from '../scene/templates.js';

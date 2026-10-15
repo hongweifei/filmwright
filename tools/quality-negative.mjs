@@ -6,7 +6,7 @@
 //   node tools/quality-negative.mjs
 import {
   aggregateShots, judgeQuality, THRESHOLDS,
-} from '../src/host/checks/runtime/quality.mjs';
+} from '../src/host/checks/browser/quality.mjs';
 
 const STEP = THRESHOLDS.sampleStep;
 

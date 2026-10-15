@@ -810,7 +810,7 @@ function runNegativeControl() {
     const skipTop = new Set(['audio', 'renders', '.work']);
     cpSync(join(ROOT, 'bin'), join(tmp, 'bin'), {recursive: true});
     cpSync(join(ROOT, 'src'), join(tmp, 'src'), {recursive: true});
-    cpSync(join(ROOT, 'index.html'), join(tmp, 'index.html'));
+    // 渲染页不用单独拷了：它在 `src/host/pages/render.html`，跟着上面的 src/ 一起过去
     cpSync(join(ROOT, 'package.json'), join(tmp, 'package.json'));
     // 临时仓库根就是新的「库根」⇒ 库自带的那份字体也要跟过去（见 `/fonts/` 的兜底）。
     cpSync(join(ROOT, 'fonts'), join(tmp, 'fonts'), {recursive: true});

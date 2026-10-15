@@ -34,7 +34,7 @@
 //
 // ## 负面对照（每次运行都跑，没有开关）
 //
-// 本工具自己造缺陷证明判据能红：把被测仓库的 `src/` 与 `index.html` 复制到
+// 本工具自己造缺陷证明判据能红：把被测仓库的 `src/`（渲染页 `src/host/pages/render.html` 在内）复制到
 // **临时仓库根**（`os.tmpdir()` 下，跑完即删），注入缺陷后用**同一套判据**判：
 //   A. 取像素跨轮返回不同字节（模拟 `Page.captureScreenshot` 那类竞态）；
 //   B. 捕获静默不落盘（PNG 一个都不写 ⇒ 空集）。
@@ -177,7 +177,7 @@ console.log(mainOk
 
 // ---------- 负面对照：注入缺陷 ⇒ 同一套判据必须变红 ----------
 //
-// 临时根里只放这次渲染真正要用的两样东西：`src/`（被测代码）与 `index.html`（渲染页）。
+// 临时根里只放这次渲染真正要用的东西：`src/`（被测代码，渲染页 `src/host/pages/render.html` 在其中）。
 // 项目夹具直接用真仓库里那份 —— 渲染只读它（pngDir 落在临时根里），不往项目目录写东西。
 
 const NEG = {from: 1, to: 2, rounds: 2};
@@ -203,12 +203,11 @@ const inject = (file, anchor, patch, what) => {
   writeFileSync(file, src.replace(anchor, patch));
 };
 
-/** 造一个临时仓库根：复制 src/ + index.html，再注入缺陷。 */
+/** 造一个临时仓库根：复制 src/（渲染页在 `src/host/pages/render.html`，跟着 src/ 一起过去），再注入缺陷。 */
 const makeNegRoot = (base, name, patch) => {
   const root = join(base, name);
   mkdirSync(root, {recursive: true});
   cpSync(join(ROOT, 'src'), join(root, 'src'), {recursive: true});
-  cpSync(join(ROOT, 'index.html'), join(root, 'index.html'));
   // 临时仓库根就是新的「库根」⇒ `/fonts/` 的兜底也落在这里。不拷字体的话，
   // 这个根里一份字体都没有，页面会静默回退系统字体 —— 在 CI 的 ubuntu 上
   // （无中文字体）中文直接画不出来，测的就不再是产品里那条路径了。

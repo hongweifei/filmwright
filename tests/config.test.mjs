@@ -55,7 +55,7 @@ test('自带的中文兜底字体必须真的会被预加载（否则那个字�
 // 字体栈漏了兜底，在没装中文字体的机器上会让**错误文字自己隐形**：
 // 本该"让失败可见"的机制，恰好在最需要它的机器上失效。
 test('宿主页面里画中文的字体栈也必须带中文兜底', () => {
-  const files = ['index.html', 'src/host/project/preview.html'];
+  const files = ['src/host/pages/render.html', 'src/host/pages/preview.html'];
   let scanned = 0;
   for (const rel of files) {
     const src = readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
