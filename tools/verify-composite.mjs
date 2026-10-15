@@ -372,6 +372,42 @@ console.log('\n—— alpha 的方向：线性合成，比值由 (1-alpha) 决�
     `alpha 线性：|Δ(0.35)|/|Δ(0.7)| = ${ratio.toFixed(3)}，理论 ${expectRatio.toFixed(3)}（±10%）`);
 }
 
+// ---- A2) 子镜头的 `transform` 必须**真的生效**（原先被静默忽略）----
+// 背景：`compile()` 把 `comps.<名字>.shots[i].transform` 存进了子镜头对象，但子镜头的 `draw`
+// 从不应用它 ⇒ 「写了没用」不报错、不崩、测试也不红（「声明了但没生效」那一族）。
+//
+// 判据是**两向**的，缺一不可：
+//   · **同一份规格 boot 两次必须逐字节相同** —— 排除噪声，否则「不同」这条不成立；
+//   · **只改子镜头的 transform 必须不同** —— 证明它真的被应用了。
+// ⚠️ 这两条合起来本身就是负面对照：撤掉修复（子镜头 draw 不应用 transform），第二条必然红。
+// ⚠️ **探针帧必须落在实例区间内**：comp 实例的跨度由它自己的 `frames` 决定，不是整条时间轴。
+//   第一版我取 `total/2`（时间轴中点）⇒ 早已超出实例区间、什么都没画，两帧都空 ⇒ 误判成「不生效」。
+console.log('\n=== A2) 子镜头的 transform 真的生效（原先被静默忽略） ===');
+{
+  const SPAN = 30;                                  // 让实例有跨度，探针才有意义
+  const compScene = (x) => ({
+    comps: {badge: {shots: [{type: 'stat', at: 1, value: 81, label: 'ms',
+      ...(x === null ? {} : {transform: {x}})}]}},
+    shots: [{type: 'comp', comp: 'badge', at: 1, frames: SPAN}],
+  });
+  const probe = async (x) => {
+    const sc = compScene(x);
+    await sessA.evaluate(bootSceneExpr(sc));
+    const info = await shotInfoOf(sessA, sc);
+    const f = info.starts[0] + Math.floor(SPAN / 2);   // 实例区间内，且起点从实现报出
+    return {png: await sessA.frame(f), grid: await gridAt(sessA, f)};
+  };
+  const g0 = await probe(null);
+  const g0b = await probe(null);
+  const g1 = await probe(240);
+  ok(hash(g0.png) === hash(g0b.png),
+    '同一份子镜头规格 boot 两次 ⇒ **逐字节相同**（排除噪声；否则下面那条「不同」不成立）');
+  const diff = changedBlocks(g0.grid, g1.grid);
+  ok(diff.length > 0,
+    `只改**子镜头**的 transform ⇒ 画面确实不同（变了 ${diff.length} 块）—— ` +
+    '撤掉修复（子镜头 draw 不应用 transform）这条必然红');
+}
+
 await sessA.close();
 serverA.closeProject();
 
