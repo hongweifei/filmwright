@@ -727,8 +727,11 @@ export function validateLayers(raw, path = 'shots') {
           + `收到 ${JSON.stringify(layer.follow)}`,
           `本容器有 ${cnt} 层，下标从 0 起（不是 z 值）`);
       } else if (layer.follow === i) {
+        const others = [...Array(cnt).keys()].filter((k) => k !== i);
         push('SCENE_LAYER_FOLLOW', `${lp}.follow`, '层不能 follow 自己',
-          '指向本容器里的**另一个**层');
+          others.length
+            ? `可用的下标：${others.join(' / ')}（本容器共 ${cnt} 层）`
+            : `本容器只有这 ${cnt} 层 ⇒ 没有可 follow 的目标；要「一套变换驱动多层」得先加一个空物体（{"empty": true}）`);
       }
     }
     // 空物体：不画内容、只给别的层提供变换 ⇒ **不要求 content**（写了反而报）
@@ -749,6 +752,13 @@ export function validateLayers(raw, path = 'shots') {
       }
       if (layer.animate !== undefined) {
         out.push(...validateAnimate(layer.animate, layer.transform, `${lp}.animate`));
+      }
+      // ⚠️ **空物体不能挂 `effects`**：它不画任何内容 ⇒ 效果链没有作用对象。
+      // 不报的话就是「写了没用也不说」—— 那种静默 no-op 是最难查的一类配置错误。
+      if (layer.effects !== undefined) {
+        push('SCENE_LAYER_CONTENT', `${lp}.effects`,
+          '空物体（empty: true）不能挂 effects —— 它不画任何内容，效果链没有作用对象',
+          '去掉 effects，或者把它挪到真正画内容的那一层');
       }
       return;                                  // 空物体不查 content
     }
