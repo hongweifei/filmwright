@@ -50,7 +50,12 @@ const bad = [];
 let total = 0;
 for (const d of docs) {
   const text = readFileSync(d, 'utf8');
-  for (const m of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+  // ⚠️ **反引号里的「链接写法」不是链接**：文档会写「所有 `](相对路径)` 都要指向存在的文件」
+  // 来描述这条规则本身。实测踩过：`tools/README.md` 这么写之后，本工具报
+  // 「tools/README.md:71 → 相对路径 不存在」—— 守卫把自己的说明书当成了被守卫的东西。
+  // 用**等长空白**替换行内代码段：字符串长度不变 ⇒ 下面按 `m.index` 算的行号仍然对。
+  const scanned = text.replace(/`[^`\n]*`/g, (s) => ' '.repeat(s.length));
+  for (const m of scanned.matchAll(/\]\(([^)\s]+)\)/g)) {
     const href = m[1];
     if (/^(https?:|mailto:|#)/.test(href)) continue;   // 外链与页内锚点不管
     const clean = href.split('#')[0];
@@ -124,6 +129,8 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
       'docs/guide.md': {
         // 4 条内部链接：../target.md、child.md、../data/thing.json、a%20b.md
         // （另有外链 https://example.com/x.md 与页内锚点 #小节 各 1 条，按设计不算）
+        // ⚠️ 末行是**反引号包起来**的「链接写法示例」—— 行内代码不是链接。
+        // 计数仍写 4：实现若把它算进去，下面「扫描量」的断言当场红。
         internal: 4,
         text: ['# 指南',
           '[根上的目标](../target.md)',
@@ -132,6 +139,7 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
           '[转义空格](a%20b.md)',
           '[外链](https://example.com/x.md)',
           '[页内锚点](#小节)',
+          '行内代码里的写法示例不算链接：`](相对路径)`',
           ''].join('\n'),
       },
       'docs/child.md': {internal: 0, text: '# 子页\n'},
