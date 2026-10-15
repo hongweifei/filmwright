@@ -69,8 +69,15 @@ function facts() {
   const fxSrc = readFileSync(join(ROOT, 'src/contract/effects.js'), 'utf8');
   const effectCount = (fxSrc.match(/export const EFFECT_TYPES = \[([\s\S]*?)\]/)[1].match(/'/g) || []).length / 2;
 
+  // 验收工具数与已接入数：README 里「N 个验收工具……其中 M 个在 CI 里自动跑」
+  // 这两个数字**刚漂过一次**（README 还写着 22/20 而实际已 26/24）—— 所以也纳入守卫。
+  const toolFiles = readdirSync(join(ROOT, 'tools')).filter((f) => /^verify-.*\.mjs$/.test(f));
+  const ciSrc = readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const wiredToolCount = toolFiles.filter((f) => ciSrc.includes(f)).length;
+
   return {templateCount, checkCount, staticCheckCount, commands, mcpToolCount, blendModes,
-    transitions, hasClips, testCount, effectCount};
+    transitions, hasClips, testCount, effectCount,
+    toolCount: toolFiles.length, wiredToolCount};
 }
 
 const F = facts();
@@ -135,6 +142,10 @@ const fixes = [
    make: (m) => `${F.testCount}${m[2]}`, label: '单元测试数'},
   {re: /(\d+)(\s*个效果)/g, numIdx: 1, want: F.effectCount,
    make: (m) => `${F.effectCount}${m[2]}`, label: '效果数'},
+  {re: /(\d+)(\s*个验收工具)/g, numIdx: 1, want: F.toolCount,
+   make: (m) => `${F.toolCount}${m[2]}`, label: '验收工具数'},
+  {re: /(\d+)(\s*个在 CI 里自动跑)/g, numIdx: 1, want: F.wiredToolCount,
+   make: (m) => `${F.wiredToolCount}${m[2]}`, label: '自动跑的验收工具数'},
 ];
 
 /**

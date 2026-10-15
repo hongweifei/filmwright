@@ -182,7 +182,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 1. **跑在浏览器里的绘制代码**：`primitives` 17%、`widgets` 16%、`hud` 19%、
    `subtitle` 17%、`scene3d` 28%、`templates` 37%、`gpu` 58%。
    Node 单元测试**根本测不到它们**（要真画布/WebGL）；
-   它们的覆盖来自 **20 个验收工具**（真的开浏览器跑）与**像素回归**。
+   它们的覆盖来自 **26 个验收工具**（真的开浏览器跑）与**像素回归**。
 2. **要外部工具的主机代码**：`renderRange` 17%、`mux` 26%、`commands` 37%、
    `session` 19%。要 ffmpeg 与浏览器，同样由端到端工具覆盖。
 
