@@ -7,7 +7,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {checkThemeKeys, checkPublicApi} from '../src/host/checks/static/index.mjs';
+import {checkThemeKeys, checkPublicApi, checkImports} from '../src/host/checks/static/index.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -79,4 +79,70 @@ test('api：重名导出要报', () => {
   } finally {
     rmSync(dir, {recursive: true, force: true});
   }
+});
+
+// ---- checkImports：相对路径存在 + 镜头不许把 import 伸出项目目录 ----
+
+/** 造一个临时项目：`<dir>/proj/shots/*.js`，外加一个「库」目录供伸出去。 */
+function withProject(files, fn) {
+  const dir = mkdtempSync(join(tmpdir(), 'fk-imports-'));
+  try {
+    mkdirSync(join(dir, 'proj', 'shots'), {recursive: true});
+    mkdirSync(join(dir, 'src', 'runtime'), {recursive: true});
+    writeFileSync(join(dir, 'src', 'runtime', 'primitives.js'), 'export const text = 1;\n', 'utf8');
+    for (const [rel, body] of Object.entries(files)) {
+      const p = join(dir, 'proj', 'shots', rel);
+      mkdirSync(dirname(p), {recursive: true});
+      writeFileSync(p, body, 'utf8');
+    }
+    return fn(join(dir, 'proj'));
+  } finally {
+    rmSync(dir, {recursive: true, force: true});
+  }
+}
+
+test('imports：镜头目录**内部**的相对导入允许（自己旁边的 helpers）', () => {
+  // 反向保险：没有这一条，「一律拒绝相对导入」也能让下面那条恒绿
+  withProject({
+    'index.js': "import {helper} from './helpers.js';\nexport const SHOTS = [helper];\n",
+    'helpers.js': 'export const helper = 1;\n',
+  }, (proj) => {
+    const r = checkImports(join(proj, 'shots'), proj, {insideOnly: proj});
+    assert.equal(r.ok, true, '同目录的 helpers 应当允许：' + r.problems.join('\n'));
+  });
+});
+
+test('imports：镜头把 import 伸到项目之外 → 报（「只 import filmwright」原先没人守）', () => {
+  // 常驻判据。原先：裸导入被 `continue` 跳过、相对路径只判「存在」⇒
+  // 只要路径在，`import {...} from '../../src/runtime/primitives.js'` 就是 PASS
+  withProject({
+    'index.js': "import {text} from '../../src/runtime/primitives.js';\nexport const SHOTS = [text];\n",
+  }, (proj) => {
+    const r = checkImports(join(proj, 'shots'), proj, {insideOnly: proj});
+    assert.equal(r.ok, false, '伸出项目目录必须报');
+    assert.ok(r.problems.some((p) => p.includes('项目目录之外')),
+      '要说清是「伸出去」而不是「文件不存在」：' + r.problems.join('\n'));
+  });
+});
+
+test('imports：不传 insideOnly 时不判内外（runtime 源码自己就要用相对导入）', () => {
+  withProject({
+    'index.js': "import {text} from '../../src/runtime/primitives.js';\nexport const SHOTS = [text];\n",
+  }, (proj) => {
+    const r = checkImports(join(proj, 'shots'), proj);
+    assert.equal(r.ok, true, '不传 insideOnly 时只判存在（这个路径存在）：' + r.problems.join('\n'));
+  });
+});
+
+test('imports：**注释里**的 import 例子不算（守卫别把自己的说明书当代码）', () => {
+  // 实测踩过：`checkImports` 自己的文档里写了一句相对路径示例，于是它把自己文档里的
+  // 例子当成真 import ⇒ 五个示例项目全部变红，而它们一个字都没改。
+  withProject({
+    'index.js': '// 举例：以前这样写 import {text} from "../../src/runtime/primitives.js";\n'
+      + "import {helper} from './helpers.js';\nexport const SHOTS = [helper];\n",
+    'helpers.js': 'export const helper = 1;\n',
+  }, (proj) => {
+    const r = checkImports(join(proj, 'shots'), proj, {insideOnly: proj});
+    assert.equal(r.ok, true, '注释里的例子不该被当成真 import：' + r.problems.join('\n'));
+  });
 });

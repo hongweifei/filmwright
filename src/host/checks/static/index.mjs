@@ -2,13 +2,14 @@
 //
 // 它们抓的都是「跑起来才发现」的错，而这里几秒就能报：
 //   api      —— index.js 里重名导出（只在浏览器求值时报 "Duplicate export of 'S'"）
-//   imports  —— ES module 相对路径写错（会让页面**静默**不 ready）
+//   imports  —— ES module 相对路径写错（会让页面**静默**不 ready）；
+//               镜头文件还**不许把 import 伸出项目目录**（伸进库里＝依赖内部结构、绕过公开面）
 //   timeline —— 引用了不存在的句 id / 字幕块号（只在渲到那一帧时才在画面上报错）
 //   themeKeys—— 运行时代码引用了 theme 里不存在的配色键（默认值变 undefined，
 //               绘制时才崩，而崩的地方离原因很远）
 //   assets   —— 镜头引用了没在配置里声明的素材名（boot 时才会抛错，且要等到开浏览器）
 import {readFileSync, existsSync, readdirSync, statSync} from 'node:fs';
-import {join, dirname, resolve, relative} from 'node:path';
+import {join, dirname, resolve, relative, isAbsolute} from 'node:path';
 import {DEFAULT_THEME, normalizeConfig} from '../../../contract/config.js';
 import {validateScene} from '../../../contract/scene.js';
 
@@ -40,8 +41,39 @@ export function checkPublicApi(apiFile) {
   return {name: 'api', ok: problems.length === 0, checked, problems};
 }
 
-/** 模块相对路径是否都存在。裸导入（'filmwright'）交给 import map，这里不判。 */
-export function checkImports(dir, label = dir) {
+/**
+ * 去掉注释再找 import。**注释不是代码**。
+ *
+ * 实测踩过：本文件的说明里写了一句示例
+ * 「镜头写 `import {...} from '../../src/runtime/draw/primitives.js'` 只要路径在就 PASS」，
+ * 于是这条检查**把自己文档里的例子当成了真 import**，报
+ * `..\src\host\checks\static\index.mjs -> ../../src/runtime/draw/primitives.js` ——
+ * 五个示例项目**全部**变红，而它们一个字都没改。
+ * 同一族在 `tools/verify-links.mjs` 也踩过（文档里描述链接写法被当真链接）；
+ * `tools/dead-exports.mjs` 同样要「数引用前先去掉注释」。**守卫的说明书不是被守卫的东西。**
+ */
+const stripComments = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+/** 路径 `child` 是否在目录 `parent` 之内（不解析符号链接，够用）。 */
+const isInside = (parent, child) => {
+  const rel = relative(parent, child);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+};
+
+/**
+ * 模块相对路径是否都存在。裸导入（`'filmwright'`）交给 import map，这里不判。
+ *
+ * `insideOnly` 传一个目录时，**额外要求所有相对导入都落在这个目录之内** ——
+ * 用来守「镜头文件只 import `'filmwright'`」这条不变量。它原先只写在
+ * `docs/architecture.md` 里、**没有任何检查**：裸导入被这里 `continue` 跳过，
+ * 相对路径又只判「存在」，于是镜头写
+ * `import {text} from '../../src/runtime/draw/primitives.js'` 只要路径在就 PASS。
+ * 伸进库里的代价与宿主页面深链是同一个：**改一个目录名就静默 404**，而且绕过了公开面契约。
+ * 镜头目录**内部**的相对导入（自己旁边的 `./helpers.js`）仍然允许。
+ */
+export function checkImports(dir, label = dir, {insideOnly = null} = {}) {
   // 目录可以不存在：纯 scene 项目没有 shots/，这不是错误
   if (!existsSync(dir)) return {name: 'imports', ok: true, checked: 0, problems: []};
   const files = [];
@@ -56,13 +88,19 @@ export function checkImports(dir, label = dir) {
 
   const bad = [];
   for (const f of files) {
-    const src = readFileSync(f, 'utf8');
+    const src = stripComments(readFileSync(f, 'utf8'));
     const re = /(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]/g;
     let m;
     while ((m = re.exec(src))) {
       const spec = m[1] || m[2];
       if (!spec || !spec.startsWith('.')) continue;
-      if (!existsSync(resolve(dirname(f), spec))) bad.push(`${relative(label, f)} -> ${spec}`);
+      const abs = resolve(dirname(f), spec);
+      if (insideOnly && !isInside(insideOnly, abs)) {
+        bad.push(`${relative(label, f)} -> ${spec}：镜头文件不许 import 项目目录之外的东西`
+          + `（伸进库里就是依赖内部结构，改个目录名就静默 404，也绕过了公开面 —— 用 'filmwright'）`);
+        continue;
+      }
+      if (!existsSync(abs)) bad.push(`${relative(label, f)} -> ${spec}`);
     }
   }
   return {name: 'imports', ok: bad.length === 0, checked: files.length, problems: bad};

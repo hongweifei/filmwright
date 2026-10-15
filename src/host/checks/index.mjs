@@ -21,7 +21,7 @@ export async function runChecks(projectDir, proj, opts = {}, cfg = {}) {
   const results = [];
 
   if (apiFile) results.push(checkPublicApi(apiFile));
-  results.push(checkImports(projectDir + '/shots', projectDir));
+  results.push(checkImports(projectDir + '/shots', projectDir, {insideOnly: projectDir}));
   results.push(checkTimeline(projectDir, proj));
   results.push(checkScene(projectDir, proj));
   results.push(checkAssets(projectDir, proj.raw, proj.scene));
