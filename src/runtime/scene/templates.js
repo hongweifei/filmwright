@@ -104,6 +104,15 @@ function staggerFrames(sid, count, from) {
  * @param {number} offset 本串第一个字在整段里的序号（跨行用）
  */
 function revealText(ctx, str, x, y, opt, n, rv, base, offset = 0) {
+  // ⚠️ **`base` 非有限时退化成整块画法，而不是让文字消失。**
+  // 三个调用点里有两个的 `base` 是从镜头算出来的（`this.from + 8` / `Math.max(this.from, …)`），
+  // 一旦哪一层没把 `from` 传下来，`base` 就是 `NaN` ⇒ 每个字的进度都是 `NaN`
+  // ⇒ `if (t > 0)` 全为假 ⇒ **一个字都不画**：文字**静默消失**，而不是报错。
+  // 那是个很难查的失败模式（画面看起来只是"少了一行字"），所以宁可退回整块画法。
+  if (!Number.isFinite(base)) {
+    text(ctx, String(str), x, y, {...opt, maxW: opt.maxW ?? null});
+    return;
+  }
   const chars = [...String(str)];              // 按**码点**切：中文/emoji 都不能按 UTF-16 切
   const per = rv.stagger ?? 3;
   const dur = rv.dur ?? 12;
