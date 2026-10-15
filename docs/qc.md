@@ -102,6 +102,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-tts-e2e.py` | 验 TTS 端到端（真合成）：引擎回退链生效、产物与时间轴自洽、缓存命中、三处负面对照 |
 | `verify-encoding.mjs` | 全仓文本必须是合法 UTF-8 且无 BOM —— 抓肉眼看不见的问题（曾把 `.gitignore` 写成 GBK） |
 | `verify-links.mjs` | 文档里的**内部链接**必须指向存在的文件（外链与页内锚点不管）。这类东西最容易悄悄腐烂：**文件改名/移动后链接不会报错，只会 404**，而 `verify-docs` 核数字与事实性说法、核不到链接。只扫**入库的** `.md` |
+| `verify-mask.mjs` | 遮罩（阶段 ③）：四种形状 + 反选都要**确实改变画面**、**五种输出互不相同**（不是同一个路径换名字）、同一遮罩两次渲染**逐字节一致**。⚠️ 判据设计上踩过一次：第一版用 `stat`（居中的数字）+ 居中遮罩，**四种形状都覆盖住了内容** ⇒ 输出全相同；改成**跨整幅**的模板 + 只裁左半才显出差差异 —— **是判据选错了量测对象，不是产品问题** |
 | `verify-invocation.mjs` | 守「**同一个根因换个位置又回来**」的两类（各让 CI 红过）：① CI 里很多步骤**不带参数**跑工具，而工具若写 `resolve(process.argv[2])` 会抛 `ERR_INVALID_ARG_TYPE`（本地带参数跑就发现不了）；② `existsSync` 为真**≠能读**（Windows 上别的进程持有句柄 → `EBUSY`）。② 用棘轮：当前的读的都是用户项目文件（非跨进程写），记录在案，**新出现必须审一遍** |
 | `dead-exports.mjs` | 死导出**棘轮**：`src/` 里"导出但没人用"的符号记录在名单里，**新出现**就红；名单里已被清理的也红（防名单腐烂）。"没人用"不等于"该删"（可能是给使用者的公开 API），所以不做一刀切 |
 | `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
@@ -154,10 +155,10 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 | 耗时 |
 |---|---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
-| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、**`verify-longform`（约 204s，`--frames 2400 --no-big`）**、`verify-preview`（browser job） | 合计约 **13 分钟** |
+| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-mask`（约 12s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、**`verify-longform`（约 204s，`--frames 2400 --no-big`）**、`verify-preview`（browser job） | 合计约 **13 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts` / `verify-tts-e2e.py`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
-**24 个验收工具里 22 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
+**25 个验收工具里 23 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
 
 （`verify-longform` 原来在这张表里是"手动跑（10 分钟量级）"—— 那说的是它的**默认规模**

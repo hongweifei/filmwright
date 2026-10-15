@@ -207,6 +207,11 @@ jobs:
       - name: 图层合成（无变换 / 位移 / 旋转 / 透明度 / 混合）
         run: node tools/verify-composite.mjs
 
+      # 遮罩（阶段 ③）：四种形状 + 反选都要**确实改变画面**、五种输出互不相同
+      # （不是同一个路径换名字）、同一遮罩两次渲染逐字节一致。
+      - name: 遮罩（四种形状 / 反选 / 可复现）
+        run: node tools/verify-mask.mjs
+
       - name: 四项复杂能力协作（图层变换 + 嵌套循环 + 素材片段 + 增量）
         run: node tools/verify-complex.mjs
 

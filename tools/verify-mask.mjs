@@ -13,7 +13,10 @@ import {cpSync, mkdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
 
-const ROOT = process.argv[2].replace(/\\/g, '/');
+// ⚠️ 必须给兜底：CI 里这个工具是**不带参数**跑的（`node tools/verify-mask.mjs`），
+// 而 `resolve(undefined)` / `undefined.replace` 会抛。
+// （这条被 `verify-invocation.mjs` 当场抓到 —— 它进 CI 的那一刻就报了。）
+const ROOT = (process.argv[2] ?? process.cwd()).replace(/\\/g, '/');
 const P = join(ROOT, '.work', 'masktest');
 let bad = 0;
 const ok = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
