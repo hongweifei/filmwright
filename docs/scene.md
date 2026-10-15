@@ -91,7 +91,11 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 `columns: [字符串]`（2–4 列）、`rows: [[字符串]]`（≤8 行，每行单元格数必须等于列数，否则报 `SCENE_TABLE_WIDTH`）、`heading?`。表头强调色、斑马纹、行扫描高亮。
 
 ### `quote` 引言
-`text`（必填）、`who?`、`from?`。居中大字自动折行（最多 4 行），引号光晕脉动。长文案请拆成多个 `bullets`，别堆进一句 `quote`。
+`text`（必填）、`who?`、`from?`、`reveal?`。居中大字自动折行（最多 4 行），引号光晕脉动。长文案请拆成多个 `bullets`，别堆进一句 `quote`。
+
+`reveal` 与 `title` 同一套（`{stagger, dur, dy}`），但 `quote` 会**跨行接着数** ——
+折行之后整段仍是一句一句地进，而不是每行从 0 重来（验收里有一条
+「落位后与整块画法逐字节相同」把这点钉住）。
 
 ### `terminal` 终端窗口
 `lines: [字符串 | {text, color?}]`（必填，≤10）、`title?`（窗口标题）、`heading?`。高度按全量行定死，逐行揭示不跳窗，光标常闪在最新行。

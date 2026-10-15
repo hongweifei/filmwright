@@ -508,3 +508,13 @@ test('title.reveal：对象合法，且不写就与以前逐字节相同（opt-i
   const e = errs({shots: [{type: 'title', at: 1, title: '标题', reveal: {stagger: 2}}]});
   assert.deepEqual(e, [], 'reveal 不该被当成"title 没有字段"');
 });
+
+test('quote.reveal：同一套机制下沉到 quote（跨行接着数）', () => {
+  const q = (reveal) => errs({shots: [{type: 'quote', at: 1, text: '一句话',
+    ...(reveal ? {reveal} : {})}]});
+  assert.deepEqual(q(null), [], '不写 reveal 当然合法');
+  assert.deepEqual(q({stagger: 2, dur: 10, dy: 18}), []);
+  assert.deepEqual(q({}), [], '空对象合法（全用默认值）');
+  // 同样必须被 quote 的字段白名单认识，否则连合法写法都过不了
+  assert.deepEqual(q({stagger: 2}), [], 'reveal 不该被当成"quote 没有字段"');
+});
