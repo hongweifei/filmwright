@@ -192,6 +192,31 @@ function quoteJudges() {
   ok(rvMid.hash === rvMidB.hash, 'quote-stable', 'quote：同一帧两次渲染**逐字节一致**');
 }
 
+// ── bullets 的 heading：同一个 `revealText`，但**位置不同**（居中在 142，字号小得多）──
+// 与 title/quote 分开判，是因为逐字定位依赖「每个字按自己的 advance 居中」；
+// 换一个字号/位置就换了一次宽度累加，正是早年 `"MoonBit"` → `"MoonB it"` 那类错位的高发处。
+function bulletsJudges() {
+  const B = {type: 'bullets', heading: '要点清单的标题', items: [{t: '一'}, {t: '二'}]};
+  const rvMid = shot({...B, reveal: RV}, N_MID, 'bullets-reveal-mid');
+  const rvMidB = shot({...B, reveal: RV}, N_MID, 'bullets-reveal-mid-b');
+  const plMid = shot(B, N_MID, 'bullets-plain-mid');
+  console.log(`  bullets heading 逐字 第${N_MID}帧 ${rvMid.hash}；整块 第${N_MID}帧 ${plMid.hash}`);
+  // 判据用**哈希不同**（而不是 ffmpeg 的列剖面）：heading 字号小、位置不同，
+  // 列剖面在这条路径上取不到差异（实测 total=0 而两个哈希明明不同 ⇒ 那是量测方法的问题，不是判据）。
+  ok(rvMid.hash !== plMid.hash, 'bullets-interim',
+    'bullets heading：中间帧上 reveal 真的改变了画面（与整块画法的哈希不同 ⇒ 逐字不是等于没做）');
+  ok(rvMid.hash === rvMidB.hash, 'bullets-stable',
+    'bullets heading：同一帧两次渲染**逐字节一致**');
+  // 落位后应当回到整块画法的量级（错位/丢字距会把它顶到两百以上，与 reveal 那份同口径）
+  const rvEnd = shot({...B, reveal: RV}, N_END, 'bullets-reveal-end');
+  const plEnd = shot(B, N_END, 'bullets-plain-end');
+  const big = bigDiffPixels(rawRgb(rvEnd.png), rawRgb(plEnd.png));
+  console.log(`  bullets heading 落位后（第${N_END}帧）：|Δ| ≥ ${BIG} 的像素 ${big.n}，最大差 ${big.max}`);
+  ok(big.n === 0, 'bullets-landed',
+    `bullets heading：落位后与整块画法没有大残差（|Δ| ≥ ${BIG} 的像素 ${big.n}，应为 0；`
+    + `实测最大差 ${big.max} —— 错位/丢字距会顶到两百以上）`);
+}
+
 // ── 负面对照 ──────────────────────────────────────────────────────────────────
 const TMP_ROOTS = [];
 const dropTmp = () => {
@@ -306,6 +331,9 @@ mkdirSync(SHOTS, {recursive: true});
 titleJudges();
 if (!INNER) {
   quoteJudges();
+// ⚠️ bullets 那组**不进内层**：内层（负面对照的子进程）按设计只跑标题那三条以控成本，
+// 我加进来时忘了这层，5 次额外渲染把内层的预算撑爆 ⇒ 缺陷① 那次「一条判据都没跑到」。
+if (!INNER) bulletsJudges();
   selfCheck();
 }
 rmSync(P, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});

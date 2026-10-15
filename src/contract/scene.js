@@ -134,7 +134,7 @@ const FIELDS = {
   // 那里本来就已经在做（键级 + 语义）。
   three: {camera: 'obj?', objects: 'arr<threeobj>', lights: 'obj?'},
   title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?', reveal: 'obj?'},
-  bullets: {heading: 'str?', items: 'arr<{t, d?}>'},
+  bullets: {heading: 'str?', items: 'arr<{t, d?}>', reveal: 'obj?'},
   stat: {value: 'num', label: 'str', unit: 'str?', label2: 'str?'},
   flow: {heading: 'str?', boxes: 'arr<{label, sub?}>'},
   code: {heading: 'str?', lines: 'arr<line>'},

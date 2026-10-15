@@ -170,10 +170,19 @@ const bullets = {
   draw(ctx, n, shot, accent) {
     const frames = staggerFrames(shot.sid, shot.items.length, this.from);
     if (shot.heading) {
-      text(ctx, shot.heading, W() / 2, 142, {
+      const hBase = Math.max(this.from, frames[0] - 12);
+      const hOpt = {
         size: 32, weight: 900, color: C.text, align: 'center', baseline: 'middle',
-        alpha: enterAt(n, Math.max(this.from, frames[0] - 12)), maxW: DESIGN_SAFE.w,
-      });
+        alpha: enterAt(n, hBase), maxW: DESIGN_SAFE.w,
+      };
+      // 逐字入场同样下沉到 heading —— 与 title / quote 共用同一个 `revealText`。
+      // 这里必须把整块的 `alpha: enterAt(...)` 交给逐字版自己算（每个字有自己的进度），
+      // 否则「整块淡入」与「逐字入场」会叠在一起，看起来是双重淡入。
+      if (shot.reveal) {
+        revealText(ctx, shot.heading, W() / 2, 142, hOpt, n, shot.reveal, hBase);
+      } else {
+        text(ctx, shot.heading, W() / 2, 142, hOpt);
+      }
     }
     const rowH = 84;
     const top = shot.heading ? 208 : 168;

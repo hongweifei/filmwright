@@ -68,6 +68,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 |---|---|---|
 | `items` | ✔ | `[{t, d?}]`，`t` 主文案、`d` 右侧说明 |
 | `heading` | — | 顶部标题 |
+| `reveal` | — | **逐字入场**（只作用于 `heading`，与 `title` / `quote` 同一套 `{stagger, dur, dy}`）。逐字落位后与整块画法**无大残差**（实测最大差 0）|
 
 ### `stat` 大数字
 `value`（数字，必填）、`label`（必填）、`unit?`、`label2?`（等宽小字）。滚动计数从 0 数到位。
