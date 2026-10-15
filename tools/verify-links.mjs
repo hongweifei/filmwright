@@ -47,6 +47,8 @@ const docs = tracked ?? (() => {
 })();
 
 const bad = [];
+/** 所有被链接指到的**绝对路径** —— 反方向判据（「文档资产有没有人引用」）要用。 */
+const referenced = new Set();
 let total = 0;
 for (const d of docs) {
   const text = readFileSync(d, 'utf8');
@@ -65,7 +67,9 @@ for (const d of docs) {
     // 否则整轮会以 URIError 崩掉，报不出「哪份文档、哪一行、哪条链接」。
     let target = clean;
     try { target = decodeURIComponent(clean); } catch { /* 保持原样 */ }
-    if (!existsSync(resolve(dirname(d), target))) {
+    const abs = resolve(dirname(d), target);
+    referenced.add(abs);
+    if (!existsSync(abs)) {
       bad.push({doc: relative(ROOT, d).replace(/\\/g, '/'), href,
         line: text.slice(0, m.index).split('\n').length});
     }
@@ -76,6 +80,29 @@ if (!bad.length) console.log(total ? '✓ 全部指向存在的文件' : '（一
 else {
   console.log(`\n✗ ${bad.length} 条链接指向不存在的文件（改文件名时最容易漏）：`);
   for (const b of bad) console.log(`   ${b.doc}:${b.line}  → ${b.href}`);
+}
+
+// ── 反方向：`docs/` 下的**非文档文件**必须被某份文档引用 ────────────────────────
+// 上面那条只查「链接指向的文件在不在」，查不出「文件没人指向」—— 反方向得单独查。
+// 起因（实测）：`docs/images/promo-flow.png` 与 `promo-steps.png`（共 920 kB）全仓零引用，
+// 还跟着 `files` 里的 `docs` 一起发到 npm；而**当时这一类没有任何守卫**，
+// 是人工 `git grep` 才发现的。删掉之后补上这条，免得再攒。
+const docsDir = join(ROOT, 'docs');
+const docAssets = [];
+if (existsSync(docsDir)) {
+  (function walk(d) {
+    for (const e of readdirSync(d, {withFileTypes: true})) {
+      const q = join(d, e.name);
+      if (e.isDirectory()) walk(q);
+      else if (!e.name.endsWith('.md')) docAssets.push(q);
+    }
+  })(docsDir);
+}
+const orphans = docAssets.filter((p) => !referenced.has(p));
+if (orphans.length) {
+  console.log(`\n✗ ${orphans.length} 个文档资产没人引用（还会跟着 files 里的 docs 一起发到 npm）：`);
+  for (const p of orphans) console.log('   ' + relative(ROOT, p).replace(/\\/g, '/'));
+  console.log('   ⇒ 要么在某份文档里引用它，要么删掉（历史里还找得到）。');
 }
 
 // ── 下限断言：空集上不许说自己「全部有效」──────────────────────────────────
@@ -233,12 +260,25 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
     ok(s !== null && s.links === expectLinks + 1,
       `⑤ 这条坏链仍该被计入扫描量（${expectLinks} + 1 条）`);
 
+    // ⑥ 反方向：`docs/` 下的资产**没人引用** ⇒ 必须红（这一条原先没有守卫）
+    writeFileSync(guideFile, GUIDE);            // 先把 ⑤ 的坏转义还原
+    const orphan = join(repo, 'docs/images/orphan.png');
+    mkdirSync(dirname(orphan), {recursive: true});
+    writeFileSync(orphan, 'not really a png\n');
+    r = runTool(repo, '⑥');
+    ok(r.status === 1 && (r.stdout ?? '').includes('docs/images/orphan.png'),
+      `⑥ docs/ 下的资产没人引用 ⇒ 退出码 1 并点名它（实际 ${rc(r)}）`);
+    rmSync(join(repo, 'docs/images'), {recursive: true, force: true});
+    r = runTool(repo, '⑥b');
+    ok(r.status === 0,
+      `⑥ 把它删掉 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
+
     if (selfFailed) {
       console.log('\n—— 子进程原始输出（便于定位）——');
       for (const l of logs) console.log(l.split('\n').map((x) => `   ${x}`).join('\n'));
     }
     console.log(selfFailed === 0
-      ? '负面对照全部符合预期（正例绿 / 坏链红且报出位置 / 改回去回绿 / 空根红 / 坏转义报出）。'
+      ? '负面对照全部符合预期（正例绿 / 坏链红且报出位置 / 改回去回绿 / 空根红 / 坏转义报出 / 孤儿资产红）。'
       : `\n✗ ${selfFailed} 条负面对照不符合预期。`);
   } catch (e) {
     ok(false, `负面对照自己出错（不许静默跳过）：${e && e.message}`);
@@ -248,4 +288,4 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
 }
 
 // 用 exitCode 而不是 process.exit()：管道里的 stdout 是异步刷的，硬退出会截断输出。
-process.exitCode = (bad.length || vacuous || selfFailed) ? 1 : 0;
+process.exitCode = (bad.length || orphans.length || vacuous || selfFailed) ? 1 : 0;
