@@ -86,6 +86,9 @@ jobs:
   # 而 `browser` 只有约 5.5 分钟）—— 在非瓶颈作业里做优化**对墙钟一点用没有**。
   # 把 148s 的 `verify-readme` 挪出来，三个作业的负载变成约 337s / 330s / 208s，
   # 墙钟由最慢的 337s 决定：**约 8.1 分钟 → 约 5.6 分钟**。
+  # ⚠️ 这几个负载数字是**拆作业那一次**的实测；其后 `verify-longform` 瘦身、
+  # `verify-comp` / `verify-complex` 并入 `verify-composite`，负载已经变了 ——
+  # 当前各作业跑哪些工具、逐项耗时见 `docs/qc.md` 的「哪些验收工具会自动跑」表。
   browser-doc:
     name: 渲染·文档路径（README 快速开始要真的走通）· ${{ matrix.os }}
     strategy:
@@ -125,13 +128,13 @@ jobs:
       - name: README 快速开始路径（文档承诺要真的走通）
         run: node tools/verify-readme.mjs
 
-  # 「慢」作业：把三个最费时的验收拆出来单独跑。
-  # 为什么拆：`browser` 里那 ~20 个工具是**串行**的（约 13 分钟），
+  # 「慢」作业：把最费时的验收拆出来单独跑。
+  # 为什么拆：`browser` 里那十几个 `verify-*` 是**串行**的（拆之前那批步骤约 13 分钟），
   # 而 GitHub 给每个 job 一个独立 runner —— 拆开就是**真并行**，
   # 墙钟从「最慢那条腿」≈13 分钟降到 max(快组, 慢组) ≈ 8 分钟。
   # 代价是多两个 runner；覆盖率**一点没少**（同一批工具、同一批 OS）。
   browser-slow:
-    name: 渲染·慢（长片 / 按段归因 / README 路径）· ${{ matrix.os }}
+    name: 渲染·慢（长片 / 按段归因）· ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -165,10 +168,12 @@ jobs:
           node -e "import('./src/host/browser/find.mjs').then((m) => console.log('浏览器：' + m.findBrowser()))"
           command -v ffmpeg >/dev/null || { echo 'ffmpeg 不在 PATH'; exit 1; }
 
-      # 长片：单实例跑几千帧会不会退化、分片是否真的按比例加速、增量段缓存会不会失效、内存会不会涨。
-      # 默认 18000 帧（10 分钟量级）跑不完 CI；`--frames 1200` 把这些判据都覆盖到，
-      # 而耗时只有 2400 帧的一半（原来写 2400，实测这一项单独就要 204s）。
-      - name: 长片（单实例不退化 / 分片加速 / 段缓存 / 内存）
+      # 长片：单实例跑几千帧会不会退化（同一次运行内**头段 vs 尾段**的配对比较）。
+      # 默认 18000 帧（10 分钟量级）跑不完 CI；`--frames 1200 --no-big` 保留这条判据，
+      # 耗时约为大规格的一半（`--no-big` 还会跳过那一次全分辨率大渲染）。
+      # ⚠️ 分片加速比与内存**只报数不判定**，`--no-big` 下更是整段跳过 ⇒ 自动跑时
+      # 唯一起作用的判据是「单实例不退化」；段缓存那节已删（由 incremental / attribution 守）。
+      - name: 长片（单实例长跑不退化：同一次运行内头尾段配对）
         run: node tools/verify-longform.mjs --frames 1200 --no-big
 
       # ⚠️ README 路径这一步**已移到 `browser-doc` 作业** —— 它是这个作业里第二费时的一项，
@@ -274,24 +279,26 @@ jobs:
       - name: 命令式入口（与声明式同能力 / 写错当场报）
         run: node tools/verify-imperative.mjs
 
-      # ── 下面这批曾经**从不自动运行**（21 个验收工具里只有 7 个进了 CI）──
+      # ── 下面这批曾经**从不自动运行**（当时 21 个验收工具里只有 7 个进了 CI）──
       # 注意：**不要**给这些命令加 `.` 参数。工具默认的根就是仓库根（绝对路径），
       # 而有些工具会用它拼 `pathToFileURL(`${ROOT}/…`)` —— 传相对路径会抛
       # ERR_INVALID_FILE_URL_PATH。曾经因为加了 `.` 导致 6 个工具在 CI 里失败。
-      # 逐个量过耗时，只把快的接进来（最慢 41s，合计约 133s）：
-      #   comp 1.3s / mix 1.7s / clips 1.9s / clip-render 2.3s / reuse 5.0s /
-      #   composite 8.9s / complex 31.5s / incremental 38.8s / determinism 41.3s
-      # 慢的仍是手动跑（readme 148s、attribution 177s、longform 数分钟、
-      # tts/voiceover 要联网），见 docs/qc.md 里那张"哪些在跑"的表。
+      # 逐个量过耗时，只把快的接进来（最慢 41s，那批合计约 100s）：
+      #   mix 1.7s / clips 1.9s / clip-render 2.3s / reuse 5.0s /
+      #   composite 8.9s / incremental 38.8s / determinism 41.3s
+      # 慢的各自拆成专用作业（readme 148s → `browser-doc`；attribution 177s 与
+      # longform → `browser-slow`）；tts / voiceover 要联网或真配音产物，仍在手动跑。
+      # 见 docs/qc.md 里那张"哪些在跑"的表。
+      #
+      # ⚠️ 工具数会漂：`verify-comp.mjs` 与 `verify-complex.mjs` 已删（独有判据并入
+      # `verify-composite.mjs`，本作业里对应两步也一并删除）。当前是
+      # **24 个验收工具里 22 个自动跑** —— 这个计数由 `verify-docs` 核，别手改数字。
       #
       # 接进来之后**立刻**抓到两个一直在失败的守卫（详见 docs/qc.md）：
       #   · verify-readme 里硬编码 `schema 类型数 !== 13`，而类型已涨到 18
       #   · verify-attribution 硬编码目标镜头起点 602 与"必须正好 1 段"，
       #     而该镜头已跨 2 段（重渲 2 段才是正确行为）
       # 两处都改成**从实现里推导期望**，不再硬编码数字。
-      - name: 嵌套合成（页面内探针，不靠像素比对）
-        run: node tools/verify-comp.mjs
-
       - name: 配乐混音（真跑混音，并直接测音乐那一路）
         run: node tools/verify-mix.mjs
 
@@ -313,12 +320,11 @@ jobs:
         run: node tools/verify-mask.mjs
 
       # 逐字入场（阶段 ④ 的动效语言）：逐个进场、不引入不确定性、
-      # **落位后与整块画法逐字节相同**（raw RGB 直接比 —— 间距/字宽/光晕错位都会露出来）。
+      # 落位帧与整块画法的差异**按量级判**（raw RGB 逐像素比，显著差异像素必须为 0
+      # —— 间距/字宽/光晕错位都会露出来）。⚠️「落位后逐字节相同」的旧说法实测不成立
+      # （残差来自逐字光晕叠加），判据已改成量级口径。
       - name: 逐字入场（逐个进场 / 可复现 / 落位后不排坏字）
         run: node tools/verify-reveal.mjs
-
-      - name: 四项复杂能力协作（图层变换 + 嵌套循环 + 素材片段 + 增量）
-        run: node tools/verify-complex.mjs
 
       - name: 增量重渲的安全性（复用段必须与重渲逐帧一致）
         run: node tools/verify-incremental.mjs
@@ -326,10 +332,10 @@ jobs:
       - name: 捕获确定性（多轮渲染同一区间逐字节一致）
         run: node tools/verify-determinism.mjs
 
-      # 这两条各要两三分钟（readme 148s / attribution 177s），但守的是**核心契约**：
-      #   · readme 走一遍文档承诺的快速开始 —— 文档漂了就得有人管
-      #   · attribution 守"改一个镜头只重渲覆盖它的段"（增量重渲的价值全在这）
-      # 公开仓库的 CI 不花钱，只花墙上时间，所以这里选**接进来**。
+      # ⚠️ 两个「慢但守核心契约」的验收**已各自拆到专用作业**（公开仓库的 CI 不花钱、
+      # 只花墙上时间，所以它们没有被留在手动跑）：
+      #   · `verify-readme`（148s）→ `browser-doc`：走一遍文档承诺的快速开始
+      #   · `verify-attribution`（177s）→ `browser-slow`：改一个镜头只重渲覆盖它的段
       # 3D 图层（three 是 **devDependency**，`npm ci` 已经装好了；运行时它仍是可选依赖）。
       # 这条路径以前完全没有自动守卫 —— 改 src/runtime/three/ 或 importmap / vendor 路由
       # 没人拦。它验的是：3D 内容真的叠进帧里、同一帧两次渲染逐字节一致、
@@ -344,8 +350,8 @@ jobs:
       - name: H.264 编码器（WebCodecs：有效视频 / 帧数一致 / 背压 / 报出编码配置）
         run: node tools/verify-h264.mjs
 
-      # ⚠️ 长片 / README 路径 / 按段归因这三步**已移到 `browser-slow` 作业** ——
-      # 它们合计约 8.8 分钟，是这里串行耗时的大头；拆出去才能真并行。
+      # ⚠️ 长片与按段归因**已移到 `browser-slow` 作业**、README 路径**已移到 `browser-doc`**
+      # —— 它们是串行耗时的大头；拆出去才能真并行。
       # 别把它们再加回来（加了就是重复跑）。
 
       - name: 预览页（拖动 / 播放 / 热重载）

@@ -14,7 +14,7 @@
 // （帧 1–360 约 19.3ms/帧，帧 361–1600 约 40.8ms/帧）。
 // ⇒ **脱离区间的 ms/帧没有意义。**
 //
-// ## 这个工具强制做到的四件事
+// ## 这个工具强制做到的五件事
 //
 //   1. **区间显式写出**（起始帧 + 长度），不写就没法比 —— 输出里一定带上它；
 //   2. **差分法扣启动**：渲 len 与 2len 两段，边际成本 = (T2 − T1) / len。
@@ -32,7 +32,17 @@ import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
-const positional = argv.filter((a) => !a.startsWith('--'));
+const positional = [];
+// ⚠️ 带值的选项，**它的值本身也是 argv 里的一个元素**。早年版用
+// `argv.filter((a) => !a.startsWith('--'))` 取位置参数 ⇒ `--shards 2` 的 `2` 会被当成「起始帧」：
+// 请求区间 1–400，实测的却是 2–401（`--rounds 2` 会把起始帧顶到 2、长度掉回默认 400）。
+// 所以按「选项 + 它的值」成对跳过；布尔开关（--gpu）不在名单里。
+const VALUE_FLAGS = ['--shards', '--rounds', '--project', '--frame-format'];
+for (let i = 0; i < argv.length; i++) {
+  if (VALUE_FLAGS.includes(argv[i])) { i++; continue; }
+  if (argv[i].startsWith('--')) continue;
+  positional.push(argv[i]);
+}
 const ROOT = resolve(positional[0] && !/^\d+$/.test(positional[0]) ? positional[0] : join(HERE, '..', '..'));
 const FROM = Number(positional.find((a) => /^\d+$/.test(a)) ?? 1);
 const LEN = Number(positional.filter((a) => /^\d+$/.test(a))[1] ?? 400);
@@ -86,6 +96,18 @@ for (let i = 0; i < ROUNDS; i++) {
 const t1 = med(t1s), t2 = med(t2s);
 const marginal = ((t2 - t1) / LEN) * 1000;
 const startup = t1 * 1000 - marginal * LEN;
+
+// 差分法的前提是"长段 = 短段 + LEN 帧的边际成本"。若连"长段更慢"都不成立
+// （t2 ≤ t1 ⇒ 边际成本 ≤ 0），那不是"启动小得测不出"，而是**这一轮里负载/热状态的
+// 漂移比 LEN 段的成本差还大**：此时算出来的 ms/帧与启动都是垃圾。
+// ⇒ 宁可报"本次测量无效"，也不要把一个负的 ms/帧印成结论。
+if (!(marginal > 0)) {
+  console.log(`  短段 ${t1.toFixed(2)}s、长段 ${t2.toFixed(2)}s ⇒ 边际成本 ${marginal.toFixed(1)} ms/帧`);
+  console.log('\n  ⚠️ **本次测量无效**：长段不比短段慢，差分法算不出正的成本。');
+  console.log('     这一轮里机器负载/热状态的变化比 LEN 帧的成本还大 —— 重跑一次，或把 LEN 调大。');
+  rmSync(WORK, {recursive: true, force: true});
+  process.exit(1);
+}
 
 console.log(`  短段 ${t1.toFixed(2)}s（${(t1 * 1000 / LEN).toFixed(1)} ms/帧，**含启动**）`);
 console.log(`  长段 ${t2.toFixed(2)}s（${(t2 * 1000 / (2 * LEN)).toFixed(1)} ms/帧，**含启动**）`);

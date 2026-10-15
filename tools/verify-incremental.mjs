@@ -1,67 +1,94 @@
-// 增量重渲的**安全性验证**：复用的段必须与重新渲染的结果产生**相同的帧数据**。
+// 增量重渲的**安全性验证**：只保留本工具独有的三条判据。
 //
 //   node tools/verify-incremental.mjs [<仓库根>]
 //
-// ## 为什么比对帧数据、不比对 mp4 哈希
+// ## 三条判据（别的地方守不了）
+//
+//   (a) 引擎源码变更必须让段缓存**全部**失效 —— 全仓只有这一处动 `src/runtime/motion/ease.js`，
+//       只有这里能证明「升了引擎不会拿旧引擎渲的画面」。
+//   (b) 改一个影响画面的文件 → 帧数据确实变了 → 改回原样 → 帧数据**精确回到基线**（区间内逐帧）。
+//   (c) 复用产物与全量重渲的帧数据**逐位相同**。
+//
+// ## 已经从本文件删掉的（别再加回来）
+//
+//   · 「首跑全渲 / 二跑全复用」的计数断言 —— 与 `verify-attribution`（A/B 步）和
+//     `verify-complex`（④）逐条重复，那两处已守；
+//   · 「`--proxy 0.5` → 640×360」—— 与 `verify-complex` ③ 逐字重复。
+//   它们各自都要在这里再跑一遍同样的渲染，只增加墙钟、不增加覆盖面（见 docs/qc.md）。
+//
+// ## 为什么比对**帧数据**、不比对 mp4 哈希
 //
 // 实测：同一区间、同样参数、**只换输出路径**，两次 mp4 的 sha256 就不同
 // （ffmpeg 的 mp4 muxer 会写入与运行相关的元数据，如 creation_time/moov 布局）。
 // 所以「mp4 字节相同」既不是复用正确性的必要条件，也不是充分条件 ——
 // 用它做判据会得出「同一份内容被判为不同」的假失败（我第一版就栽在这）。
-// **正确的判据是解码后的帧数据**：把产物抽成 PNG 再哈希，那才是观众看到的画面。
+// **正确的判据是解码后的帧数据**：那才是观众看到的画面。
 //
-// ## 为什么这条验证最重要
+// ## 判据口径（两条硬规矩）
 //
-// 增量复用的前提是「输入指纹相同 ⇒ 画面相同」。那是**推断**，必须用证据证实：
-// 一旦漏掉某个影响画面的输入，就会静默复用旧画面，比崩溃更难发现。
-import {existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync} from 'node:fs';
+//   · 指纹覆盖渲染区间的**每一帧**，不抽样。旧版只采 8 帧（约 3%），而那 8 个帧号是
+//     写死的实现常量 —— 既弱又脆。现在整段解码后逐帧哈希。
+//   · 渲染区间从**夹具自己的数据**算（第 1 句的结束帧），不写死帧号：被改的文案属于 S01，
+//     区间不覆盖它的话「改了文件但画面没变」会成为假失败。
+//
+// ## 为什么要动真源码，以及怎么保证不留痕
+//
+// 手写镜头项目只能靠改 `shots/index.js` 来改画面，升引擎那条要改 `src/runtime/motion/ease.js`。
+// 两处都在 `withEdited()` 里跑：抛错走 finally，**Ctrl-C / CI 取消走信号钩子**
+// （Node 收到 SIGINT/SIGTERM 默认直接终止，**不会**执行 finally，只写 try/finally 挡不住「中途被杀」）。
 import {createHash} from 'node:crypto';
+import {readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-// resolve() 保证 ROOT 是**绝对路径**：下面会用 `pathToFileURL(`${ROOT}/…`)` 或
-// `file:///${ROOT}/…` 拼 URL，相对路径会直接抛 ERR_INVALID_FILE_URL_PATH。
+// resolve() 保证 ROOT 是**绝对路径**：下面会用 `${ROOT}/…` 拼路径，相对路径会挂。
 const ROOT = resolve(process.argv[2] ?? resolve(HERE, '..')).replace(/\\/g, '/');
 const P = `${ROOT}/examples/minimal`;
 const WORK = `${P}/.work`;
 const KIT = `${ROOT}/bin/filmwright.mjs`;
+const SEGMENTS = join(WORK, 'segments');
+const OUT = join(WORK, 'inc-test.mp4');
 
-/** 产物的**帧数据**指纹：抽若干帧成 PNG 再哈希（不是 mp4 字节）。 */
-function frameFingerprint(mp4, frames) {
-  const h = createHash('sha256');
-  for (const n of frames) {
-    const png = join(WORK, `vf-${n}.png`);
-    rmSync(png, {force: true});
-    spawnSync('ffmpeg', ['-y', '-v', 'error', '-i', mp4,
-      '-vf', `select=eq(n\\,${n - 1})`, '-frames:v', '1', png], {encoding: 'utf8', stdio: 'ignore'});
-    if (!existsSync(png)) return 'NO_FRAME_' + n;
-    h.update(readFileSync(png));
-    rmSync(png, {force: true});
-  }
-  return h.digest('hex').slice(0, 16);
+// 渲染区间到第 1 句结束为止 —— 从夹具的时间轴算，不写死帧号。
+const S01 = JSON.parse(readFileSync(`${P}/script/timeline.json`, 'utf8')).sentences
+  .find((s) => s.id === 'S01');
+if (!S01) {
+  console.log('✗ 夹具里找不到 S01，本验证的前提不成立');
+  process.exit(1);
 }
-
-// 探针帧必须落在**被改动内容出现的区间**里，否则「改了文件但指纹没变」
-// 会是假失败。实测：改 S01 的文案后，帧 106/110/115/120/130 全部变化，
-// 而 1/15/30/45/60 一帧都不变（那些帧在 S01 之前）—— 我为此白查了两轮。
-const PROBE_FRAMES = [1, 106, 110, 115, 120, 130, 200, 250];
+const FROM = 1;
+const TO = S01.to;
 
 /**
- * 渲染的区间。**必须覆盖被改动的内容所在的帧**，否则「改了文件但画面没变」
- * 会误判成产品 bug —— 我第一版用 1..60，而被改的文案属于 S01（从第 105 帧起），
- * 于是「画面确实变了」这条一直是假失败。
- * minimal 的 S01 从 105 帧开始，所以区间取到 260。
+ * 产物的**帧数据**指纹：整段解码后的原始像素逐帧哈希（不是 mp4 字节，也不是抽样帧）。
+ *
+ * 用 ffmpeg 的 `framemd5`：它哈希的是**解码后的像素**，一次解码到底，比逐帧 select 抽 PNG
+ * 更快也更全。返回 `null` 表示取不到 —— 取不到要比出「相同」更该被当成失败。
  */
-const RANGE = {from: 1, to: 260};
+function frameFingerprint(mp4) {
+  const r = spawnSync('ffmpeg',
+    ['-v', 'error', '-i', mp4, '-map', '0:v:0', '-f', 'framemd5', '-'],
+    {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
+  if (r.status !== 0) return null;
+  const sums = String(r.stdout).split('\n')
+    .filter((l) => l.trim() && !l.startsWith('#'))
+    .map((l) => l.trim().split(',').pop().trim());   // 只取每帧的像素哈希，丢掉时间戳/尺寸
+  if (!sums.length) return null;
+  return {frames: sums.length, hash: createHash('sha256').update(sums.join('\n')).digest('hex').slice(0, 16)};
+}
 
-/** 跑一次渲染，返回 {data, ff}（ff = 帧数据指纹）。 */
-const render = (extraArgs = []) => {
-  const out = join(WORK, 'inc-test.mp4');
-  rmSync(out, {force: true});
-  const r = spawnSync('node', [KIT, 'render', '--project', P, '--from', String(RANGE.from), '--to', String(RANGE.to),
-    '--out', out, '--incremental', '--json', ...extraArgs],
+// 指纹必须**两边都取到了**才谈相等/不等：`null === null` 会让判据假绿。
+const sameFp = (a, b) => Boolean(a) && Boolean(b) && a.frames === b.frames && a.hash === b.hash;
+const differFp = (a, b) => Boolean(a) && Boolean(b) && !sameFp(a, b);
+const showFp = (fp) => (fp ? `${fp.frames} 帧/${fp.hash}` : '取不到');
+
+/** 跑一次增量渲染，返回 `{data, fp}`（fp = 该产物整段的帧数据指纹）。 */
+const render = () => {
+  rmSync(OUT, {force: true});
+  const r = spawnSync('node', [KIT, 'render', '--project', P, '--from', String(FROM), '--to', String(TO),
+    '--out', OUT, '--incremental', '--json'],
     {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024});
   if (r.status !== 0) {
     console.log('渲染失败:', String(r.stderr).slice(-400));
@@ -69,85 +96,99 @@ const render = (extraArgs = []) => {
   }
   let data = null;
   try { data = JSON.parse(r.stdout).data; } catch { return null; }
-  return {data, ff: frameFingerprint(out, PROBE_FRAMES)};
+  return {data, fp: frameFingerprint(OUT)};
 };
+
+/** 此刻处于「临时改动」状态、需要还原的真文件（信号钩子里要用）。 */
+const pendingRestore = new Set();
+const restoreAll = () => { for (const f of [...pendingRestore]) f(); };
+// Node 收到 SIGINT/SIGTERM 默认直接终止，走不到 finally —— 这两个钩子才是「中途被杀」的兜底。
+for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  process.on(sig, () => { restoreAll(); process.exit(code); });
+}
+
+/**
+ * 临时把 file 改成 text 跑 body，**任何退出路径**都还原：
+ * 抛错走 finally，Ctrl-C / CI 取消走上面的信号钩子。
+ */
+function withEdited(file, text, body) {
+  const orig = readFileSync(file);
+  const restore = () => {
+    try { if (!readFileSync(file).equals(orig)) writeFileSync(file, orig); } catch {}
+  };
+  pendingRestore.add(restore);
+  try {
+    writeFileSync(file, text, 'utf8');
+    return body();
+  } finally {
+    restore();
+    pendingRestore.delete(restore);
+  }
+}
 
 let bad = 0;
 const ok = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
 
-rmSync(join(WORK, 'segments'), {recursive: true, force: true});
+rmSync(SEGMENTS, {recursive: true, force: true});
 
-console.log('=== 1) 第一次（全渲）===');
-const r1 = render();
-ok(r1 && r1.data.renderedSegments >= 1 && r1.data.reusedSegments === 0,
-  `应全部重渲（rendered=${r1?.data.renderedSegments}, reused=${r1?.data.reusedSegments}）`);
-console.log('  帧数据指纹', r1?.ff);
+console.log(`=== 1) 基线：段缓存已清空，全量重渲 ${FROM}-${TO} 帧 ===`);
+const base = render();
+ok(base !== null && base.fp !== null, `基线渲染成功并取到帧数据（${showFp(base?.fp)}，` +
+  `segments=${base?.data?.segments}）`);
 
-console.log('\n=== 2) 第二次（输入没变）：应全部复用，且**帧数据**完全相同 ===');
-const r2 = render();
-ok(r2 && r2.data.reusedSegments === r1.data.segments && r2.data.renderedSegments === 0,
-  `应全部复用（reused=${r2?.data.reusedSegments}, rendered=${r2?.data.renderedSegments}）`);
-ok(r1.ff === r2.ff, `复用产物与重渲产物帧数据相同（${r1.ff} vs ${r2.ff}）`);
+console.log('\n=== 2) (c) 复用产物 vs 全量重渲：帧数据必须逐位相同 ===');
+// 基线的段缓存是刚清空后重建的，所以这一步「同输入 ⇒ 命中原键」。
+// 注意：这里**不**断言「二跑真的全复用了」—— 那条计数断言在 verify-attribution 的 B 步
+// 与 verify-complex 的 ④ 已守（本文件删掉它就是为了不再重复渲一遍同样的东西）。
+const reused = render();
+ok(sameFp(base?.fp, reused?.fp),
+  `复用产物与全量重渲逐位相同（${showFp(reused?.fp)} vs ${showFp(base?.fp)}）`);
 
-console.log('\n=== 3) 改一个影响画面的文件 → 必须重渲且画面变化 ===');
+console.log('\n=== 3) (b) 改文件 → 画面变 → 改回原样 → 精确回到基线 ===');
 // 注意：examples/minimal 是**手写镜头**项目，没有 scene.json；
 // 影响它画面的是 shots/index.js。别假设项目形状（我第一版假设错了）。
 const shotsFile = `${P}/shots/index.js`;
 const shotsOrig = readFileSync(shotsFile);
-let h3ff = null;
 {
   const src = shotsOrig.toString('utf8');
   const mutated = src.replace('每一帧 = 一个纯函数', '每一帧 = 一个纯函数（改）');
-  if (mutated === src) { console.log('✗ 没找到要改的文案，验证脚本失效'); bad++; }
-  else {
-    writeFileSync(shotsFile, mutated, 'utf8');
-    const r3 = render();
-    ok(r3 && r3.data.renderedSegments >= 1, `改了 shots → 必须重渲（rendered=${r3?.data.renderedSegments}）`);
-    ok(r3.ff !== r1.ff, `画面确实变了（${r3?.ff} ≠ ${r1.ff}）`);
-    h3ff = r3?.ff;
+  if (mutated === src) {
+    console.log('✗ 没找到要改的文案，本验证的前提不成立');
+    bad++;
+  } else {
+    withEdited(shotsFile, mutated, () => {
+      const changed = render();
+      // 这一条是 (b) 的**前提**：改动若没让帧数据变，「改回原样回到基线」就是空转。
+      ok(differFp(changed?.fp, base?.fp), `改了 shots → 帧数据确实变了（${showFp(changed?.fp)}）`);
 
-    console.log('\n=== 4) 改回原样 → 帧数据应回到第一次的值 ===');
-    writeFileSync(shotsFile, shotsOrig, 'utf8');
-    const restored = readFileSync(shotsFile).equals(shotsOrig);
-    ok(restored, 'shots/index.js 已字节级还原');
-    const r4 = render();
-    ok(r4.ff === r1.ff, `改回原样后帧数据回到 r1（${r4?.ff} vs ${r1.ff}）` +
-      (h3ff ? `；且不同于改动版 ${h3ff}` : ''));
+      // 改回原样（字节级）后再渲一次：区间内**每一帧**都要回到基线。
+      writeFileSync(shotsFile, shotsOrig, 'utf8');
+      ok(readFileSync(shotsFile).equals(shotsOrig), 'shots/index.js 已字节级还原');
+      const restored = render();
+      ok(sameFp(restored?.fp, base?.fp),
+        `改回原样后帧数据精确回到基线（${showFp(restored?.fp)} vs ${showFp(base?.fp)}）`);
+    });
   }
 }
 
-console.log('\n=== 5) 负面对照：改引擎源码（模拟升引擎）必须重渲 ===');
+console.log('\n=== 4) (a) 引擎源码变更 → 所有段缓存必须失效 ===');
+// 注入的是注释，画面不该变 —— 这正是「同一内容、不同输入指纹」的正确行为：
+// 多渲一次（安全方向），但结果逐位一致。
 {
   const engFile = `${ROOT}/src/runtime/motion/ease.js`;
   const orig = readFileSync(engFile);
-  writeFileSync(engFile, orig.toString('utf8') + '\n// 增量验证：注入一行（不改行为）\n', 'utf8');
-  try {
-    const r5 = render();
-    ok(r5 && r5.data.renderedSegments >= 1, `引擎源码变了 → 必须重渲（rendered=${r5?.data.renderedSegments}）`);
-    // 注入的是注释，画面不该变 —— 这正是「同一内容不同输入指纹」的正确行为：
-    // 多渲了一次（安全方向），但结果一致。
-    ok(r5.ff === r1.ff, `注入注释不改画面（${r5?.ff}）`);
-  } finally {
-    writeFileSync(engFile, orig);
-  }
+  let r = null;
+  withEdited(engFile, orig.toString('utf8') + '\n// 增量验证：注入一行注释（不改行为）\n',
+    () => { r = render(); });
+  const d = r?.data;
+  // 引擎指纹进的是**每个**段键，所以不是「至少渲一段」而是「一段都不许复用」。
+  ok(Boolean(d) && d.renderedSegments === d.segments && d.reusedSegments === 0,
+    `引擎源码变了 → 所有段必须失效重渲（rendered=${d?.renderedSegments}/${d?.segments}, reused=${d?.reusedSegments}）`);
+  ok(sameFp(r?.fp, base?.fp), `注入注释不改画面（${showFp(r?.fp)} vs ${showFp(base?.fp)}）`);
   ok(readFileSync(engFile).equals(orig), '引擎文件已字节级还原');
 }
 
-console.log('\n=== 6) 代理渲染：分辨率减半 ===');
-{
-  const proxyOut = join(WORK, 'inc-proxy.mp4');
-  spawnSync('node', [KIT, 'render', '--project', P, '--from', '1', '--to', '30', '--proxy', '0.5',
-    '--out', proxyOut], {encoding: 'utf8', stdio: 'ignore'});
-  const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', proxyOut],
-    {encoding: 'utf8'});
-  const [w, h] = String(r.stdout).trim().split(',').map(Number);
-  ok(w === 640 && h === 360, `--proxy 0.5 → 640×360（实际 ${w}×${h}）`);
-  ok(existsSync(proxyOut) && statSync(proxyOut).size > 0, '代理产物非空');
-  rmSync(proxyOut, {force: true});
-}
-
-rmSync(join(WORK, 'segments'), {recursive: true, force: true});
-rmSync(join(WORK, 'inc-test.mp4'), {force: true});
-console.log(bad === 0 ? '\n✓ 增量重渲与代理渲染全部符合预期' : `\n✗ ${bad} 项失败`);
+rmSync(SEGMENTS, {recursive: true, force: true});
+rmSync(OUT, {force: true});
+console.log(bad === 0 ? '\n✓ 增量重渲安全性三条判据全部符合预期' : `\n✗ ${bad} 项失败`);
 process.exit(bad ? 1 : 0);
-

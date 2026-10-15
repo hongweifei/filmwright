@@ -7,9 +7,11 @@
 //   1. voices 命令能报出各引擎可用性，并如实说明「实际会用哪个」
 //   2. 在临时项目上真跑一遍 tts，产出三件套
 //   3. timeline.json 里如实标注 engine / subs_timing（不能让使用者猜字幕准不准）
-//   4. 音频时长与时间轴一致；时间轴自洽（句不重叠、字幕块在句内）
-//   5. 逐句缓存：第二次跑不重新合成
-//   6. 负面对照：引擎名写错、缺解说词、--json 契约
+//   4. 音频 48k 双声道 **16bit**、时长与时间轴一致（16bit 是渲染链的既有契约）
+//   5. 时间轴自洽（句不重叠、字幕块在句内）+ 字幕块数 == 解说词夹具切出来的块数
+//      （`|` 要真的多切一块，不能只按句切）
+//   6. 逐句缓存：第二次跑不重新合成
+//   7. 负面对照：引擎名写错、缺解说词、--json 契约
 import {spawnSync} from 'node:child_process';
 import {existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
@@ -24,6 +26,22 @@ const PROJ = join(ROOT, '.work', 'tts-verify');
 
 let bad = 0;
 const ok = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
+
+// 从外部命令的输出里**提取**第一个整数，别整体 Number()：ffprobe 的输出格式随版本变
+// （同一字段有的版本给尾随逗号、有的不给，整体转换会拿到 NaN）。见 CI 里踩过的那次。
+const firstInt = (v) => {
+  const m = /\d+/.exec(String(v ?? ''));
+  return m ? Number(m[0]) : null;
+};
+
+// 引擎名单从**实现**里读（src/host/tts/engines.py 的 ENGINES），不写死个数：
+// 加了新引擎（例如 http）而这里还写着旧数字，这条就变成假警报。读不到返回 null，由调用处报错。
+const engineRegistry = () => {
+  const py = readFileSync(join(ROOT, 'src', 'host', 'tts', 'engines.py'), 'utf8');
+  const m = /^ENGINES\s*=\s*\{([\s\S]*?)^\}/m.exec(py);
+  if (!m) return null;
+  return [...m[1].matchAll(/['"](\w+)['"]\s*:/g)].map((x) => x[1]).sort();
+};
 
 const run = (args, opts = {}) => spawnSync('node', [KIT, ...args], {
   encoding: 'utf8',
@@ -43,8 +61,13 @@ writeFileSync(join(PROJ, 'script', 'narration.txt'),
   'utf8');
 const cfgPath = join(PROJ, 'film.config.mjs');
 const cfgOrig = readFileSync(cfgPath, 'utf8');
-const setEngine = (v) => writeFileSync(cfgPath,
-  cfgOrig.replace("engine: 'edge'", `engine: ${JSON.stringify(v)}`), 'utf8');
+// 锚点别写死引擎值：夹具里现在是 auto，写死 'edge' 会让 replace **静默落空**，
+// 于是后面所有「把引擎设成 X」的断言全成空转（HEAD 上就是这么红的）。落空直接抛。
+const setEngine = (v) => {
+  const next = cfgOrig.replace(/engine:\s*(['"])[^'"]*\1/, `engine: ${JSON.stringify(v)}`);
+  if (next === cfgOrig) throw new Error(`无法在 ${cfgPath} 里设置 tts.engine：锚点没匹配上`);
+  writeFileSync(cfgPath, next, 'utf8');
+};
 setEngine('auto');
 
 console.log('=== 1) voices：报出各引擎可用性 ===');
@@ -61,9 +84,14 @@ console.log('=== 1) voices：报出各引擎可用性 ===');
   try { j = JSON.parse(rj.stdout); } catch (e) { j = null; }
   ok(j !== null, '--json 输出是合法 JSON（stdout 恰好一个文档）');
   if (j) {
-    ok(Array.isArray(j.data?.engines) && j.data.engines.length === 3, '报出 3 个引擎');
+    const reg = engineRegistry();
+    const reported = (j.data?.engines ?? []).map((e) => e.name).sort();
+    ok(reg !== null, '能读到实现里的 ENGINES 注册表（判据不写死引擎个数）');
+    ok(reg !== null && JSON.stringify(reported) === JSON.stringify(reg),
+      `voices 报出的引擎集合 == 实现注册表（${reported.join(' / ')}）`);
     ok(j.data.engines.some((e) => e.name === 'sapi' && e.available), 'sapi 标为可用');
-    ok(typeof j.data.resolved?.engine === 'string', 'resolved 给出最终会用的引擎');
+    ok(reported.includes(j.data?.resolved?.engine),
+      `resolved 给出最终会用的引擎，且它在报出的名单里（${j.data?.resolved?.engine}）`);
   }
 }
 
@@ -100,12 +128,19 @@ let tl = null;
 console.log('\n=== 4) 音频与时间轴一致、时间轴自洽 ===');
 {
   const wav = join(PROJ, 'public', 'assets', 'scenecast', 'audio.wav');
-  const p = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=channels,sample_rate,width',
+  const p = spawnSync('ffprobe', ['-v', 'error', '-show_entries',
+    'stream=channels,sample_rate,bits_per_sample,sample_fmt',
     '-show_entries', 'format=duration', '-of', 'json', wav], {encoding: 'utf8'});
   const info = JSON.parse(p.stdout);
   const st = info.streams[0];
   const dur = Number(info.format.duration);
   ok(st.channels === 2 && Number(st.sample_rate) === 48000, '音频 48k 双声道（与渲染链一致）');
+  // 16bit：ffprobe 对 PCM 一般直接给 bits_per_sample；个别版本不给这一个字段，
+  // 就退回看 sample_fmt（s16）。两条路都用「提取整数」，不整体转换。
+  const bits = firstInt(st.bits_per_sample)
+    ?? firstInt(/s(\d+)/.exec(String(st.sample_fmt ?? ''))?.[1]);
+  ok(bits === 16,
+    `采样位深 16bit（bits_per_sample=${st.bits_per_sample} sample_fmt=${st.sample_fmt}）`);
   const expect = tl.total_frames / tl.fps;
   ok(Math.abs(dur - expect) < 0.15, `音频 ${dur.toFixed(2)}s 与时间轴 ${expect.toFixed(2)}s 一致`);
 
@@ -121,6 +156,15 @@ console.log('\n=== 4) 音频与时间轴一致、时间轴自洽 ===');
     }
   }
   ok(inside, '每个字幕块都落在所属句区间内');
+  // 字幕块数：期望值**从解说词夹具算**，不写死常量 —— 夹具里每个内容行是一句，
+  // 行内每个 `|` 再多切一块（`|` 只切字幕、不影响朗读）。实现若忽略 `|`，
+  // 就会退化成「每句一块」，这条随即报错。
+  const narrText = readFileSync(join(PROJ, 'script', 'narration.txt'), 'utf8');
+  const lines = narrText.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'));
+  const expectSubs = lines.reduce((n, l) => n + l.split('|').filter((c) => c.trim()).length, 0);
+  const pipes = expectSubs - lines.length;
+  ok(subs.length === expectSubs,
+    `字幕块数 ${subs.length} == 夹具算出的 ${expectSubs}（${lines.length} 句 + ${pipes} 处 | 切分）`);
   ok((tl.chapters ?? []).length === 2, `章节数 2（实际 ${(tl.chapters ?? []).length}）`);
 }
 

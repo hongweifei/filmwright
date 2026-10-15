@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """提交前审计：1) 机器专属路径泄漏  2) 体积  3) 该忽略的是否真被忽略
+4) 最近一次提交的消息编码（U+FFFD）
 
 用法：git add -A && python tools/audit-commit.py
 """
 import io, os, re, subprocess, sys
+
+# 输出编码显式钉成 UTF-8。原因：本机控制台是 CP936，stdout 一旦被重定向或接管道，
+# Python 就按 GBK 编码输出，本文件里的 ✓ / ⚠ 会当场 UnicodeEncodeError —— 断言还没
+# 开始跑，工具先崩了（HEAD 版实测：崩在打印第一个 ✓ 的那一句）。仓库里给 Python 子进程
+# 设 PYTHONIOENCODING=utf-8 是同一个口径。
+sys.stdout.reconfigure(encoding='utf-8')
 
 # 仓库根 = 本文件所在 tools/ 的上级（不写死绝对路径）
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -74,4 +81,28 @@ print('\n检查不该提交的东西：')
 bad = [f for f in files if re.search(r'(^|/)(out|qc|renders)/|audio\.wav|node_modules|audio/cache', f)]
 print('  ' + ('✓ 没有产物/缓存/音频' if not bad else '⚠ 混进了：' + ', '.join(bad[:10])))
 
-sys.exit(1 if (hits or bad) else 0)
+# 4. 提交消息的编码卫生
+#    U+FFFD 是「替换字符」：它一出现，就说明消息在某一环被按错误的编码解码过 ——
+#    那是数据损坏，不是风格问题（中文提交消息 + CP936 控制台是典型来源）。
+#    这条断言原在 tools/verify-commit.py，但那边只 print、恒 exit 0，从不因它失败；
+#    永远绿的检查不是检查，所以搬到这里并计入退出码。
+#    读不到消息（仓库还没有提交）同样算没核对上 —— 空集上的「干净」不是干净。
+print('\n检查最近一次提交的消息编码：')
+p = subprocess.run(['git', 'log', '-1', '--pretty=format:%H%n%s%n%b'],
+                   cwd=R, capture_output=True)
+msg = p.stdout.decode('utf-8', 'replace')
+n_fffd = msg.count('\ufffd')
+if p.returncode != 0 or not msg.strip():
+    msg_bad = True
+    print('  ⚠ 没读到提交消息（git log 退出码 %d）⇒ 这一条没核对上' % p.returncode)
+elif n_fffd:
+    msg_bad = True
+    print('  ⚠ U+FFFD %d 处（0 才是干净）：' % n_fffd)
+    for line in msg.split('\n'):
+        if '\ufffd' in line:
+            print('     ' + line.strip()[:110])
+else:
+    msg_bad = False
+    print('  ✓ 提交消息无 U+FFFD（%d 字符）' % len(msg))
+
+sys.exit(1 if (hits or bad or msg_bad) else 0)

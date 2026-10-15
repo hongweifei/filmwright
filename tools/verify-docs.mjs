@@ -3,6 +3,10 @@
 //   node tools/verify-docs.mjs            # 检查（CI 用，不一致就失败）
 //   node tools/verify-docs.mjs --fix      # 自动修正数字类说法
 //
+// 每次检查都会**顺带跑一遍本工具自己的负面对照**：在系统临时目录里搭一个最小仓库根，
+// 先证明「数字全对」能过，再把一个数字故意写错、要求它红（详见文件末尾那一节）。
+// 子进程用 `FW_VERIFY_DOCS_NO_NEG=1` 关掉这一层 —— 否则会自己调自己，无限递归。
+//
 // ## 为什么需要这个工具
 //
 // 实测发现 **26 处脱节**：文档说「视频没有内建支持」而 clips 早已实现、
@@ -12,9 +16,12 @@
 //
 // 所以数字不写死：这个工具从**实现里读事实**，再扫文档里的说法。
 // 数字变了而文档没跟上，CI 就会红。
-import {readFileSync, readdirSync, writeFileSync, existsSync} from 'node:fs';
+import {readFileSync, readdirSync, writeFileSync, existsSync,
+  mkdirSync, mkdtempSync, rmSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {join, relative, resolve} from 'node:path';
+import {dirname, join, relative, resolve} from 'node:path';
+import {tmpdir} from 'node:os';
+import {fileURLToPath} from 'node:url';
 
 // resolve() 保证 ROOT 是绝对路径（与其它验收工具一致；相对路径在这里能工作，
 // 但统一成绝对路径少一类隐患）。
@@ -146,6 +153,13 @@ const fixes = [
    make: (m) => `${F.toolCount}${m[2]}`, label: '验收工具数'},
   {re: /(\d+)(\s*个在 CI 里自动跑)/g, numIdx: 1, want: F.wiredToolCount,
    make: (m) => `${F.wiredToolCount}${m[2]}`, label: '自动跑的验收工具数'},
+  // ⚠️ 同一件事的**第二种写法**：`工具接入 N/M`（N=接入数、M=总数）。
+  // 实测踩到：CHANGELOG 里写着「工具接入 20/22」而实际已是 22/24 ——
+  // 上面两条规则匹配的是「N 个验收工具」/「N 个在 CI 里自动跑」，
+  // **这种斜杠写法一条都匹配不上**，于是守卫静默放过。
+  // 判据取**第一个数**（接入数）比 `wiredToolCount`，改写时把两个数一起归一。
+  {re: /工具接入\s*(\d+)\s*\/\s*(\d+)/g, numIdx: 1, want: F.wiredToolCount,
+   make: () => `工具接入 ${F.wiredToolCount}/${F.toolCount}`, label: '工具接入数（N/M）'},
 ];
 
 /**
@@ -165,6 +179,17 @@ const FACT_CLAIMS = [
 
 const problems = [];
 let fixedCount = 0;
+
+// ---------- 扫描量下限（空集上的「一致」不是一致）----------
+// `git ls-files` **成功但返回空**（索引里一个 .md 都没有）时 `tracked` 是**空数组**，
+// 而空数组是 truthy ⇒ DOC_FILES 为空 ⇒ 上面那批数字与事实性判据**一条都不会跑**，
+// 工具照样打印「✓ 文档数字与事实性说法都与实现一致」并 EXIT=0。
+// 实测（仓库里 0 个被跟踪的 .md、磁盘上有 2 个 .md）：旧版绿，判据全空转。
+// 所以加一条下限：扫不到文档就算失败 —— 免得它空转还恒绿。
+if (!DOC_FILES.length) {
+  problems.push({kind: 'scan', doc: '（文档枚举）', line: '—', text: '扫描到 0 个文档文件',
+    why: '一个 .md 都没扫到 —— 要么 git 索引里没有 .md，要么 ROOT 给错了；空集不能算「一致」'});
+}
 
 /**
  * 匹配到的数字是否**在引号里**（引述旧值，不是当前断言）。
@@ -208,7 +233,7 @@ const RELEASED_FROM = new Map();
 
 for (const file of DOC_FILES) {
   const rel = relative(ROOT, file).replace(/\\/g, '/');
-  let text = readFileSync(file, 'utf8');
+  const text = readFileSync(file, 'utf8');
   const orig = text;
   const lines = text.split('\n');
 
@@ -271,7 +296,6 @@ for (const file of DOC_FILES) {
       writeFileSync(file, out, 'utf8');
       fixedCount++;
     }
-    text = out;
   }
 }
 
@@ -330,6 +354,169 @@ for (const f of DOC_FILES) {
 const negByDoc = {};
 for (const n of negLines) negByDoc[n.doc] = (negByDoc[n.doc] || 0) + 1;
 
+// ---------- 本工具自己的负面对照 ----------
+// 纪律：**一个永远绿的检查不是检查**。上面那套判据（数字核对、事实性说法、工具表计数）
+// 万一变成恒真 —— 文档枚举取到空集、规则被整段跳过 —— 整份工具照样 EXIT=0，CI 一路绿着放行。
+// 所以每次运行都**自己造缺陷、要求自己红**（三个夹具、三次子进程，别为了省事把这条删了）：
+//
+//   ① 夹具的数字与实现一致 + 一行「引号里引述的旧值」 ⇒ 要求 EXIT=0
+//      （两个方向都算断言：既证明夹具不是恒红，也证明引号豁免没坏成误报）
+//   ② 数字 / 工具表自动跑数 / 事实性说法 **各弄坏一处**  ⇒ 要求 EXIT=1，且三类问题都得报出来
+//   ③ 文档一个都没进 git 索引（空集）                  ⇒ 要求 EXIT=1（配上文那条扫描量下限）
+//
+// ⚠️ 全程**不读也不写真源码**：夹具搭在 os.tmpdir() 下，跑完整个删掉。
+// 本仓库为「拿真源码做对照」吃过大亏（改到一半被杀就留下脏状态），所以宁可多写几十行。
+const NEG_ENV = 'FW_VERIFY_DOCS_NO_NEG';
+const SELF_PATH = fileURLToPath(import.meta.url);
+
+/**
+ * 夹具的「实现」与「文档」由同一批数组生成 —— 数字只写一遍，
+ * 免得夹具自己先对不上（那样对照就成了恒红，一样没有区分力）。
+ *
+ * 文件路径不能随便挑：`facts()` 读的是**硬编码路径**，缺一个就会抛。
+ * 所以这里等于把「这个工具依赖哪些实现文件」也钉住了 —— 路径一改，负面对照当场红。
+ */
+function fixtureFiles() {
+  const types = ['alpha', 'beta', 'gamma'];
+  const containers = ['gamma'];
+  const staticChecks = ['compile', 'lint'];
+  const browserChecks = ['render'];
+  const testNames = ['t1', 't2'];
+  const effects = ['blur', 'glow'];
+  const tools = ['verify-alpha.mjs', 'verify-beta.mjs'];
+  const wired = ['verify-alpha.mjs'];
+  const templates = types.length - containers.length;   // 容器不算模板（与 facts() 同口径）
+  const q = (xs) => xs.map((x) => `'${x}'`).join(', ');
+
+  const files = {
+    // ── facts() 会读的实现文件 ──
+    'src/contract/scene.js': `export const SHOT_TYPES = [${q(types)}];\n`
+      + `export const CONTAINER_TYPES = [${q(containers)}];\n`,
+    'src/host/checks/index.mjs': `export async function runChecks({staticOnly} = {}) {\n`
+      + `  const results = [];\n`
+      + staticChecks.map((n) => `  results.push('${n}');\n`).join('')
+      + `  if (!staticOnly) {\n`
+      + browserChecks.map((n) => `    results.push(await check${n[0].toUpperCase()}${n.slice(1)}());\n`).join('')
+      + `  }\n  return results;\n}\n`,
+    'src/host/cli/index.mjs': `const COMMANDS = [['render', '渲染'], ['check', '自检']];\n`,
+    'src/host/mcp/server.mjs': `server.registerTool('a', {}, () => {});\n`
+      + `server.registerTool('b', {}, () => {});\n`,
+    'src/runtime/composite/layer.js': `export const BLEND_MODES = ['normal', 'multiply'];\n`,
+    'src/runtime/stage/shots.js': `export function normalizeTransition(t) {\n`
+      + `  if (t === 'fade') return 'crossfade';\n  return t || 'crossfade';\n}\n`,
+    'src/host/media/clips.mjs': `export const CLIPS = true;\n`,   // 有了它，② 那句否定才过期
+    'src/runtime/clips.js': `export const CLIPS = true;\n`,
+    'src/contract/effects.js': `export const EFFECT_TYPES = [${q(effects)}];\n`,
+    'tests/fixture.test.mjs': testNames.map((n) => `test('${n}', () => {});\n`).join(''),
+    'tools/verify-alpha.mjs': `// 夹具占位\n`,
+    'tools/verify-beta.mjs': `// 夹具占位\n`,
+    '.github/workflows/ci.yml': `jobs:\n  static:\n    steps:\n`
+      + wired.map((f) => `      - run: node tools/${f}\n`).join(''),
+    // ── 被判的文档 ──
+    'README.md': `# 夹具仓库\n\n`
+      + `这是自检夹具：${templates} 类模板、${staticChecks.length + browserChecks.length} 道自检`
+      + `（前 ${staticChecks.length} 道不启浏览器）。\n`
+      + `共 ${testNames.length} 个单元测试、${effects.length} 个效果、${tools.length} 个验收工具，`
+      + `其中 ${wired.length} 个在 CI 里自动跑。\n`
+      // 引号里的旧值：**引述**，不是当前断言 ⇒ 一条都不许报（豁免坏了这里就会红）
+      + `旧说法：「${templates + 7} 类模板」。\n`,
+    'docs/qc.md': `# 夹具\n\n| 守卫 | 说明 |\n| --- | --- |\n`
+      + wired.map((f) => `| \`${f}\` | 夹具守卫 |\n`).join('')
+      + `\n**${tools.length} 个验收工具里 ${wired.length} 个自动跑。**\n`,
+  };
+  return {files, spec: {templates, effects, wired},
+    docCount: Object.keys(files).filter((p) => p.endsWith('.md')).length};
+}
+
+/**
+ * 把夹具写到 dir。始终 `git init` 并**加一个非 .md 进索引**（这样 `git add` 不会因
+ * 无参数报错）；`trackDocs=false` 时**不加那两个 .md** —— 专门造「仓库里 0 个被跟踪的
+ * 文档、磁盘上却有」的空集。返回 git 是否可用（空集那条对照依赖它）。
+ */
+function writeFixture(dir, trackDocs) {
+  for (const [p, src] of Object.entries(fixtureFiles().files)) {
+    const full = join(dir, p);
+    mkdirSync(dirname(full), {recursive: true});
+    writeFileSync(full, src, 'utf8');
+  }
+  try {
+    execFileSync('git', ['init', '-q'], {cwd: dir, stdio: 'ignore'});
+    execFileSync('git', ['add', '--', 'src/contract/scene.js'], {cwd: dir, stdio: 'ignore'});
+    if (trackDocs) execFileSync('git', ['add', '--', 'README.md', 'docs/qc.md'], {cwd: dir, stdio: 'ignore'});
+    return true;
+  } catch { return false; }   // 没有 git：工具会回退到扫磁盘，只是「空集」那条做不了
+}
+
+/** 用**同一份工具**在临时根上跑一遍（子进程关掉负面对照，否则递归）。 */
+function runToolOn(root) {
+  try {
+    return {code: 0, out: execFileSync(process.execPath, [SELF_PATH, root], {
+      encoding: 'utf8', env: {...process.env, [NEG_ENV]: '1'}, stdio: ['ignore', 'pipe', 'pipe']})};
+  } catch (e) {
+    return {code: Number.isInteger(e.status) ? e.status : -1,
+      out: `${e.stdout ?? ''}${e.stderr ?? ''}`};
+  }
+}
+
+// ⚠️ 锚点没命中要**当场抛**：静默的 no-op 替换会让对照假绿（本次写这条时就踩过一次 ——
+// `spec.effects` 拿的是数组而不是个数，`2 个效果` 根本没匹配上，缺陷压根没注入进去，
+// 是 ② 这条对照红出来才发现的）。
+const patchFile = (p, from, to) => {
+  const src = readFileSync(p, 'utf8');
+  if (!src.includes(from)) throw new Error(`对照锚点没命中：「${from}」（${p}）`);
+  writeFileSync(p, src.replace(from, to), 'utf8');
+};
+const appendFile = (p, extra) => writeFileSync(p, readFileSync(p, 'utf8') + extra, 'utf8');
+
+/** 跑全部对照；① 期望的「过」也算一条断言 —— 恒红的对照和恒绿的一样没用。 */
+function runNegativeControl() {
+  const results = [];
+  const failures = [];
+  if (process.env[NEG_ENV] === '1') return {results, failures, skipped: true};
+  const {spec, docCount} = fixtureFiles();
+  const cases = [
+    {name: '① 夹具数字全对 + 引号引述的旧值', want: 0, hits: [`扫描了 ${docCount} 个文档文件`]},
+    {name: '② 数字 / 工具表 / 事实性说法 各弄坏一处', want: 1,
+     hits: ['个效果', `个工具里 ${spec.wired.length + 8} 个自动跑`, '事实性说法'],
+     mutate: (d) => {
+       patchFile(join(d, 'README.md'), `${spec.effects.length} 个效果`,
+         `${spec.effects.length + 7} 个效果`);
+       patchFile(join(d, 'docs/qc.md'), `里 ${spec.wired.length} 个自动跑`,
+         `里 ${spec.wired.length + 8} 个自动跑`);
+       appendFile(join(d, 'README.md'), '\n本项目视频没有内建支持。\n');
+     }},
+    {name: '③ 文档没进 git 索引（空集）', want: 1, hits: ['0 个文档文件'], track: false, needsGit: true},
+  ];
+  const dirs = [];
+  try {
+    for (const c of cases) {
+      let dir;
+      try {
+        dir = mkdtempSync(join(tmpdir(), 'fw-verify-docs-neg-'));
+        dirs.push(dir);
+        const gitOk = writeFixture(dir, c.track !== false);
+        if (c.needsGit && !gitOk) { results.push({name: c.name, skipped: '本机没有 git'}); continue; }
+        if (c.mutate) c.mutate(dir);
+        const {code, out} = runToolOn(dir);
+        const missing = (c.hits ?? []).filter((h) => !out.includes(h));
+        const ok = code === c.want && !missing.length;
+        results.push({name: c.name, code, want: c.want, hits: c.hits, ok});
+        if (!ok) failures.push({name: c.name, out,
+          why: `期望 EXIT=${c.want}${c.hits?.length ? ` 且输出含 ${c.hits.map((h) => `「${h}」`).join('、')}` : ''}，`
+            + `实得 EXIT=${code}${missing.length ? `（缺 ${missing.map((h) => `「${h}」`).join('、')}）` : ''}`});
+      } catch (e) {
+        results.push({name: c.name, code: -1, want: c.want, ok: false});
+        failures.push({name: c.name, why: `夹具没搭起来：${e.message}`});
+      }
+    }
+  } finally {
+    for (const d of dirs) {
+      try { rmSync(d, {recursive: true, force: true}); } catch { /* 删不掉也别掩盖结论 */ }
+    }
+  }
+  return {results, failures, skipped: false};
+}
+
 // ---------- 报告 ----------
 console.log('实现事实（唯一真相源）：');
 console.log(`  模板 ${F.templateCount} 类 | 自检 ${F.checkCount} 道（静态 ${F.staticCheckCount}） | 命令 ${F.commands.length} 个`);
@@ -343,6 +530,7 @@ if (FIX) {
 
 const numbers = problems.filter((p) => p.kind === 'number');
 const claims = problems.filter((p) => p.kind === 'claim');
+const scans = problems.filter((p) => p.kind === 'scan');
 if (numbers.length) {
   console.log(`\n✗ ${numbers.length} 处数字与实现不一致（可跑 --fix 自动修）：`);
   for (const p of numbers) console.log(`   ${p.doc}:${p.line}  ${p.why}\n      > ${p.text}`);
@@ -351,7 +539,30 @@ if (claims.length) {
   console.log(`\n✗ ${claims.length} 处事实性说法已过时（需人工改写，工具不代改）：`);
   for (const p of claims) console.log(`   ${p.doc}:${p.line}  ${p.why}\n      > ${p.text}`);
 }
+if (scans.length) {
+  console.log(`\n✗ ${scans.length} 处枚举下限问题（**空集上的「一致」不是一致**）：`);
+  for (const p of scans) console.log(`   ${p.doc}:${p.line}  ${p.why}\n      > ${p.text}`);
+}
 if (!problems.length) console.log('\n✓ 文档数字与事实性说法都与实现一致');
+
+// 负面对照：每次运行都跑（子进程用 NEG_ENV 关掉，不递归）。
+// ① 期望的是「过」—— 恒红的对照和恒绿的一样没有区分力，所以两个方向都算断言。
+const SELF_TEST = runNegativeControl();
+console.log('\n负面对照（临时仓库根里**故意弄坏**，要求它红；跑完即删）：');
+for (const r of SELF_TEST.results) {
+  if (r.skipped) { console.log(`   – ${r.name}：跳过（${r.skipped}）`); continue; }
+  console.log(`   ${r.ok ? '✓' : '✗'} ${r.name} → EXIT=${r.code}`
+    + (r.ok ? (r.hits?.length ? `（命中 ${r.hits.length} 处预期文案）` : '（如预期）')
+      : `，期望 EXIT=${r.want}`));
+}
+if (SELF_TEST.skipped) console.log(`   （整层已跳过：${NEG_ENV}=1）`);
+if (SELF_TEST.failures.length) {
+  console.log(`\n✗ ${SELF_TEST.failures.length} 条负面对照没按预期 —— 上面那套判据已经不能证伪：`);
+  for (const f of SELF_TEST.failures) {
+    console.log(`   ${f.name}：${f.why}`);
+    if (f.out) console.log(`      子进程输出末尾：\n      ${String(f.out).trim().split('\n').slice(-8).join('\n      ')}`);
+  }
+}
 
 // 否定式断言清单：**只列出、不判对错**（多数是有意的设计声明）。
 // 目的是让"一共有多少条这样的断言"可见 —— 原来没人知道，也就没人定期过一遍。
@@ -366,4 +577,4 @@ if (process.argv.includes('--list-negative')) {
   console.log('   ⚠️ 这些**多数是有意的设计声明**（不该改），但否定一旦被实现推翻就没人提醒 ——');
   console.log('      加功能后请过一遍：node tools/verify-docs.mjs --list-negative');
 }
-process.exit(problems.length ? 1 : 0);
+process.exit(problems.length || SELF_TEST.failures.length ? 1 : 0);

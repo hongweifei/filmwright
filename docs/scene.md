@@ -61,7 +61,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 |---|---|---|
 | `title` | ✔ | 大标题（超宽自动缩字号） |
 | `kicker` / `sub` / `en` | — | 眉题（等宽小字）/ 副题（章节主色）/ 英文行 |
-| `reveal` | — | **逐字入场**：`{stagger, dur, dy}`（默认 3 / 12 / 26）。字符**逐个**进场而不是整块淡入 —— 这是"像不像现代动态图形"最标志性的一条。按**码点**切字（中文/emoji 都对）；每个字按自己的 advance 居中，所以落位后与整块画法**逐字节相同** |
+| `reveal` | — | **逐字入场**：`{stagger, dur, dy}`（默认 3 / 12 / 26）。字符**逐个**进场而不是整块淡入 —— 这是"像不像现代动态图形"最标志性的一条。按**码点**切字（中文/emoji 都对）；每个字按自己的 advance 居中，所以落位后与整块画法的**残差极小**（实测最大差 **24 级**，来自光晕叠加，不是排字错位） |
 
 ### `bullets` 要点列表
 | 字段 | 必填 | 说明 |
@@ -95,7 +95,7 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 
 `reveal` 与 `title` 同一套（`{stagger, dur, dy}`），但 `quote` 会**跨行接着数** ——
 折行之后整段仍是一句一句地进，而不是每行从 0 重来（验收里有一条
-「落位后与整块画法逐字节相同」把这点钉住）。
+「落位后与整块画法的残差极小（实测最大差 24 级，来自光晕叠加）」把这点钉住）。
 
 ### `terminal` 终端窗口
 `lines: [字符串 | {text, color?}]`（必填，≤10）、`title?`（窗口标题）、`heading?`。高度按全量行定死，逐行揭示不跳窗，光标常闪在最新行。
@@ -369,13 +369,15 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
 
 1. `contract/effects.js`：`EFFECT_TYPES` 加 `displace`；`EFFECT_SPECS.displace`：
    · `amount` 0–1（必填）—— 最大位移，按画面短边比例
-   · `scale` 1–40（默认 8）—— 噪声尺度：越大块越碎
+   · `frequency` 1–40（默认 8）—— 噪声尺度：越大块越碎（**契约里的真名**，
+     `distort` 用的也是这个 uniform 名；早期草稿里曾写作 `scale`）
    · `phase` −180–180°（默认 0）—— 噪声相位，**可写关键帧**（这样流动仍是 N 的函数）
    · `noopWhen: [{amount: 0}]`
 2. `runtime/fx/gpu.js`：加 `FS_DISPLACE`（片元着色器）+ `SIMPLE_PASSES.displace` 一行。
    噪声用 hash 值噪声（不是纹理），保证与纹理无关、可复现
 3. 验收（`tools/verify-effects.mjs` 加一节）：`amount=0` 直通；同一帧两次渲染**逐字节一致**；
-   `phase` 关键帧 ⇒ 两帧不同；`scale` 大 ⇒ 高频更多
+   `phase` 关键帧 ⇒ 两帧不同；不同 `frequency` ⇒ 输出不同（**不是**「频率大 ⇒ 高频更多」，
+   那条方向性**实测不成立**，别写成判据）
 4. 文档：效果表加一行；`schema` 输出自动带上（它从 `EFFECT_TYPES` 读）
 
 #### ⚠️ 第一次实现**失败并已回退** —— 它违反了核心不变量
@@ -426,7 +428,9 @@ uniform 名（我用了 `scale`，`distort` 用 `frequency`）这几处之一。
 **放弃了**：值噪声用 smoothstep 插值后**同样是平滑的**，在相近特征尺度下
 梯度分布并不更宽 —— **我无法为它给出可靠阈值**。
 **写不出可靠阈值的判据不如不写**（否则会变成"看起来在验、其实恒真"）。
-替代判据是：`displace ≠ distort`（同样 amount 下输出不同）+ `scale` 真的改变高频含量。
+替代判据是：`displace ≠ distort`（同样 amount 下输出不同）+ 不同 `frequency` 输出不同 ——
+**不是**「频率越大高频越多」（那条方向性实测不成立，`tools/verify-effects.mjs` 里只用能证伪的
+「不同 `frequency` ⇒ 不同输出」）。
 
 ## 3D 图层（现成的 three，**可选**依赖）
 

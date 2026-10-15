@@ -1,6 +1,6 @@
 // 验收：效果链（最小闭环 blur）真的生效、方向正确、代价可量。
 //
-//   node tools/verify-effects.mjs [<仓库根>] [--gpu]
+//   node tools/verify-effects.mjs [<仓库根>] [--gpu] [--negative]
 //
 // ## 判据为什么这样设计
 //
@@ -12,16 +12,30 @@
 //   · radius=0 必须**逐位等于**不写 effects（短路保证）
 //   · 加了 radius>0 的帧必须与不写 effects 不同（否则效果没上）
 //   · 性能：同一次运行内配对测有/无效果的 ms/帧（跨运行比会受负载漂移污染）
+//
+// ## 它自己的负面对照（`--negative`）
+//
+// 上面那些判据自己也要能被证伪，否则就是"永远绿的检查"。`--negative` 把**效果链**
+// 故意弄坏（让 blur 那一趟不再生效），在**临时副本仓库根**上重跑本工具，要求它**红**
+// 且红在**预期的那组判据**上、且真的跑完了全程。真源码一个字节都不动。
+// ⚠️ CI 是**无参**调用 ⇒ 这一段不进 CI 的墙钟（它要跑一整遍，只适合手动/改判据时跑）。
 import {spawnSync} from 'node:child_process';
-import {cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
+import {cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
-import {join, resolve} from 'node:path';
+import {tmpdir} from 'node:os';
+import {join, relative, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {EFFECT_TYPES} from '../src/contract/effects.js';
 
 // resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
 // 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
-const ROOT = resolve(process.argv[2] || process.cwd()).replace(/\\/g, '/');
-const USE_GPU = process.argv.includes('--gpu');
+//
+// ⚠️ 位置参数必须**跳过选项**：选项也是 argv 元素，直接取 `argv[2]` 会让
+// `node tools/verify-effects.mjs --gpu` 把 ROOT 解析成 `<cwd>/--gpu`（选项写在前面就崩）。
+const ARGV = process.argv.slice(2);
+const ROOT = resolve(ARGV.filter((a) => !a.startsWith('--'))[0] || process.cwd()).replace(/\\/g, '/');
+const USE_GPU = ARGV.includes('--gpu');
+const NEGATIVE = ARGV.includes('--negative');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
 const SRC = join(ROOT, 'examples', 'scenecast');
 const P = join(ROOT, '.work', 'fx-e2e');
@@ -29,6 +43,11 @@ const P = join(ROOT, '.work', 'fx-e2e');
 let bad = 0;
 const ok = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
 const line = (c = '─') => console.log(c.repeat(76));
+
+// `--negative`：换成跑**本工具自己的负面对照**（见文件头与文件末尾的 runNegativeControl）。
+// ⚠️ 这一句必须放在 `ok` / `line` 之后：它们都是 const，函数里要用到，
+// 提前调用会踩"Cannot access before initialization"（写这版时真踩过）。
+if (NEGATIVE) process.exit(runNegativeControl());
 
 rmSync(P, {recursive: true, force: true});
 cpSync(SRC, P, {recursive: true});
@@ -295,6 +314,15 @@ const maskPct = (mask.reduce((a, b) => a + b, 0) / mask.length * 100).toFixed(1)
 const inner = erodeMask(mask, W, H, 8);
 const innerPct = (inner.reduce((a, b) => a + b, 0) / inner.length * 100).toFixed(1);
 console.log(`镜头内容区域（自动标定）：占整帧 ${maskPct}%；腐蚀后（内容深处）${innerPct}% —— 其余是背板，效果不作用于它\n`);
+// **下限断言**：掩码是拿"blur 改动了哪些像素"标定的，所以它非空本身就证明效果真的改了画面。
+// 空集上算出来的均值恒为 0，后面每一条"掩码内"的判据都会退化成比 0 与 0 —— 打印出来
+// 有数字、看着像在量，其实什么都没量（审计就点名过这类"算了不用的量"）。
+{
+  const maskN = mask.reduce((a, b) => a + b, 0);
+  const innerN = inner.reduce((a, b) => a + b, 0);
+  ok(maskN > 0 && innerN > 0,
+    `标定出的内容掩码与腐蚀后的掩码都**非空**（${maskN} / ${innerN} 像素）⇒ 后面的"掩码内"判据不是在空集上取值`);
+}
 
 line('═');
 console.log('一、radius=0 必须**逐位等于**不写 effects（短路保证）');
@@ -723,11 +751,23 @@ function bench(effects, tag) {
 }
 const tNo = bench(null, 'no');
 const tBlur = bench([{type: 'blur', radius: 12}], 'blur');
-if (tNo && tBlur) {
-  console.log(`  不写 effects : ${tNo.toFixed(1)} ms/帧`);
-  console.log(`  blur radius=12: ${tBlur.toFixed(1)} ms/帧`);
-  console.log(`  ⇒ 代价 +${(tBlur - tNo).toFixed(1)} ms/帧（${(tBlur / tNo).toFixed(2)}×）`);
-  ok(true, '两档都渲染成功（数字见上，这是**实测**不是外推）');
+// ⚠️ 这里原先是 `ok(true, ...)` —— **恒真**，等于没有判据（审计点名过）。
+// 改成量**方向**：模糊至少要多过几趟 GPU，端到端只会更贵。
+// 两档在**同一次运行内配对**测（先无效果、后有模糊），跨运行比会被负载漂移污染。
+// 唯一会让它假红的是"测量期间负载突变"，所以两数反了时再配对重测一轮、仍反才算红
+// —— 与 still() 的传输抖动重试同一口径（只对"看起来像噪声"的失败重试）。
+let msNo = tNo, msBlur = tBlur;
+if (msNo && msBlur && !(msBlur > msNo)) {
+  console.log(`  （第一轮配对反了：${msBlur.toFixed(1)} ≤ ${msNo.toFixed(1)} ms/帧，重测一轮）`);
+  msNo = bench(null, 'no2');
+  msBlur = bench([{type: 'blur', radius: 12}], 'blur2');
+}
+if (msNo && msBlur) {
+  console.log(`  不写 effects : ${msNo.toFixed(1)} ms/帧`);
+  console.log(`  blur radius=12: ${msBlur.toFixed(1)} ms/帧`);
+  console.log(`  ⇒ 代价 +${(msBlur - msNo).toFixed(1)} ms/帧（${(msBlur / msNo).toFixed(2)}×）`);
+  ok(msBlur > msNo,
+    `有模糊**更贵**（${msBlur.toFixed(1)} > ${msNo.toFixed(1)} ms/帧）⇒ 效果链真的在跑 GPU 趟，不是空转`);
 } else {
   ok(false, '性能测量渲染成功');
 }
@@ -736,3 +776,115 @@ rmSync(P, {recursive: true, force: true});
 line('═');
 console.log(bad === 0 ? '✓ 效果链最小闭环验收通过' : `✗ ${bad} 项失败`);
 process.exit(bad ? 1 : 0);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 本工具自己的负面对照（`--negative`）。
+//
+// 上面那些判据自己也要能被证伪 —— "一个永远绿的检查不是检查"。这一段只改
+// **临时副本仓库根**里的源码，真仓库一个字节都不动；跑完（含被 Ctrl-C）即清理。
+//
+// ⚠️ CI 不跑它（CI 是无参调用）：它要让本工具**完整跑一遍**，成本与正常一轮同量级。
+// 手动跑法（改完判据、或怀疑某条判据变成恒真时）：
+//   node tools/verify-effects.mjs --negative
+// 对照成立 ⇒ 退出码 0；**对照失效**或判据漏了这种缺陷 ⇒ 退出码 1。
+// ═════════════════════════════════════════════════════════════════════════════
+function runNegativeControl() {
+  const tmp = mkdtempSync(join(tmpdir(), 'fw-fx-neg-'));
+  const wipe = () => { try { rmSync(tmp, {recursive: true, force: true}); } catch { /* 尽力而为 */ } };
+  // ⚠️ 光靠 try/finally 挡不住"被 kill"：Node 收到 SIGINT/SIGTERM 默认直接终止、
+  // **不走 finally**（SIGKILL 更挡不住）⇒ 另挂钩子：先清理，再按惯例退出码退出。
+  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    process.on(sig, () => { wipe(); process.exit(code); });
+  }
+  let bad = 0;
+  const say = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
+
+  line('═');
+  console.log('负面对照：故意让 blur 那一趟不再生效，要求本工具**红**（改的是临时副本，真源码不动）');
+  line();
+  console.log(`  临时仓库根：${tmp}（跑完即删）`);
+  const fixture = join(ROOT, 'examples', 'scenecast');
+  try {
+    // 只带渲染真正用到的那些。audio / renders / .work 与大音频素材都不必带
+    // （前两类本工具自己也会从项目副本里删掉，后两类它根本不碰）。
+    const skipTop = new Set(['audio', 'renders', '.work']);
+    cpSync(join(ROOT, 'bin'), join(tmp, 'bin'), {recursive: true});
+    cpSync(join(ROOT, 'src'), join(tmp, 'src'), {recursive: true});
+    cpSync(join(ROOT, 'index.html'), join(tmp, 'index.html'));
+    cpSync(join(ROOT, 'package.json'), join(tmp, 'package.json'));
+    cpSync(fixture, join(tmp, 'examples', 'scenecast'), {
+      recursive: true,
+      filter: (s) => {
+        const rel = relative(fixture, s).replace(/\\/g, '/');
+        if (!rel) return true;                                   // 根自己
+        if (skipTop.has(rel.split('/')[0])) return false;
+        return rel !== 'public/assets/scenecast';                // 大音频素材，渲染不需要
+      },
+    });
+    mkdirSync(join(tmp, '.work'), {recursive: true});
+    mkdirSync(join(tmp, 'tools'), {recursive: true});
+    cpSync(fileURLToPath(import.meta.url), join(tmp, 'tools', 'verify-effects.mjs'));
+
+    // ── 注入缺陷：`apply()` 里 blur 的分支条件恒假 ──
+    // 这**不是**崩溃式的缺陷：画面照常出，只是 `touched` 一直是 false ⇒
+    // `applyEffects` 返回 null ⇒ 调用方走原路 ⇒ 输出与"不写 effects"逐位相同。
+    // "效果没接上"正是第二节要抓的那类缺陷；反过来，把语法改坏、把命令拔掉这种
+    // 注入连渲染都过不去，红了也证明不了判据有牙。
+    const gpu = join(tmp, 'src', 'runtime', 'fx', 'gpu.js');
+    const ANCHOR = "if (step.type === 'blur' && step.radius > 0) {";
+    const before = readFileSync(gpu, 'utf8');
+    if (!before.includes(ANCHOR)) {
+      // 锚点漂移时**判失败**，不是判通过 —— 否则这条对照会在没人发现的情况下空转，
+      // 变成"永远绿"（仓库里踩过这个坑：字符串替换没命中，四条断言全在空气上绿着）。
+      say(false, `注入点没找到（${ANCHOR}）⇒ **对照失效**（不是通过）：gpu.js 改过就得修这条对照`);
+      return 1;
+    }
+    writeFileSync(gpu, before.replace(ANCHOR, "if (step.type === 'blur' && false) {"), 'utf8');
+
+    // ── 在缺陷版上重跑本工具：同一个工具、仓库根指向副本 ──
+    // ⚠️ 只给子进程放宽 **boot 预算**（`session.mjs` 的 `FILMWRIGHT_BOOT_TRIES`，默认 1200×100ms）：
+    // 这条对照要把本工具完整跑一遍（约 90 次浏览器启动），机器一忙就会有一次
+    // "渲染页 130s 内没就绪" 把对照打成"环境没起来" —— 那是噪声、不是判据的结论。
+    // 它只改**等页面就绪的耐心**，一条判据都不读这个变量；操作者自己设了就用操作者的。
+    const t0 = Date.now();
+    const r = spawnSync(process.execPath, [join(tmp, 'tools', 'verify-effects.mjs'), tmp],
+      {encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, cwd: tmp,
+        env: {...process.env, FILMWRIGHT_BOOT_TRIES: process.env.FILMWRIGHT_BOOT_TRIES || '3600'}});
+    const out = String(r.stdout || '') + String(r.stderr || '');
+    const fails = out.split('\n').filter((l) => l.startsWith('✗'));
+    console.log(`  缺陷版：退出码 ${r.status}，耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s，` +
+      `结尾「${out.trimEnd().split('\n').slice(-1)[0] ?? ''}」`);
+    for (const l of fails) console.log(`  | ${l}`);
+
+    // 三条一起成立才算对照成立 —— 缺任何一条，"红了"都可能红得没有意义。
+    say(r.status !== 0, `带缺陷的引擎让本工具**退出码非 0**（实测 ${r.status}）`);
+    // "效果没接上"由这两条判据之一负责抓：blur 不生效 ⇒ 掩码标定出来的内容区是**空集**
+    // （下限断言先响），而第二节的"radius>0 必须与不写 effects 不同"是同一条性质的正面判据。
+    // 只要求**至少命中一条**：两条都要求会把对照绑死在实现细节上；一条都不要求则是空话。
+    const EXPECTS = [
+      '✗ 标定出的内容掩码与腐蚀后的掩码都**非空**',
+      '✗ radius>0 的画面都与不写 effects',
+    ];
+    const hits = EXPECTS.filter((e) => out.includes(e));
+    say(hits.length > 0, `红在**预期的那组判据**上（命中 ${hits.length}/${EXPECTS.length} 条：` +
+      `${hits.map((h) => h.replace(/^✗ /, '')).join(' ／ ') || '一条都没有'}）`);
+    const finished = /✗ \d+ 项失败/.test(out);
+    say(finished, '跑完了**全程**（结尾有"✗ N 项失败"）—— 不是启动/渲染崩掉所以红');
+    if (!finished) {
+      // 没跑完 ⇒ 把尾巴打出来。若是"渲染页没就绪"这类**本机负载**问题（不是判据的结论），
+      // 那就说明这一次对照没跑成，重跑一次即可 —— 但也**不许当作通过**。
+      const envFail = /渲染失败|没就绪/.test(out);
+      console.log(envFail
+        ? '  （这一次是渲染环境没起来：本机负载高时的已知抖动，不算判据的结论，重跑即可）'
+        : '  （没跑完的原因见下；多半是副本缺东西之类的环境问题，不是判据的事）');
+      for (const l of out.trimEnd().split('\n').slice(-12)) console.log(`  | ${l}`);
+    }
+    console.log(bad === 0
+      ? '\n  ⇒ 负面对照成立：确有缺陷时本工具会红，且红在该红的那条判据上。'
+      : '\n  ⇒ **负面对照不成立**：要么这条对照失效，要么判据漏了这种缺陷 —— 别当它通过。');
+  } finally {
+    wipe();
+    console.log('  （已清理临时仓库根）');
+  }
+  return bad ? 1 : 0;
+}
