@@ -83,6 +83,14 @@ const shot = (extra, n, tag) => {
   rmSync(join(P, 'audio'), {recursive: true, force: true});
   rmSync(join(P, 'renders'), {recursive: true, force: true});
   writeFileSync(join(P, 'scene.json'), JSON.stringify({shots: [{at: 1, ...extra}]}, null, 2));
+  // ⚠️ **二分「夹具 vs 引擎」**：把写进去的 scene.json 读回来核一遍。
+  // 加这条是因为 CI（Linux）报「逐字帧与整块帧**哈希完全相同**」而本机（Windows）不同 ——
+  // 那说明逐字分支根本没走。可能是「夹具没写进去」，也可能是「引擎没读它」，
+  // 这条断言把前一半钉死：夹具错了就在**这里**红，而不是在下游判据上红得莫名其妙。
+  const back = JSON.parse(readFileSync(join(P, 'scene.json'), 'utf8')).shots[0];
+  if (extra.reveal !== undefined && back.reveal === undefined) {
+    throw new Error(`filmwright: 夹具的 reveal 没写进 scene.json（${join(P, 'scene.json')}）`);
+  }
   mkdirSync(join(P, 'out'), {recursive: true});
   execFileSync('node', [join(ROOT, 'bin', 'filmwright.mjs'), 'stills', '--project', P,
     '--frames', String(n), '--dir', join(P, 'out')], {stdio: ['ignore', 'ignore', 'inherit']});
