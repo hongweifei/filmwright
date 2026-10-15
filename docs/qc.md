@@ -132,7 +132,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 ## CI 怎么跑
 
-`.github/workflows/ci.yml` 分**三个** job × 平台矩阵：
+`.github/workflows/ci.yml` 分**四个** job × 平台矩阵：
 
 - **static**——`ubuntu` / `macOS` / `windows` 三个 OS 都跑：单元测试 + 静态自检（不启浏览器）。核心零依赖，这是「跨平台」最便宜也最真的证据。MCP 的**协议层**测试（握手、tools/list、只读工具）在这里跑。
 - **browser**——`ubuntu` / `windows`：无头浏览器 + ffmpeg。逐帧 + 画质自检、MCP 的**重浏览器**测试（`FILMWRIGHT_TEST_BROWSER=1` 才跑 stills/review 回图）、渲染确定性自证（同运行内 capture → verify）、负面对照、素材与预览页验证、端到端出片并验帧数。macOS 渲染不进矩阵——没有本地实测证据，不猜。
@@ -156,7 +156,8 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 | 耗时 |
 |---|---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
-| **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 100s，`--frames 1200 --no-big`）**、`verify-readme`（148s）、`verify-attribution`（177s） | 合计约 **7 分钟** |
+| **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 100s，`--frames 1200 --no-big`）**、`verify-attribution`（177s） | 合计约 **5.6 分钟** |
+| **CI 自动跑 · `browser-doc` 作业** | `verify-readme`（148s）—— 按 README 的路径真跑一遍（含全新 clone） | 合计约 **3.5 分钟** |
 | **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-preview` | 合计约 **4.5 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts` / `verify-tts-e2e.py`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 

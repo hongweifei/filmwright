@@ -81,6 +81,50 @@ jobs:
       - name: 调用安全（CI 无参调用 / 存在就直读）
         run: node tools/verify-invocation.mjs
 
+  # README 路径单独一个作业。
+  # 为什么还要再拆：拆出 `browser-slow` 之后，**瓶颈变成了它自己**（约 8 分钟，
+  # 而 `browser` 只有约 5.5 分钟）—— 在非瓶颈作业里做优化**对墙钟一点用没有**。
+  # 把 148s 的 `verify-readme` 挪出来，三个作业的负载变成约 337s / 330s / 208s，
+  # 墙钟由最慢的 337s 决定：**约 8.1 分钟 → 约 5.6 分钟**。
+  browser-doc:
+    name: 渲染·文档路径（README 快速开始要真的走通）· ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: 安装依赖（MCP 重浏览器测试需要）
+        run: npm ci
+
+      - name: 安装 ffmpeg
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: 安装 ffmpeg（choco）
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - name: 确认环境（浏览器 / ffmpeg，缺失即失败）
+        run: |
+          set -euo pipefail
+          node -e "import('./src/host/browser/find.mjs').then((m) => console.log('浏览器：' + m.findBrowser()))"
+          command -v ffmpeg >/dev/null || { echo 'ffmpeg 不在 PATH'; exit 1; }
+
+      # README 承诺的入门路径要**真的走通**（含全新 clone：没有 audio/ 也要出片到 renders/）
+      - name: README 快速开始路径（文档承诺要真的走通）
+        run: node tools/verify-readme.mjs
+
   # 「慢」作业：把三个最费时的验收拆出来单独跑。
   # 为什么拆：`browser` 里那 ~20 个工具是**串行**的（约 13 分钟），
   # 而 GitHub 给每个 job 一个独立 runner —— 拆开就是**真并行**，
@@ -127,10 +171,8 @@ jobs:
       - name: 长片（单实例不退化 / 分片加速 / 段缓存 / 内存）
         run: node tools/verify-longform.mjs --frames 1200 --no-big
 
-      # README 承诺的入门路径要**真的走通**（含全新 clone：没有 audio/ 也要出片到 renders/）
-      - name: README 快速开始路径（文档承诺要真的走通）
-        run: node tools/verify-readme.mjs
-
+      # ⚠️ README 路径这一步**已移到 `browser-doc` 作业** —— 它是这个作业里第二费时的一项，
+      # 而拆出 `browser-slow` 之后瓶颈正是本作业。别再加回来（加了就是重复跑）。
       # 增量重渲按段归因：改一个镜头只重渲覆盖它的段
       - name: 增量重渲的按段归因（改一个镜头只重渲覆盖它的段）
         run: node tools/verify-attribution.mjs
