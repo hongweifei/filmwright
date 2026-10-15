@@ -225,7 +225,7 @@ const r = await openProjectSession(P, proj, {gpu: true, frameSink: {write: async
 let o;
 try {
   const expr = `(async () => {
-    try { const f = new FontFace('FWProbe', 'url(/proj/public/fonts/NotoSansSC.ttf)');
+    try { const f = new FontFace('FWProbe', 'url(/fonts/NotoSansSC.ttf)');
       await f.load(); document.fonts.add(f); } catch (e) {}
     return (${pageEffects.toString()})(${JSON.stringify({w: 1280, h: 720, n: N, font: 'FWProbe'})});
   })()`;

@@ -125,10 +125,12 @@ export function scaffoldProject(targetDir, {template = 'scene'} = {}) {
     'film.config.mjs': configTmpl(slug),
     'script/narration.txt': narrationTmpl(slug),
     '.gitignore': gitignore,
-    'public/fonts/README.md': '# 字体\n\n把 ttf/otf 放在这里（配置的 `fontFiles` 默认引用\n' +
-      '`fonts/NotoSansSC.ttf`、`fonts/Orbitron[wght].ttf`、`fonts/Audiowide-Regular.ttf`、`fonts/Exo2-Italic.ttf`）。\n' +
+    'public/fonts/README.md': '# 字体\n\n本目录**可以空着** —— 库自带一份默认字体（装在 `<库根>/fonts/`），\n' +
+      '配置的 `fontFiles` 默认就引用 `fonts/NotoSansSC.ttf`、`fonts/Orbitron[wght].ttf`、\n' +
+      '`fonts/Audiowide-Regular.ttf`、`fonts/Exo2-Italic.ttf`；服务器先查本目录，查不到就兜到库根那份。\n' +
+      '要换字体就把 ttf/otf 放进本目录（同名即覆盖）。\n' +
       '字体没就绪就画，度量全错；加载失败会回退到系统字体（不报错）。\n' +
-      '可直接抄 `examples/minimal/public/fonts/`（SIL OFL 1.1）。\n',
+      '库自带那份的许可是 SIL OFL 1.1，见 `<库根>/fonts/LICENSE.md`。\n',
     'public/assets/README.md': '# 素材\n\n图片放这里，配置 `assets` 声明名字，scene 的 image 镜头用 `asset` 引用。\n',
   };
   if (template === 'scene') files['scene.json'] = sceneTmpl(slug);

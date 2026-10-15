@@ -153,7 +153,7 @@ my-film/
   script/narration.txt   解说词
   script/timeline.json   tts 生成，渲染读它
   scene.json             声明式画面（或 shots/index.js 手写镜头）
-  public/fonts/…         字体
+  public/fonts/…         字体（可选：库自带一份默认，放这里即覆盖）
   public/assets/…        素材与配音
 
   .work/                 中间产物，可随时删（重跑就有）
@@ -164,7 +164,7 @@ my-film/
 
 | 层 | 是什么 | 什么时候跑 |
 |---|---|---|
-| `npm test` | **377 个单元测试**（JS）+ Python 侧，纯函数、零依赖 | 秒级 |
+| `npm test` | **378 个单元测试**（JS）+ Python 侧，纯函数、零依赖 | 秒级 |
 | `filmwright check` | **十道自检**，`--static-only` **八道**不启浏览器；画质自检**带负面对照**（故意做坏，证明真的会报） | 秒级 / 一次渲染 |
 | `tools/regression.mjs` | **像素回归**：纯结构改动必须逐字节复现基准，改一个像素都不算重构 | 一次渲染 |
 | **25 个验收工具** | 真浏览器 / ffmpeg / 文档一致性 / 发布物；**23 个在 CI 里自动跑** | 约 5 分钟量级（四个作业真并行，墙钟＝最慢那个作业） |
@@ -216,4 +216,4 @@ my-film/
 
 ## 许可
 
-MIT，见 [LICENSE](LICENSE)。`examples/minimal/public/fonts/` 下的四款字体按各自许可分发（SIL OFL 1.1），见该目录的 `LICENSE.md`。
+MIT，见 [LICENSE](LICENSE)。库自带的四款字体（[`fonts/`](fonts)）按各自许可分发（SIL OFL 1.1），见 [fonts/LICENSE.md](fonts/LICENSE.md)。

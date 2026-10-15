@@ -23,6 +23,7 @@
 import {createHash} from 'node:crypto';
 import {existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {join, relative} from 'node:path';
+import {KIT_ROOT} from '../root.mjs';
 
 /** 引擎自身源码的指纹（升引擎就该重渲，否则复用的是旧引擎的画面）。 */
 export function engineFingerprint(runtimeRoot) {
@@ -73,6 +74,11 @@ export function projectFingerprint(proj, projectDir) {
     walk(dir);
   };
   addTree('fonts', join(pub, 'fonts'));
+  // 库自带的字体（包根 `fonts/`）：项目自己没放字体时，**真正被用的就是这一份**
+  // （`server.mjs` 的 `/fonts/` 映射先查项目 `public/`，再兜到包根）。
+  // 不 hash 它，「换了库里的字体但文件名没变」就会**静默复用旧字体渲出来的段** ——
+  // 不报错、不崩、测试也不红，只是画面不对。
+  addTree('fonts', join(KIT_ROOT, 'fonts'));
   addTree('assets', join(pub, 'assets'));
 
   // 片段素材：用抽好的帧数 + 源指纹（帧内容由 clips 的内容寻址缓存保证）
@@ -110,6 +116,11 @@ export function globalFingerprint(proj, projectDir) {
     walk(dir);
   };
   addTree('fonts', join(pub, 'fonts'));
+  // 库自带的字体（包根 `fonts/`）：项目自己没放字体时，**真正被用的就是这一份**
+  // （`server.mjs` 的 `/fonts/` 映射先查项目 `public/`，再兜到包根）。
+  // 不 hash 它，「换了库里的字体但文件名没变」就会**静默复用旧字体渲出来的段** ——
+  // 不报错、不崩、测试也不红，只是画面不对。
+  addTree('fonts', join(KIT_ROOT, 'fonts'));
   addTree('assets', join(pub, 'assets'));
   for (const c of proj.raw?.clips ?? []) h.update(`clip:${JSON.stringify(c)}`);
   return h.digest('hex').slice(0, 12);

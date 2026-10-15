@@ -74,10 +74,15 @@ hud: [
 |---|---|---|
 | `sans` | `"Noto Sans SC", "Microsoft YaHei", sans-serif` | 正文 |
 | `num` | `"Orbitron", "Noto Sans SC", sans-serif` | 数字 |
-| `wide` | `"Audiowide", "Orbitron", sans-serif` | 大标题 |
-| `mono` | `"Cascadia Mono", "Consolas", monospace` | 代码 |
+| `wide` | `"Audiowide", "Orbitron", "Noto Sans SC", sans-serif` | 大标题 |
+| `mono` | `"Cascadia Mono", "Consolas", "Noto Sans SC", monospace` | 代码 |
 
-`fontFiles` 声明要预加载的字体文件（相对项目的 `public/`）：
+⚠️ **每一族都必须带中文字体兜底。** `Audiowide` / `Orbitron` 都是**纯拉丁展示字体**，中文没有字形；
+少了兜底就会在**没装中文字体的机器**（CI runner、Docker、多数 Linux 服务器）上让 `title` 的中文标题
+**一个字都画不出来** —— 而 Windows / macOS 本机装了中文字体，靠回退侥幸能画，所以一直不暴露。
+（这张表曾经就漏了 `wide` / `mono` 的兜底，与实现脱节了很久，是静态守卫只查宿主页面、没查这里。）
+
+`fontFiles` 声明要预加载的字体文件（先按项目 `public/` 解析，查不到再兜到库根的 `fonts/`）：
 
 ```js
 fontFiles: [['Noto Sans SC', 'fonts/NotoSansSC.ttf', {weight: '100 900'}]],

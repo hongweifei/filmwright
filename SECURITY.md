@@ -17,4 +17,4 @@
 filmwright 是**本地开发工具**：它起本地 HTTP 服务、驱动本地浏览器、调用 ffmpeg 与 Python。设计上假定使用者在本机运行自己的项目。
 
 - 属于攻击面的：`preview` / 渲染用的本地服务（路径穿越防护在 `src/host/project/server.mjs`）、CDP 会话、外部命令调用（ffmpeg / python）；
-- 不属于攻击面的：渲染出来的 mp4 本身、示例素材与字体（各自许可见 `examples/minimal/public/fonts/LICENSE.md`）。
+- 不属于攻击面的：渲染出来的 mp4 本身、示例素材与库自带的字体（各自许可见 [`fonts/LICENSE.md`](fonts/LICENSE.md)）。

@@ -209,6 +209,10 @@ const makeNegRoot = (base, name, patch) => {
   mkdirSync(root, {recursive: true});
   cpSync(join(ROOT, 'src'), join(root, 'src'), {recursive: true});
   cpSync(join(ROOT, 'index.html'), join(root, 'index.html'));
+  // 临时仓库根就是新的「库根」⇒ `/fonts/` 的兜底也落在这里。不拷字体的话，
+  // 这个根里一份字体都没有，页面会静默回退系统字体 —— 在 CI 的 ubuntu 上
+  // （无中文字体）中文直接画不出来，测的就不再是产品里那条路径了。
+  cpSync(join(ROOT, 'fonts'), join(root, 'fonts'), {recursive: true});
   patch(root);
   TMP_ROOTS.add(root);
   return root;

@@ -36,7 +36,10 @@ const NAMES = new Set(['.gitignore', 'LICENSE']);
 const ALLOW_CRLF = /\.(ps1|bat|cmd)$/i;
 // 第三方文件不动（字体许可证是随字体一起分发的，改它的换行没有意义）；
 // 生成产物也不该由这里管（timeline.md 由 tts 生成，其换行取决于 python 的写入）。
-const SKIP_EOL = /(^|\/)(public\/fonts\/LICENSE\.md|script\/timeline\.md)$/;
+// ⚠️ 字体许可证的路径写成 `fonts/LICENSE.md` 而**不带** `public/` 前缀：字体已从
+// 「每个示例各存一份」收敛到库根一份，项目侧的 `public/fonts/` 只是可选的覆盖层。
+// 这样两种位置都能豁免（`(^|\/)` 已经吃掉了前面的目录）。
+const SKIP_EOL = /(^|\/)(fonts\/LICENSE\.md|script\/timeline\.md)$/;
 
 // 问题种类做成机器可读的 kind（`why` 是给人看的）：负面对照要能**逐条**要求
 // 「哪种缺陷必须被抓到」，而不是去匹配提示文案（文案一改对照就假绿）。
@@ -115,7 +118,7 @@ const NEG_FIXTURES = [
   {name: 'clean.md', bytes: Buffer.from('# 干净文件\n正文一行\n', 'utf8'), expect: []},
   {name: 'keep-bom.ps1', bytes: Buffer.concat([BOM, Buffer.from('Write-Host 中文\n', 'utf8')]), expect: []},
   {name: 'script/timeline.md', bytes: Buffer.from('# 生成产物\r\n允许 CRLF\r\n', 'utf8'), expect: []},
-  {name: 'public/fonts/LICENSE.md', bytes: Buffer.from('# 字体许可证\r\n允许 CRLF\r\n', 'utf8'), expect: []},
+  {name: 'fonts/LICENSE.md', bytes: Buffer.from('# 字体许可证\r\n允许 CRLF\r\n', 'utf8'), expect: []},
   // 必须报出来的：每种缺陷各一份
   {name: 'bom.md', bytes: Buffer.concat([BOM, Buffer.from('# 带 BOM 的标题\n', 'utf8')]), expect: ['bom']},
   {name: 'gbk.md', bytes: Buffer.from([0xD6, 0xD0, 0xCE, 0xC4, 0x0A]), expect: ['utf8']},   // GBK 的「中文」

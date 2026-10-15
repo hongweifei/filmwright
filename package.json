@@ -55,6 +55,7 @@
   "files": [
     "bin",
     "src",
+    "fonts",
     "docs",
     "index.html",
     "README.md",

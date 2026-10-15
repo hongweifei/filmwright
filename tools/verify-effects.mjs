@@ -812,6 +812,8 @@ function runNegativeControl() {
     cpSync(join(ROOT, 'src'), join(tmp, 'src'), {recursive: true});
     cpSync(join(ROOT, 'index.html'), join(tmp, 'index.html'));
     cpSync(join(ROOT, 'package.json'), join(tmp, 'package.json'));
+    // 临时仓库根就是新的「库根」⇒ 库自带的那份字体也要跟过去（见 `/fonts/` 的兜底）。
+    cpSync(join(ROOT, 'fonts'), join(tmp, 'fonts'), {recursive: true});
     cpSync(fixture, join(tmp, 'examples', 'scenecast'), {
       recursive: true,
       filter: (s) => {

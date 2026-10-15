@@ -9,7 +9,7 @@ my-film/
   film.config.mjs        配置（default 导出）
   script/narration.txt   解说词
   shots/index.js         镜头，导出 SHOTS
-  public/fonts/…         字体
+  public/fonts/…         字体（可选：库自带一份默认，放这里即覆盖）
   public/assets/…        素材（图片；tts 的配音也落在这下面）
 
   .work/                 中间产物，可随时删（重跑就有）

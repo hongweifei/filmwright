@@ -3,7 +3,7 @@
 // —— 静默退回会让一个拼错的字段变成「看起来正常但不对」的片子。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {existsSync, readFileSync} from 'node:fs';
 import {
   normalizeConfig, DEFAULT_THEME, DEFAULT_FONTS, DEFAULT_FONT_FILES,
   install, accent,
@@ -161,4 +161,30 @@ test('accent(i) 会回绕，越界不会给 undefined', () => {
   assert.equal(accent(5), '#333333');
   assert.ok(typeof accent(-1) === 'string' && accent(-1).length > 0,
     '负数也不该给出 undefined');
+});
+
+// ---- 字体资产放在哪：**库自带一份**，项目可覆盖 ----
+//
+// 起因：5 个示例各存一份**逐字节相同**的字体，25 个文件占了仓库字节的 **96%**。
+// 收敛成库根一份之后，失效方式换了 —— 不再是「某个示例忘了拷字体」，而是下面两条。
+// 两条都**静态可查**，而本机照不出来（本机装了中文字体，回退了也照样能画）。
+test('声明的字体文件都在库根下，且库根那份会随包发布', () => {
+  const root = new URL('..', import.meta.url);
+  let checked = 0;
+  for (const [family, rel] of DEFAULT_FONT_FILES) {
+    checked++;
+    assert.ok(existsSync(new URL(rel, root)),
+      `DEFAULT_FONT_FILES 声明了 ${family} → ${rel}，但库根下没有这个文件。`
+      + '页面加载失败是**静默回退系统字体**（不报错），在没装中文字体的机器上等于中文全丢');
+  }
+  // 下限：一个都没查 ⇒ 这条判据在空集上恒绿
+  assert.ok(checked > 0, 'DEFAULT_FONT_FILES 是空的 —— 判据在空集上恒绿');
+
+  // 只查磁盘还不够：`fonts/` 必须真的**随包发布**，否则发布物里没有字体，
+  // 而脚手架生成的 `public/fonts/README.md` 明确告诉用户「库自带一份」——
+  // 对 npm 用户就成了句死话（`files` 是白名单，不在里面就不发）。
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  const files = Array.isArray(pkg.files) ? pkg.files : [];
+  assert.ok(files.includes('fonts'),
+    `package.json 的 files 里没有 "fonts" ⇒ 发布物不带字体。实际：${files.join(' / ')}`);
 });

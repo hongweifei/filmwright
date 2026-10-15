@@ -159,10 +159,11 @@ const sink = {write: async () => {}};
 const r = await openProjectSession(P, proj, {gpu: true, frameSink: sink});   // 用 GPU 档，否则 WebGL 是软件
 let o;
 try {
-  // 用项目自带字体（与渲染一致）
+  // 用库自带字体（与渲染一致）。走 `/fonts/` 路由：项目里没有就兜到库根那份 ——
+  // 别写成 `/proj/public/fonts/...`，那条绕过兜底，字体搬走后会静默 404 成回退字体。
   const expr = `(async () => {
     try {
-      const face = new FontFace('FWProbe', 'url(/proj/public/fonts/NotoSansSC.ttf)');
+      const face = new FontFace('FWProbe', 'url(/fonts/NotoSansSC.ttf)');
       await face.load(); document.fonts.add(face);
     } catch (e) {}
     const pageCompare = ${pageCompare.toString()};

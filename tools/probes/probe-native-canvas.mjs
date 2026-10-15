@@ -200,7 +200,7 @@ try {
       // 浏览器这边也从项目服务器拿同一个文件注册同名 family，否则文字负载不可比。
       let fontOk = false;
       try {
-        const face = new FontFace(${JSON.stringify(FONT_FAMILY)}, 'url(/proj/public/fonts/${FONT_FILE})');
+        const face = new FontFace(${JSON.stringify(FONT_FAMILY)}, 'url(/fonts/${FONT_FILE})');
         await face.load();
         document.fonts.add(face);
         fontOk = document.fonts.check('16px ${FONT_FAMILY}');
