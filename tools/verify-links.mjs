@@ -57,8 +57,12 @@ for (const d of docs) {
   // 「tools/README.md:71 → 相对路径 不存在」—— 守卫把自己的说明书当成了被守卫的东西。
   // 用**等长空白**替换行内代码段：字符串长度不变 ⇒ 下面按 `m.index` 算的行号仍然对。
   const scanned = text.replace(/`[^`\n]*`/g, (s) => ' '.repeat(s.length));
-  for (const m of scanned.matchAll(/\]\(([^)\s]+)\)/g)) {
-    const href = m[1];
+  // ⚠️ 链接目标后面可以跟**标题**：`[文字](路径 "标题")`（Markdown 标准写法之一）。
+  // 老正则 `/\]\(([^)\s]+)\)/` 吃不到它 ⇒ **带标题的坏链整条看不见**（第八轮之前就记着这个盲点）。
+  // 现在：URL 可以是 `<带 空格 的路径>`，标题可以是 `"…"` / `'…'` / `(…)`，都吃掉但**不当作路径**。
+  for (const m of scanned.matchAll(/\]\(\s*(<[^>\n]*>|[^)\s]+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g)) {
+    let href = m[1];
+    if (href.startsWith('<') && href.endsWith('>')) href = href.slice(1, -1);   // `[x](<带 空格.md>)`
     if (/^(https?:|mailto:|#)/.test(href)) continue;   // 外链与页内锚点不管
     const clean = href.split('#')[0];
     if (!clean) continue;
@@ -345,6 +349,17 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
     r = runTool(repo, '⑧b');
     ok(r.status === 0,
       `⑧ 把它删掉 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
+
+    // ⑨ 带**标题**的链接：`[文字](路径 "标题")` 是 Markdown 标准写法之一，老正则吃不到它
+    //    ⇒ 这种坏链整条看不见（盲点从第八轮之前就记着）。这一格就是它的对照。
+    writeFileSync(guideFile, GUIDE + '[带标题的坏链](missing-titled.md "标题")\n');
+    r = runTool(repo, '⑨');
+    ok(r.status === 1 && (r.stdout ?? '').includes('missing-titled.md'),
+      `⑨ 带标题的坏链 ⇒ 退出码 1 并点名它（实际 ${rc(r)}）`);
+    writeFileSync(guideFile, GUIDE);
+    r = runTool(repo, '⑨b');
+    ok(r.status === 0,
+      `⑨ 去掉它 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
 
     if (selfFailed) {
       console.log('\n—— 子进程原始输出（便于定位）——');
