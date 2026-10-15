@@ -99,3 +99,26 @@ test('可导航性：`tools/probes/` 下每个探针都要在它自己的 README
   assert.deepEqual(unlisted, [],
     '这些探针没写进 tools/probes/README.md（补一行「回答什么问题」）：' + unlisted.join(', '));
 });
+
+test('引擎不认识任何片子：`src/` 里不出现示例项目的名字，也不出现 `examples/` 路径', () => {
+  // `docs/architecture.md` 的硬规则：「配置、时间轴、镜头全部由 `boot()` 注入；引擎里没有一个
+  // 具体片子的名字。」实测（2026-10-15，去掉注释后）**零命中** ⇒ 规则成立，但此前没人守。
+  //
+  // ⚠️ 名字表**从 `examples/` 目录派生**，不写死；但 `three` 必须排除 —— 它同时是
+  //    three.js 这个**库名**、也是镜头类型名（`{type: 'three'}`），拿它当判据必然假阳性。
+  const exDir = join(ROOT, 'examples');
+  const projNames = readdirSync(exDir, {withFileTypes: true})
+    .filter((e) => e.isDirectory()).map((e) => e.name).filter((n) => n !== 'three');
+  assert.ok(projNames.length >= 3, `只从 examples/ 派生出 ${projNames.length} 个名字 —— 枚举坏了`);
+
+  const bad = [];
+  for (const f of SRC_FILES) {
+    const code = stripComments(readFileSync(f, 'utf8'));
+    if (/examples[\\/]/.test(code)) bad.push(`${rel(f)}：出现 examples/ 路径（引擎不该知道示例在哪）`);
+    for (const n of projNames) {
+      // 只认「恰好等于项目名的字符串字面量」——那才是「引擎里写死了一部片子」的形态
+      if (new RegExp(`['"\`]${n}['"\`]`).test(code)) bad.push(`${rel(f)}：出现示例项目名 '${n}'`);
+    }
+  }
+  assert.deepEqual(bad, [], '引擎里出现了具体片子的痕迹：\n' + bad.join('\n'));
+});
