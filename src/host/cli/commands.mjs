@@ -730,16 +730,22 @@ export async function all(ctx) {
     }
     throw new Error('filmwright: 自检没过，先修再渲');
   }
-  const r = await render(ctx);
   const slug = ctx.proj.raw.slug ?? 'film';
   const audio = ctx.proj.paths.audio(slug);
-  const video = resolve(str(ctx.args, 'out', join(ctx.proj.paths.workDir, `${slug}.mp4`)));
-  if (!existsSync(audio)) {
+  const hasAudio = existsSync(audio);
+  const finalOut = resolve(str(ctx.args, 'final', join(ctx.proj.paths.rendersDir, `${slug}.mp4`)));
+  // ⚠️ **没有配音时也要落到 `renders/<slug>.mp4`**（README 承诺的就是这个位置）。
+  // 原来无论有没有配音都把成片渲到 `.work/`，只有"有配音"那条路才会 mux 到 `renders/` ——
+  // 于是**全新 clone 照 README 跑 `all`，成片不在文档说的位置**（CI 的 verify-readme 抓到）。
+  // 有配音时 `.work/` 才是对的：那是交给 mux 的**中间产物**。
+  const video = resolve(str(ctx.args, 'out',
+    hasAudio ? join(ctx.proj.paths.workDir, `${slug}.mp4`) : finalOut));
+  const r = await render({...ctx, args: {...ctx.args, out: video}});
+  if (!hasAudio) {
     say('（没有配音，跳过合流：' + audio + '）');
     say('  无声成片在 ' + video);
     return {code: 0, data: {video, muted: true}, warnings: ['没有配音，跳过合流'], checks: c.data.checks};
   }
-  const finalOut = resolve(str(ctx.args, 'final', join(ctx.proj.paths.rendersDir, `${slug}.mp4`)));
   const m = await mux({
     ...ctx,
     args: {...ctx.args, video, out: finalOut},
