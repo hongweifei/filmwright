@@ -791,15 +791,22 @@ export function compileScene(scene, tl) {
         // 嵌套实例：把子 comp 编译好，包成「一个本地镜头」
         const inner = compile(raw.comp, depth + 1);
         const start = raw.at ?? 1;
+        const ntr = raw.transform;               // 嵌套实例的 transform 同样要应用（原来也漏了）
         return {
           start,
           from: start,
           to: raw.frames ? start + raw.frames - 1 : inner.len + start - 1,
+          ...(ntr !== undefined ? {transform: ntr} : {}),
           draw(ctx, n, t, accent) {
-            drawCompInstance(ctx, {
+            const paint = (c) => drawCompInstance(c, {
               localShots: inner.shots, len: raw.frames ?? inner.len,
               from: start, loop: !!raw.loop,
             }, n, t, accent);
+            if (ntr) {
+              withLayer(ctx, {transform: ntr, alpha: ntr.alpha ?? 1, blend: ntr.blend ?? null, mode: 'shot'}, paint);
+            } else {
+              paint(ctx);
+            }
           },
         };
       }
@@ -807,16 +814,28 @@ export function compileScene(scene, tl) {
       if (!tpl) throw new Error('filmwright: 子合成 ' + name + ' 用了没有模板的类型 ' + raw.type);
       const start = raw.at;
       const shot = {...raw, start, sid: null, beats: tpl.beats ? tpl.beats(raw, start, null) : [start]};
+      // ⚠️ **子镜头的 `transform` 原来被静默忽略**：上面那行 `...{transform: raw.transform}` 把它存了下来，
+      // 但 `draw` 里从来没应用过 ⇒ 「声明了但没生效」那一族 bug（同 `empty` 编译期崩溃、`SHAPE_KEYS` 漏登记）。
+      // 这里补上，语义与**顶层镜头**完全一致（`mode: 'shot'`：变换在单位矩阵上下文里生效，
+      // 内容自己随后 `applyDesignScale`）。
+      const tr = raw.transform;
       return {
         start, from: start, to: start, beats: shot.beats,
-        ...(raw.transform !== undefined ? {transform: raw.transform} : {}),
+        ...(tr !== undefined ? {transform: tr} : {}),
         draw(ctx, n, t, accent) {
-          ctx.save();
-          applyDesignScale(ctx);
-          try {
-            tpl.draw.call(this, ctx, n, shot, accent ?? accentFor(1));
-          } finally {
-            ctx.restore();
+          const paint = (c) => {
+            c.save();
+            applyDesignScale(c);
+            try {
+              tpl.draw.call(this, c, n, shot, accent ?? accentFor(1));
+            } finally {
+              c.restore();
+            }
+          };
+          if (tr) {
+            withLayer(ctx, {transform: tr, alpha: tr.alpha ?? 1, blend: tr.blend ?? null, mode: 'shot'}, paint);
+          } else {
+            paint(ctx);
           }
         },
       };
