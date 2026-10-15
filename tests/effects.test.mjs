@@ -526,10 +526,15 @@ test('**SIMPLE_PASSES 里的每个 prog 都要在 this.progs 注册表里有对�
   // **本来就不在**（金字塔模糊、亮部提取是专门实现）。要核的是这条**不变量**：
   // `SIMPLE_PASSES` 里声明的 prog 名，必须在注册表里有对应项。
   const {readFileSync} = await import('node:fs');
-  const src = readFileSync(new URL('../src/runtime/fx/gpu.js', import.meta.url), 'utf8');
-  const progs = [...src.matchAll(/(\w+): \{prog: '(\w+)'/g)].map((m) => ({type: m[1], prog: m[2]}));
+  // ⚠️ 这个不变量**跨两个文件**（`fx/gpu.js` 拆过了）：表在 `shaders.js`，注册表在 `stage.js`。
+  // 「判据用正则读源码」是拆分的**隐藏耦合** —— 拆完必须跟着改，否则它只会解析到 0 条
+  // 然后被下面那条下限抓住（同族：`verify-docs` 读 scene.js 的字面量、`verify-reveal` /
+  // `verify-effects` 往具体文件注入缺陷）。
+  const shaders = readFileSync(new URL('../src/runtime/fx/shaders.js', import.meta.url), 'utf8');
+  const stage = readFileSync(new URL('../src/runtime/fx/stage.js', import.meta.url), 'utf8');
+  const progs = [...shaders.matchAll(/(\w+): \{prog: '(\w+)'/g)].map((m) => ({type: m[1], prog: m[2]}));
   assert.ok(progs.length >= 6, `只解析到 ${progs.length} 条 SIMPLE_PASSES 表项 —— 解析写错了`);
-  const missing = progs.filter((p) => !src.includes(`${p.prog}: this._prog(`))
+  const missing = progs.filter((p) => !stage.includes(`${p.prog}: this._prog(`))
     .map((p) => `${p.type} 的 prog「${p.prog}」没有 this.progs 注册表项`);
   assert.deepEqual(missing, [],
     `漏了注册表项不会报错、只会静默产出不稳定画面。缺：${JSON.stringify(missing)}`);

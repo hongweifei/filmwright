@@ -374,7 +374,8 @@ MCP 客户端直接调 `filmwright_schema` 工具——**写 scene 之前先拿 
      `distort` 用的也是这个 uniform 名；早期草稿里曾写作 `scale`）
    · `phase` −180–180°（默认 0）—— 噪声相位，**可写关键帧**（这样流动仍是 N 的函数）
    · `noopWhen: [{amount: 0}]`
-2. `runtime/fx/gpu.js`：加 `FS_DISPLACE`（片元着色器）+ `SIMPLE_PASSES.displace` 一行。
+2. `runtime/fx/shaders.js`：加 `FS_DISPLACE`（片元着色器）+ `SIMPLE_PASSES.displace` 一行
+   （**表在 shaders.js、程序注册表在 stage.js** —— `fx/gpu.js` 只是门面，加完要两边都对上）。
    噪声用 hash 值噪声（不是纹理），保证与纹理无关、可复现
 3. 验收（`tools/verify-effects.mjs` 加一节）：`amount=0` 直通；同一帧两次渲染**逐字节一致**；
    `phase` 关键帧 ⇒ 两帧不同；不同 `frequency` ⇒ 输出不同（**不是**「频率大 ⇒ 高频更多」，

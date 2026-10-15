@@ -832,7 +832,9 @@ function runNegativeControl() {
     // `applyEffects` 返回 null ⇒ 调用方走原路 ⇒ 输出与"不写 effects"逐位相同。
     // "效果没接上"正是第二节要抓的那类缺陷；反过来，把语法改坏、把命令拔掉这种
     // 注入连渲染都过不去，红了也证明不了判据有牙。
-    const gpu = join(tmp, 'src', 'runtime', 'fx', 'gpu.js');
+    // ⚠️ 注入目标是**实现所在文件**：`apply()` 随 `fx/gpu.js` 的拆分搬到了 `fx/stage.js`
+    // （`fx/gpu.js` 现在只是门面）。锚点漂了会判失败（见下），不会假绿。
+    const gpu = join(tmp, 'src', 'runtime', 'fx', 'stage.js');
     const ANCHOR = "if (step.type === 'blur' && step.radius > 0) {";
     const before = readFileSync(gpu, 'utf8');
     if (!before.includes(ANCHOR)) {
