@@ -48,14 +48,31 @@ const KNOWN_JUNK = [
   [/\.tgz$/, '打包产物自身'],
 ];
 
-const reasonFor = (f) => KNOWN_JUNK.find(([re]) => re.test(f))?.[1] ?? '仓库里没有这个文件（未跟踪）';
+/**
+ * **开发期专用**的目录：它们跟着仓库走，但**永远不该进发布物**。
+ * 与 `KNOWN_JUNK` 的区别：那些是「本机产物」（靠「未跟踪」就能识别出来），
+ * 这些是**已被 git 跟踪的正经文件** —— 只有 `files` 白名单把它们排除掉才不会进包。
+ * 所以得单独钉一条：谁往 `files` 里加了 `tools`，这里当场红。
+ */
+const NEVER_SHIP = [
+  [/^tools\//, '开发工具：跟仓库走，不进发布物'],
+  [/^tests\//, '测试：跟仓库走，不进发布物'],
+  [/^examples\//, '示例项目：跟仓库走，不进发布物'],
+  [/^\.github\//, 'CI 配置：跟仓库走，不进发布物'],
+];
+const neverShipReason = (f) => NEVER_SHIP.find(([re]) => re.test(f))?.[1];
+
+const reasonFor = (f) => KNOWN_JUNK.find(([re]) => re.test(f))?.[1]
+  ?? neverShipReason(f)
+  ?? '仓库里没有这个文件（未跟踪）';
 
 /** 判定一份打包清单。**纯函数** —— 自检与真跑吃同一口锅，才不会两套逻辑。 */
 function judge(packFiles, required, tracked) {
   const trackedSet = new Set(tracked);
   const packSet = new Set(packFiles);
-  // 发布物里有仓库不认识的东西 ⇒ 违禁（含本机草稿、字节码、任何未跟踪文件）
-  const forbidden = packFiles.filter((f) => !trackedSet.has(f));
+  // ① 发布物里有仓库不认识的东西 ⇒ 违禁（含本机草稿、字节码、任何未跟踪文件）；
+  // ② 开发期专用目录**无论跟踪与否**都不许进包。
+  const forbidden = packFiles.filter((f) => !trackedSet.has(f) || neverShipReason(f));
   // files 覆盖到的跟踪文件没进包 ⇒ 漏发（`!` 否定写宽了）
   const missing = required.filter((r) => trackedSet.has(r) && !packSet.has(r));
   return {forbidden, missing};
@@ -63,13 +80,16 @@ function judge(packFiles, required, tracked) {
 
 /** 规则自检：拿合成清单证明「会红」，并证明「空清单不算干净」。 */
 function selfTest() {
-  const tracked = ['src/index.js', 'docs/scene.md'];
+  // `tools/verify-docs.mjs` 故意放进 tracked：这样下面那条只可能因为 NEVER_SHIP 而红，
+  // 而不是「未跟踪」那条规则顺手抓到的。
+  const tracked = ['src/index.js', 'docs/scene.md', 'tools/verify-docs.mjs'];
   const req = ['src/index.js', 'docs/scene.md'];
   const cases = [
     ['干净清单', ['src/index.js', 'docs/scene.md'], {forbidden: 0, missing: 0}],
     ['混进 Python 字节码', ['src/index.js', 'docs/scene.md', 'src/host/tts/__pycache__/x.pyc'], {forbidden: 1, missing: 0}],
     ['混进未跟踪的本地草稿', ['src/index.js', 'docs/scene.md', 'docs/design/TODO.md'], {forbidden: 1, missing: 0}],
     ['混进任意未跟踪文件（黑名单没列举过）', ['src/index.js', 'docs/scene.md', 'docs/scratch.txt'], {forbidden: 1, missing: 0}],
+    ['混进**已跟踪**的开发工具目录', ['src/index.js', 'docs/scene.md', 'tools/verify-docs.mjs'], {forbidden: 1, missing: 0}],
     ['漏掉源码', ['docs/scene.md'], {forbidden: 0, missing: 1}],
     ['空清单', [], {forbidden: 0, missing: 2}],
   ];
@@ -160,10 +180,11 @@ if (!tracked.length) {
 }
 if (forbidden.length) {
   bad += forbidden.length;
-  console.log(`\n✗ ${forbidden.length} 个**仓库里没有的东西**被打进发布物：`);
+  console.log(`\n✗ ${forbidden.length} 个不该进发布物的文件：`);
   for (const f of forbidden) console.log(`   ${f}\n       ${reasonFor(f)}`);
-  console.log('   ⇒ 在 package.json 的 files 里加 `!` 否定条目。别指望 .gitignore ——');
-  console.log('      `files` 是白名单，压过它（实测：被 .gitignore 覆盖的 .pyc 照样进包）。');
+  console.log('   ⇒ 两种来路：**本机产物**（未跟踪）用 `!` 否定条目排除 —— 别指望 .gitignore，');
+  console.log('      `files` 是白名单会压过它（实测：被 .gitignore 覆盖的 .pyc 照样进包）；');
+  console.log('      **开发期专用目录**（tools / tests / examples / .github）则说明有人往 files 里加了它。');
 }
 if (missing.length) {
   bad += missing.length;
