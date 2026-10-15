@@ -91,6 +91,14 @@ const shot = (extra, n, tag) => {
   if (extra.reveal !== undefined && back.reveal === undefined) {
     throw new Error(`filmwright: 夹具的 reveal 没写进 scene.json（${join(P, 'scene.json')}）`);
   }
+  // ⚠️ **自定位诊断**：把夹具实际写进去的 reveal 打出来。
+  // CI（Linux）报「逐字帧与整块帧哈希完全相同」而本机（Windows）不复现 ⇒
+  // 下一次再红时，这一行就能说明「夹具里到底有没有 reveal」，
+  // 不用再靠读代码猜（接线、路径、项目类型我都已经逐一排除过）。
+  if (extra.reveal !== undefined) {
+    console.log(`  [diag] 夹具 shot 的键：${Object.keys(back).join(' ')}`);
+    console.log(`  [diag] 夹具 reveal = ${JSON.stringify(back.reveal)}`);
+  }
   mkdirSync(join(P, 'out'), {recursive: true});
   execFileSync('node', [join(ROOT, 'bin', 'filmwright.mjs'), 'stills', '--project', P,
     '--frames', String(n), '--dir', join(P, 'out')], {stdio: ['ignore', 'ignore', 'inherit']});
