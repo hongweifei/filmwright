@@ -25,6 +25,30 @@ test('最小配置：补齐全部默认值', () => {
   assert.equal(c.endingFade, 30);
 });
 
+// ⚠️ **每个字体族都要带自带的中文兜底** —— 这条是**静态可查**的，而本机照不出来
+// （Windows/macOS 装了中文字体，靠系统回退侥幸能画）。
+//
+// 起因：CI（Linux runner）上 `title` 的「逐字帧」与「整块帧」**逐字节相同**，
+// 而同一次跑里用 `sans` 的 `quote` / `bullets` 逐字正常。根因就是这条：
+// `wide` 原来是 `"Audiowide", "Orbitron", sans-serif` —— 两个**纯拉丁展示字体**之后
+// 直接跳到**系统** `sans-serif`，而 title 的大标题通常是中文。
+// 任何没装中文字体的机器（CI runner、Docker、多数 Linux 服务器）上，
+// **标题会一个字都画不出来**（不报错、不崩，画面只是"没有标题"）。
+test('每个字体族都必须带自带的中文兜底（否则没装中文字体的机器上中文画不出来）', () => {
+  for (const [name, stack] of Object.entries(DEFAULT_FONTS)) {
+    assert.ok(stack.includes('Noto Sans SC'),
+      `字体族 ${name} 缺自带的中文兜底：${stack} —— `
+      + '拉丁展示字体没有 CJK 字形，不回退到自带字体就只能靠系统字体，裸机器上会画不出来');
+  }
+});
+
+test('自带的中文兜底字体必须真的会被预加载（否则那个字体名等于没写）', () => {
+  const preloaded = DEFAULT_FONT_FILES.map(([family]) => family);
+  assert.ok(preloaded.includes('Noto Sans SC'),
+    `DEFAULT_FONTS 里回退到 "Noto Sans SC"，但它不在 DEFAULT_FONT_FILES 里 ⇒ 名字解析不到任何字形。`
+    + ` 实际预加载：${preloaded.join(' / ')}`);
+});
+
 test('空配置要报错，而不是给出一部空片', () => {
   assert.throws(() => normalizeConfig(null), /配置为空/);
   assert.throws(() => normalizeConfig(undefined), /配置为空/);

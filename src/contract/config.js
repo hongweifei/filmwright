@@ -54,8 +54,14 @@ export function accent(i) {
 export const DEFAULT_FONTS = {
   sans: '"Noto Sans SC", "Microsoft YaHei", sans-serif',
   num: '"Orbitron", "Noto Sans SC", sans-serif',
-  wide: '"Audiowide", "Orbitron", sans-serif',
-  mono: '"Cascadia Mono", "Consolas", monospace',
+  // ⚠️ **每个族都要带自带的中文兜底**。`Audiowide` / `Orbitron` 都是**纯拉丁展示字体**，
+  // 中文没有字形 —— 原来这里直接跳到系统 `sans-serif`，于是**任何没装中文字体的机器**
+  // （CI runner、Docker、多数 Linux 服务器）上，`title` 的中文标题**画不出任何东西**；
+  // 而 Windows/macOS 本机装了中文字体，靠回退侥幸能画 ⇒ 这个 bug 一直没暴露。
+  // 证据：CI（Linux）上 `title` 的「逐字帧」与「整块帧」**逐字节相同**（中文是空的），
+  // 而用 `sans` 的 `quote` / `bullets` 同一次跑里逐字正常。
+  wide: '"Audiowide", "Orbitron", "Noto Sans SC", sans-serif',
+  mono: '"Cascadia Mono", "Consolas", "Noto Sans SC", monospace',
 };
 
 /** 需要预加载的字体。字体没就绪就画，度量会全错（首帧会用回退字体）。 */
