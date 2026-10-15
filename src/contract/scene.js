@@ -133,7 +133,7 @@ const FIELDS = {
   // （它会把元素字段当成未知字段误报）。数组形状与元素字段全部在 validate3D 里查，
   // 那里本来就已经在做（键级 + 语义）。
   three: {camera: 'obj?', objects: 'arr<threeobj>', lights: 'obj?'},
-  title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?'},
+  title: {title: 'str', sub: 'str?', en: 'str?', kicker: 'str?', reveal: 'obj?'},
   bullets: {heading: 'str?', items: 'arr<{t, d?}>'},
   stat: {value: 'num', label: 'str', unit: 'str?', label2: 'str?'},
   flow: {heading: 'str?', boxes: 'arr<{label, sub?}>'},

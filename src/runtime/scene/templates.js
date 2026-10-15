@@ -104,10 +104,38 @@ const title = {
     }
     // 落位后光晕持续脉动：标题镜头常只有几秒，静止会被画质自检判停
     const pulse = 0.5 + 0.5 * Math.sin(n / 26);
-    text(ctx, shot.title, cx, y, {
+    const titleOpt = {
       size: 104, family: F.wide, weight: 700, color: C.text, align: 'center', baseline: 'middle',
       spacing: 6, glow: hexA(accent, 0.6 + 0.4 * pulse), glowBlur: 32 + 14 * pulse, maxW: DESIGN_SAFE.w,
-    });
+    };
+    // ── 逐字入场（`reveal`）──
+    // 现代动态图形最标志性的观感：字符一个一个进，而不是整块淡入。
+    // ⚠️ 逐字定位的陷阱：**每个字必须按自己的 advance 居中**，不能沿用整串的 align ——
+    // 早年手写逐字定位时忘了复位 textAlign，`"MoonBit"` 上屏成了 `"MoonB it"`。
+    // 这里给每个字传 `align:'center'` + 它自己盒子的中心 x，从根上避开那个坑。
+    // 纯函数：每个字的进度只依赖 n。
+    if (shot.reveal) {
+      const rv = shot.reveal;
+      const chars = [...String(shot.title)];          // 按**码点**切：中文/emoji 都不能按 UTF-16 切
+      const per = rv.stagger ?? 3;                     // 每个字间隔几帧
+      const dur = rv.dur ?? 12;                        // 单字入场用几帧
+      const dy = rv.dy ?? 26;                          // 从下方多少像素落位
+      const base = 8;                                  // 与 title 的入场同步（beats[0]）
+      const adv = chars.map((c) => measure(c, font(titleOpt.size, titleOpt.family, titleOpt.weight)));
+      const totalW = adv.reduce((a, b) => a + b, 0) + titleOpt.spacing * (chars.length - 1);
+      let px = cx - totalW / 2;
+      for (const [i, c] of chars.entries()) {
+        const t = easeOut3(inv(n, base + i * per, base + i * per + dur));
+        if (t > 0) {
+          text(ctx, c, px + adv[i] / 2, y + (1 - t) * dy, {
+            ...titleOpt, maxW: null, alpha: t,
+          });
+        }
+        px += adv[i] + titleOpt.spacing;
+      }
+    } else {
+      text(ctx, shot.title, cx, y, titleOpt);
+    }
     y += 94;
     if (shot.sub) {
       text(ctx, shot.sub, cx, y, {size: 34, weight: 700, color: accent, align: 'center', baseline: 'middle', spacing: 4, maxW: DESIGN_SAFE.w});
