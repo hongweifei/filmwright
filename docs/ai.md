@@ -18,7 +18,7 @@ stdout 恰好一个 JSON 文档（人类进度静默；ffmpeg/Chrome 日志走 s
 
 ```json
 {"ok": false, "command": "check",
- "errors": [{"code": "SCENE_UNKNOWN_TYPE", "message": "…", "where": "shots[1].type", "hint": "v0 可用：…"}],
+ "errors": [{"code": "SCENE_UNKNOWN_TYPE", "message": "…", "path": "shots[1].type", "hint": "v0 可用：…"}],
  "warnings": [], "data": {"failed": 1, "checks": []}}
 ```
 
@@ -100,7 +100,7 @@ filmwright_schema（拿 17 类模板与上限）→ filmwright_new → 写 narra
 |---|---|---|
 | `NO_PROJECT_DIR` / `NO_CONFIG` / `NO_CONFIG_DEFAULT` | 项目装配 | `filmwright_new` 或补 `film.config.mjs` |
 | `NO_TIMELINE` | check/render 前 | 跑 `filmwright_tts` |
-| `SCENE_*`（UNKNOWN_TYPE / UNKNOWN_FIELD / NO_SENTENCE / NO_BLOCK / NO_ASSET / FIRST_NOT_1 / NOT_INCREASING…） | scene 校验 | 按 `where` 指向的字段改 |
+| `SCENE_*`（UNKNOWN_TYPE / UNKNOWN_FIELD / NO_SENTENCE / NO_BLOCK / NO_ASSET / FIRST_NOT_1 / NOT_INCREASING / ANIM_* / FX_* / LAYER_* / MASK_* / 3D_*…） | scene 校验 | 按 **`path`** 指向的字段改，`hint` 里通常直接给了可用值 |
 | `CHECK_<name>` | 自检各道（timeline / themeKeys / frames / quality…） | 看 `message` 里的文件:行号 |
 | `TTS_FAILED` / `NO_PYTHON` | tts | 装 Python + edge-tts；端点限流会退避重试 |
 | `DIR_NOT_EMPTY` / `BAD_TEMPLATE` / `MISSING_DIR` | new | 换目录 / 选 scene 或 shots |

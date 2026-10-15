@@ -34,7 +34,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
   "command": "check",
   "errors": [
     {"code": "SCENE_UNKNOWN_TYPE", "message": "不认识的镜头类型 \"pie\"",
-     "where": "shots[1].type", "hint": "v0 可用：title / bullets / …"}
+     "path": "shots[1].type", "hint": "v0 可用：title / bullets / …"}
   ],
   "warnings": ["assets：素材「x」声明了但镜头里没人用"],
   "data": {"failed": 1, "checks": [{"name": "scene", "ok": false, "checked": 8, "problems": ["…"]}]}
@@ -43,7 +43,7 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 
 要点：
 
-- **每条错误带 `code` 与 `where`**（`scene` 的校验错误直接给 `shots[i].field` 路径）——错误信息是给模型读的 prompt，读完能直接改；
+- **每条错误带 `code` / `path` / `message` / `hint`**（`scene` 的校验错误在 `path` 里直接给 `shots[i].field` 这样的路径）——错误信息是给模型读的 prompt，读完能直接改；`hint` 通常已经把可用值列出来了；
 - `data` 按命令给产物路径与统计：`render` 给 `{out, frames, seconds, shards}`，`stills` 给 `{files}`，`all` 给 `{video, final, checks}`，`tts` 给 `{audio, timeline, …}`；
 - 没配音时 `all` 返回 `ok: true` 且 `data.muted: true`（跳过合流不是失败，但要让调用方知道）。
 
