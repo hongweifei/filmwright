@@ -3,9 +3,7 @@
 import {spawn} from 'node:child_process';
 import {mkdtempSync, readFileSync, existsSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join, extname} from 'node:path';
-import http from 'node:http';
-import {readFile} from 'node:fs/promises';
+import {join} from 'node:path';
 import {findBrowser} from './find.mjs';
 
 /**
@@ -79,62 +77,14 @@ export function isValidFrameFormat(s) {
 }
 
 
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.ttf': 'font/ttf',
-  '.otf': 'font/otf',
-  '.woff2': 'font/woff2',
-  '.wav': 'audio/wav',
-  '.png': 'image/png',
-};
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * 静态服务器：服务项目根 + 挂载点。
- * mounts 形如 [{prefix:'/lib/', dir:'<库目录>'}，用于把 filmwright 自己的 src 供出去。
- */
-export function serveProject(projectDir, mounts = []) {
-  const server = http.createServer(async (req, res) => {
-    try {
-      const url = new URL(req.url, 'http://x');
-      let p = decodeURIComponent(url.pathname);
-      if (p === '/') p = '/index.html';
-
-      const tries = [];
-      // 挂载点优先（库自己的 index.html / src）
-      for (const m of mounts) {
-        if (p.startsWith(m.prefix)) {
-          tries.push(join(m.dir, p.slice(m.prefix.length)));
-        }
-      }
-      // 然后是项目目录：/public/ 下的东西按根路径引用
-      tries.push(join(projectDir, p));
-      if (p.startsWith('/fonts/') || p.startsWith('/assets/')) {
-        tries.push(join(projectDir, 'public', p));
-      }
-
-      for (const f of tries) {
-        try {
-          const buf = await readFile(f);
-          res.writeHead(200, {
-            'Content-Type': MIME[extname(f).toLowerCase()] || 'application/octet-stream',
-            'Cache-Control': 'no-store',
-          });
-          res.end(buf);
-          return;
-        } catch { /* 试下一个 */ }
-      }
-      res.writeHead(404).end('not found');
-    } catch {
-      res.writeHead(404).end('not found');
-    }
-  });
-  return new Promise((r) => server.listen(0, '127.0.0.1', () => r(server)));
-}
+// 这里曾有一份 `serveProject` 的**重复实现**：自带一份更短的 MIME 表，而且 `/fonts/`
+// 只查项目 `public/`、**没有库根兜底**。全仓没有任何地方 import 它 —— 真正的那个在
+// `src/host/project/server.mjs`（`preview` / `renderRange` / 各验收工具走的都是它）。
+// 留着的代价是**上膛的枪**：谁把它接回去，库自带的字体就会静默 404 ——
+// 字体加载失败**不报错**，只会回退系统字体，在没装中文字体的机器上等于中文全丢。
+// 已删（连同它专用的 `MIME` 表）。
 
 /**
  * 打开一个渲染会话。

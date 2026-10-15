@@ -58,9 +58,12 @@ function facts() {
   const layer = readFileSync(join(ROOT, 'src/runtime/composite/layer.js'), 'utf8');
   const blendModes = (layer.match(/BLEND_MODES = \[([\s\S]*?)\]/)[1].match(/'/g) || []).length / 2;
 
-  const shots = readFileSync(join(ROOT, 'src/runtime/stage/shots.js'), 'utf8');
-  const tr = shots.match(/export function normalizeTransition[\s\S]{0,700}/)?.[0] ?? '';
-  const transitions = [...new Set([...tr.matchAll(/'(crossfade|fade|slide|wipe|zoom)'/g)].map((m) => m[1]))];
+  // 转场类型从**单一来源**读（`contract/scene.js` 的 `TRANSITION_TYPES`，`shots.js` 也 import 它）。
+  // 原来是在 shots.js 里 `normalizeTransition` 之后 700 字符的窗口里正则捞：那个窗口只捞得到
+  // 3 种（crossfade / slide / wipe，都是函数体里的字面量），而真实名单有 5 种 ⇒ 打印出来的
+  // 「事实」本身就是错的。因为没有规则拿它比对，错了很久也没人发现 —— 顺手修掉。
+  const transitions = (scene.match(/export const TRANSITION_TYPES = \[([^\]]*)\]/)?.[1] ?? '')
+    .split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
 
   const hasClips = existsSync(join(ROOT, 'src/host/media/clips.mjs'))
     && existsSync(join(ROOT, 'src/runtime/clips.js'));

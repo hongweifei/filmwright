@@ -173,7 +173,7 @@ const TYPE_NOTES = {
   three: '声明式 3D：形状/相机是有界词汇表，动画走关键帧轨道（需要可选的 three）',
 };
 
-/** 转场类型与方向（与 runtime/stage/shots.js 同一份名单，有交叉测试钉住）。 */
+/** 转场类型与方向的**单一来源**（`runtime/stage/shots.js` 从这里 import，不再各抄一份）。 */
 export const TRANSITION_TYPES = ['crossfade', 'fade', 'slide', 'wipe', 'zoom'];
 export const TRANSITION_DIRECTIONS = ['left', 'right', 'up', 'down'];
 
@@ -192,9 +192,18 @@ export function isValidTransition(v) {
 /**
  * 图层变换是否合法。
  *
- * 与 runtime/composite/layer.js 的 isValidTransform **必须一致** —— 但 contract
- * 不能 import runtime（分层规则），所以这里重写一份，并由测试钉住两者一致
- * （tests/composite-layer.test.mjs 有交叉断言）。规则很简单，重复的代价小于破层。
+ * 与 `runtime/composite/layer.js` 的同名函数**有一处刻意的不同**：`blend` 这里只判
+ * 「是不是字符串」，取值白名单（16 种混合模式）只在 runtime 判 —— 因为 contract
+ * 不能 import runtime（分层规则），而 `BLEND_MODES` 定义在 runtime 里。
+ * 原注释写「必须一致」是**错的**：`tests/composite-layer.test.mjs` 有反例 ——
+ * 同一个 `{blend:'不存在的模式'}`，runtime 判 false、contract 判 true（有意）。
+ *
+ * ⚠️ 这个不对称有一个**已知后果**：`scene.json` 走的是**这一份**，所以
+ * `{"blend": "不存在的模式"}` **能通过校验**；到了 runtime，`withLayer` 直接
+ * `ctx.globalCompositeOperation = blend`，而 Canvas 对非法值是**静默忽略**的
+ * ⇒ 画面按 `source-over` 画，不报错、不崩 —— 正是「声明了但没生效」那一族。
+ * 手写镜头那条路没这个问题（`shots.js` 调的是 runtime 那份，会当场抛）。
+ * 要收口就得把 `BLEND_MODES` 上提到 contract，让两份都判白名单。
  */
 export function isValidTransform(t) {
   if (t === undefined || t === null) return true;

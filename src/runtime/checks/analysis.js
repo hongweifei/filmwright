@@ -4,11 +4,16 @@
 // 这里每采一帧就地把内容区降采样成一个小网格，只把标量（diff / ink）交出去。
 //
 // 判据（沿用一部真实片子校准过的阈值）：
-//   diff — 相邻采样帧内容区灰度平均变化；小于 STATIC_THR 就算「这一拍没动」
+//   diff — 相邻采样帧内容区灰度平均变化；小于阈值就算「这一拍没动」
 //   ink  — 内容区里与主色调明显不同的像素占比；接近 0 说明画面几乎是空的
+//
+// ⚠️ **阈值不在这里**：这个文件只负责「在浏览器里采样、把标量交出去」，判定在
+// `src/host/checks/runtime/quality.mjs` 的 `THRESHOLDS`（判定放 Node 侧才单测得动）。
+// 这里曾另有一个 `STATIC_THR = 0.5`，**没有任何代码读它** —— 真正生效的是 quality.mjs
+// 的 `staticThr`。它之所以没被 `dead-exports` 棘轮抓到，是因为上面注释里提了一次
+// 它的名字（那个棘轮按「符号名出现次数」判，分不清注释与代码）。已删。
 import {view} from '../../contract/viewport.js';
 
-export const STATIC_THR = 0.5;   // 灰度差小于它就当作静止
 export const INK_THR = 12;       // 与主色调差多少算「画了东西」
 const GRID = {cols: 32, rows: 18};
 

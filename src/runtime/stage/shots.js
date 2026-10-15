@@ -1,7 +1,7 @@
 // 镜头注册与串接。只声明 start，区间由这里算 —— 手算 from/to 会让区间重叠。
 import {isValidTransform} from '../composite/layer.js';
 import {compileAnimate} from '../scene/animate.js';
-import {validateAnimate, validateEffects} from '../../contract/scene.js';
+import {validateAnimate, validateEffects, TRANSITION_TYPES, TRANSITION_DIRECTIONS} from '../../contract/scene.js';
 import {compileEffects} from '../fx/compile.js';
 import {EFFECT_SPECS} from '../../contract/effects.js';
 
@@ -121,7 +121,7 @@ export function setShots(list) {
       const tr = normalizeTransition(s.transition);
       if (!tr) {
         throw new Error('filmwright: 镜头 transition 形状不对（start=' + s.start +
-          '）：要 {type:"crossfade"|"fade", frames:N}，或直接给帧数');
+          '）：要 {type:"' + TRANSITION_TYPES.join('"|"') + '", frames:N}，或直接给帧数');
       }
     }
     // 可选的图层变换 / 混合模式（同样不破坏纯函数不变量：它只是 N 的函数）。
@@ -152,9 +152,9 @@ export function setShots(list) {
   return declared;
 }
 
-/** 转场类型与方向（contract 层的校验用同一份名单）。 */
-export const TRANSITION_TYPES = ['crossfade', 'fade', 'slide', 'wipe', 'zoom'];
-export const DIRECTIONS = ['left', 'right', 'up', 'down'];
+// 转场类型与方向的**单一来源在 contract**（上面 import 进来的那两个），这里不再抄一份。
+// 抄一份的代价是**实测到的**：这个文件的报错文案停在 `crossfade|fade` 两种，而真实名单有
+// 五种 —— 用户照着报错去写 `slide`，会被自己的报错信息误导。文案现在由名单拼出来。
 
 /**
  * 转场声明归一化。接受三种写法，统一成 `{type, frames, direction}`：
@@ -174,7 +174,7 @@ export function normalizeTransition(v) {
   if (!TRANSITION_TYPES.includes(type)) return null;
   if (!Number.isInteger(v.frames) || v.frames < 1) return null;
   let direction = v.direction ?? null;
-  if (direction !== null && !DIRECTIONS.includes(direction)) return null;
+  if (direction !== null && !TRANSITION_DIRECTIONS.includes(direction)) return null;
   // 方向只对 slide / wipe 有意义：别的类型给了也**忽略**而不报错 ——
   // 报错会让「统一写 direction 的生成器」很难用，而忽略是无害的。
   if (type !== 'slide' && type !== 'wipe') direction = null;

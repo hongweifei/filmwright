@@ -68,7 +68,18 @@ for (const f of srcFiles) {
 // ⚠️ **必须排除本文件自己**：下面的 KNOWN 名单里写着那些符号名，
 // 若把自己算进"引用"，名单本身就会让它们看起来"有人用" —— 自引用 bug，实测踩到过。
 const SELF = fileURLToPath(import.meta.url);
-const texts = new Map(allFiles.filter((p) => p !== SELF).map((p) => [p, readFileSync(p, 'utf8')]));
+
+// ⚠️ **先去掉注释再数引用**：注释里提一次符号名**不该**算「有人用」。
+// 实测漏过一次：`runtime/checks/analysis.js` 导出的 `STATIC_THR` 没有任何代码读它，
+// 但同一文件顶部的注释里写了一次它的名字 ⇒ 计数把它当成「有人用」⇒ 棘轮放行，
+// 那个常量就一直在源码里躺着（真正生效的阈值在 host 侧的 THRESHOLDS 里）。
+// 粗糙但够用：`[^:]` 那一段是防 `http://` 被当成注释开头。
+const stripComments = (s) => s
+  .replace(/\/\*[\s\S]*?\*\//g, ' ')
+  .replace(/<!--[\s\S]*?-->/g, ' ')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+const texts = new Map(allFiles.filter((p) => p !== SELF)
+  .map((p) => [p, stripComments(readFileSync(p, 'utf8'))]));
 const dead = [];
 for (const [f, names] of exportsByFile) {
   const key0 = relative(ROOT, f).replace(/\\/g, '/');
