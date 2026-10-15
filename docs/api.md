@@ -135,9 +135,20 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 
 | 导出 | 说明 |
 |---|---|
+| `boot(project, resize)` | 装配：装配置 / 时间轴 → 等字体与素材就绪 → 求值镜头模块 → 串接区间。**两份宿主页面（`src/host/pages/`）用的就是它** |
 | `drawFrame(ctx, n)` | 按帧号画完整一帧（内建件 + 当前镜头 + 片尾） |
 | `shots()` / `shotAt(n)` | 镜头表（带串接好的 `from` / `to`）/ 帧号 → 所在镜头 |
 | `chapterCards()` | 已组装的章节卡 |
+
+`boot` 与下一节的 `installAnalysis` 之所以在公开面上，是因为**宿主页面也要用**：
+两份宿主页面只 `import` 公开面（`/kit/index.js`），不深链 `/kit/runtime/…` ——
+深链会让它们依赖库的内部结构，改一个目录名就静默 404。这条有常驻判据盯着。
+
+## 画面自检的页面侧采样器
+
+| 导出 | 说明 |
+|---|---|
+| `installAnalysis(ctx, render)` | 把逐帧采样器装到页面上（`window.__sampleFrames` / `window.__frameStats`）。画质自检要读 canvas 像素，**采样只能在页面里做，判定在 Node 侧**（`src/host/checks/browser/`） |
 
 ## 一个完整的镜头示例
 

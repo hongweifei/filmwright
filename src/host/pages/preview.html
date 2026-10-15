@@ -103,7 +103,9 @@
 </footer>
 
 <script type="module">
-import {boot, drawFrame, view, timeline, shots} from '/kit/runtime/stage/index.js';
+// 只从**公开面**取东西（`/kit/index.js`）—— 与镜头文件 `import 'filmwright'` 同一条规则，
+// 理由见 render.html 顶部。深链会让预览页依赖库的内部结构。
+import {boot, drawFrame, view, timeline, shots} from '/kit/index.js';
 
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');

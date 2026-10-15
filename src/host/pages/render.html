@@ -27,10 +27,10 @@
 <body>
 <canvas id="c" width="1280" height="720"></canvas>
 <script type="module">
-import {boot, drawFrame, view} from '/kit/runtime/stage/index.js';
-import {installAnalysis} from '/kit/runtime/qc/analysis.js';
-import {img, imgSize, assetNames} from '/kit/runtime/assets.js';
-import {BLK, cutBefore, timeline} from '/kit/contract/timeline.js';
+// 只从**公开面**取东西（`/kit/index.js`）—— 与镜头文件 `import 'filmwright'` 是同一条规则。
+// 深链 `/kit/runtime/...` 会让宿主页面依赖库的内部结构：改个目录名就静默 404，
+// 而页面 boot 不起来只表现为「渲染超时」。
+import {boot, drawFrame, view, installAnalysis, img, imgSize, assetNames, BLK, cutBefore, timeline} from '/kit/index.js';
 
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');

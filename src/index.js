@@ -10,6 +10,11 @@
 //
 // 这里只导出**浏览器里跑**的东西。宿主层（Node 侧：渲染、自检、CLI）不在公开面上，
 // 镜头不该 import 它们 —— 那会让库的内部结构和镜头耦合。
+//
+// **宿主页面也是这个公开面的使用者**：`src/host/pages/render.html` 与 `preview.html`
+// 原先深链 `/kit/runtime/stage/index.js` 之类去拿 `boot` 等符号 —— 那等于宿主页面
+// 自己违反「只从公开面取东西」这条规则，规则就没人信了。现在两份页面只 import
+// `/kit/index.js`，并由 `tests/public-api.test.mjs` 常驻盯着（页面用到的名字必须在公开面上）。
 
 // ---- 契约：配置与视口 ----
 export {theme, fonts, view, DESIGN, config, accentFor} from './contract/config.js';
@@ -43,7 +48,13 @@ export {bindLocalShots, compLength, localFrame, drawCompInstance, mapBeats} from
 export {applyDesignScale, scale, scaleFactors, sX, sY, sSize, DESIGN_SAFE} from './runtime/layout/design.js';
 
 // ---- 运行时：阶段（镜头与装配）----
-export {drawFrame, shotAt, shots, chapterCards} from './runtime/stage/index.js';
+// `boot` 公开在这里，理由见文件头：两份宿主页面都要用它。
+export {boot, drawFrame, shotAt, shots, chapterCards} from './runtime/stage/index.js';
+
+// ---- 运行时：画面自检的**页面侧采样器** ----
+// 画质自检要读 canvas 像素，只能在页面里做；**判定**在 Node 侧
+// （`host/checks/browser/quality.mjs`）。宿主页面负责把它装上，所以它在公开面上。
+export {installAnalysis} from './runtime/qc/analysis.js';
 
 // ---- 运行时：3D 图层（现成的 three，**可选**依赖）----
 // 不在文件顶层 `import 'three'` —— 那样所有项目都要付 2.2MB 的加载代价。
