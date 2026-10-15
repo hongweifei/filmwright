@@ -613,7 +613,7 @@ three 是**保留模式**的场景图 —— 场景一旦建好就一直在。�
 
 ## 校验与错误码
 
-`filmwright check` 的 `scene` 一道（不启浏览器）跑校验；boot 在浏览器里查的是**同一份实现**（`src/contract/scene.js`）。每条错误带 `code / path / message / hint`——错误信息是给模型读的，读完能直接改。
+`filmwright check` 的 `scene` 一道（不启浏览器）跑校验；boot 在浏览器里查的是**同一份实现**（`src/contract/scene/`，拆成 8 个文件；`src/contract/scene.js` 只是只做转出的桶）。每条错误带 `code / path / message / hint`——错误信息是给模型读的，读完能直接改。
 
 | code | 含义 |
 |---|---|

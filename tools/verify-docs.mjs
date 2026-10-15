@@ -31,7 +31,9 @@ const FIX = process.argv.includes('--fix');
 
 // ---------- 从实现里取事实（唯一真相源）----------
 function facts() {
-  const scene = readFileSync(join(ROOT, 'src/contract/scene.js'), 'utf8');
+  // ⚠️ 数据表在 `scene/tables.js`（`scene.js` 已拆成 8 个文件 + 只转出的桶）。
+  // 读的是**实现**而不是桶：桶只有 `export {…} from`，正则拿不到 `export const X = [...]` 的字面量。
+  const scene = readFileSync(join(ROOT, 'src/contract/scene/tables.js'), 'utf8');
   const typesBlock = scene.match(/export const SHOT_TYPES = \[([\s\S]*?)\];/)[1];
   // 「N 类模板」必须只数**模板**，不能数容器。
   // SHOT_TYPES 里除了模板还有容器（如 layers —— 它没有自己的内容与 TEMPLATES 条目，
@@ -60,7 +62,7 @@ function facts() {
   // 那种红读不出「名单被搬走了，判据要跟着改」，只会让人以为是工具坏了。
   const bm = scene.match(/export const BLEND_MODES = \[([\s\S]*?)\]/);
   if (!bm) {
-    throw new Error('verify-docs: src/contract/scene.js 里找不到 `export const BLEND_MODES = [...]`'
+    throw new Error('verify-docs: src/contract/scene/tables.js 里找不到 `export const BLEND_MODES = [...]`'
       + '（名单被改名或搬走了，这条判据要跟着改）');
   }
   const blendModes = (bm[1].match(/'/g) || []).length / 2;
@@ -400,7 +402,7 @@ function fixtureFiles() {
 
   const files = {
     // ── facts() 会读的实现文件 ──
-    'src/contract/scene.js': `export const SHOT_TYPES = [${q(types)}];\n`
+    'src/contract/scene/tables.js': `export const SHOT_TYPES = [${q(types)}];\n`
       + `export const CONTAINER_TYPES = [${q(containers)}];\n`
       + `export const BLEND_MODES = ['normal', 'multiply'];\n`,
     'src/host/checks/index.mjs': `export async function runChecks({staticOnly} = {}) {\n`
@@ -453,7 +455,7 @@ function writeFixture(dir, trackDocs) {
   }
   try {
     execFileSync('git', ['init', '-q'], {cwd: dir, stdio: 'ignore'});
-    execFileSync('git', ['add', '--', 'src/contract/scene.js'], {cwd: dir, stdio: 'ignore'});
+    execFileSync('git', ['add', '--', 'src/contract/scene/tables.js'], {cwd: dir, stdio: 'ignore'});
     if (trackDocs) execFileSync('git', ['add', '--', 'README.md', 'docs/qc.md'], {cwd: dir, stdio: 'ignore'});
     return true;
   } catch { return false; }   // 没有 git：工具会回退到扫磁盘，只是「空集」那条做不了
