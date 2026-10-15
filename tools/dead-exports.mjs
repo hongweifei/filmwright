@@ -17,8 +17,9 @@
 //
 //   · `pruneCache` / `projectFingerprint`：早期设计的遗留 ——
 //     现在用的是更新版的 `pruneSegments` / `globalFingerprint`（都在用）；
-//   · `reset3D`：注释写着"测试用"，但**没有任何测试用它** ——
-//     要么补测试，要么删，注释别停在"测试用"。
+//   · ~~`reset3D`~~：**已从名单去掉**（2026-10-15）—— 它当时"没人用"，
+//     但它是**有意公开的 API**；公开面扩到覆盖 3D 词汇后它真的上了公开面，
+//     于是棘轮当场报"这个名单条目已经不再是死导出"（正是它该干的事）。
 import {readdirSync, readFileSync} from 'node:fs';
 import {join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -28,7 +29,6 @@ import {dirname} from 'node:path';
 const KNOWN = new Map([
   ['src/host/media/clips.mjs pruneCache', '早期设计遗留；现在用 pruneSegments（在用）'],
   ['src/host/media/incremental.mjs projectFingerprint', '早期设计遗留；现在用 globalFingerprint（在用）'],
-  ['src/runtime/three/scene3d.js reset3D', '注释写"测试用"但无测试引用 —— 要么补测试要么删'],
 ]);
 
 const HERE = dirname(fileURLToPath(import.meta.url));

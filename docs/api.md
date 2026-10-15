@@ -36,6 +36,10 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `DESIGN` | 设计基准 `{W: 1280, H: 720}` |
 | `config()` | 取完整已装配置；未装时抛错 |
 | `accentFor(i)` | 第 i 章主色（1 起，超出回绕） |
+| `accent(i)` | 同 `accentFor`，但用于「第 i 个装饰元素」时的简写（回绕语义相同） |
+| `install(cfg)` / `isInstalled()` | 装上配置 / 配置装没装（宿主装配用；镜头里一般不用） |
+| `normalizeConfig(raw)` | 配置校验 + 补默认值（**写错的字段当场报错**，不静默退回默认） |
+| `DEFAULT_THEME` / `DEFAULT_FONTS` / `DEFAULT_FONT_FILES` | 默认配色 / 默认字体栈 / 要预加载的字体文件清单 |
 
 镜头里读颜色直接 `theme.accents[k]`（注意长度由使用者定，越界是 `undefined`）或用 `accentFor`。
 
@@ -51,6 +55,7 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `chapterAt(frame)` | 帧号 → 章节号（1 起） |
 | `tailFrom()` | 末句结束之后留给片尾的起点 |
 | `timeline` | 时间轴原始数据（`fps` / `totalFrames` / `chapters` / `sentences` / `subs`，活引用） |
+| `setTimeline(tl)` / `isReady()` | 装时间轴 / 时间轴装没装（宿主装配用；镜头模块在装载后才求值，所以镜头里读到的总是就绪的） |
 
 ## 动效（全部纯函数）
 
@@ -68,6 +73,8 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `kf(t, keys)` | 分段关键帧；`keys` 为 `[帧, 值]` 数组 |
 | `enter(n, f0, dur = 14, dy = 26)` | 入场：返回 `{a, dy}`（淡入 + 上移落位，**首帧全透明**） |
 | `exit(n, f1, dur = 12, dy = 22)` | 离场：返回 `{a, dy}`（上移淡出，末帧归零） |
+| `step(t, edge = 0.5)` | 阶梯：`t < edge` 为 0，否则 1（逐字 / 逐项开关用） |
+| `EASE_NAMES` / `EASES` | 有界缓动词汇表的**名单** / 名字 → 函数（`scene.json` 的 `ease` 字段只认这些名字） |
 
 惯用法：`const a = easeOut3(inv(n, from, to)); if (a > 0.01) { ctx.globalAlpha = a; … }`。
 
@@ -92,6 +99,7 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `hexdump(ctx, x, y, bytes, o)` | 十六进制转储：`hi` 高亮字节下标集合、`divideAfter` 分界虚线 |
 | `spotlight(ctx, x, y, w, h, strength, r)` | 放大镜：矩形外压暗 |
 | `grid(ctx, n, o)` | 网格底纹：`step` / `color` / `drift` |
+| `hexA(hex, alpha)` | 颜色 + 透明度 → `rgba(...)` 串（自己拼颜色时用；面板与光晕内部也用它） |
 
 ## 组合件（`runtime/draw/widgets.js`）
 
@@ -115,6 +123,7 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `imgSize(name)` | 原始尺寸 `{w, h}` |
 | `assetNames()` | 全部已声明素材名 |
 | `assetsReady()` | 素材是否全部就绪 |
+| `loadAssets(list)` | 按清单加载素材（宿主装配用；`boot()` 已经替你调了） |
 
 素材在配置里声明、文件放 `public/` 下；`boot()` 会**全部加载完才开画**（图片加载失败是抛错——该有的东西没了必须响）。视频走 `clips`（宿主抽帧 + 运行时按源帧同步取图，见 [clips 段](config.md#clips视频--图片序列素材)），不直接用 `video` 元素，原因见[已知限制](../LIMITATIONS.md)。
 
@@ -139,6 +148,8 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `drawFrame(ctx, n)` | 按帧号画完整一帧（内建件 + 当前镜头 + 片尾） |
 | `shots()` / `shotAt(n)` | 镜头表（带串接好的 `from` / `to`）/ 帧号 → 所在镜头 |
 | `chapterCards()` | 已组装的章节卡 |
+| `bindShots(list)` / `setShots(list)` | 把镜头表串接成带 `from` / `to` 的区间 / 直接装上（装配与测试用） |
+| `normalizeTransition(t)` / `transitionAt(n)` | 转场声明归一化 / 帧号 → 当前转场（内建件用） |
 
 `boot` 与下一节的 `installAnalysis` 之所以在公开面上，是因为**宿主页面也要用**：
 两份宿主页面只 `import` 公开面（`/kit/index.js`），不深链 `/kit/runtime/…` ——
@@ -149,6 +160,109 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | 导出 | 说明 |
 |---|---|
 | `installAnalysis(ctx, render)` | 把逐帧采样器装到页面上（`window.__sampleFrames` / `window.__frameStats`）。画质自检要读 canvas 像素，**采样只能在页面里做，判定在 Node 侧**（`src/host/checks/browser/`） |
+| `INK_THR` / `contentRect(ctx)` | 墨迹阈值（静止判定口径）/ 扣掉 HUD 与字幕带的内容区（**与 Node 侧判定共用同一口径**，所以它在公开面上） |
+
+## 图层合成与嵌套合成
+
+`layers` 容器与 `comps` 子合成用的就是这一组 —— **顶层镜头走的是同一条路径**（`withLayer` 的 `mode: 'shot'`），所以手写镜头与声明式规格的变换语义完全一致。
+
+| 导出 | 说明 |
+|---|---|
+| `withLayer(ctx, …)` | 按层的 `transform` / 透明度 / `blend` 画一次回调；顶层镜头与容器层共用 |
+| `applyLayerTransform(ctx, t, n)` / `applyShotTransform(ctx, …)` | 把（可带关键帧的）变换应用到 ctx |
+| `isValidTransform(t)` | 变换字段校验（`blend` 走 `BLEND_MODES` 白名单 —— 非法值不会被 Canvas 静默忽略） |
+| `BLEND_MODES` | 16 个混合模式的**单一来源**（契约与运行时指向同一个对象） |
+| `bufferStats()` / `needsBuffer(…)` | 合成缓冲区统计 / 这层要不要单独缓冲区 |
+| `bindLocalShots(…)` / `compLength(…)` / `localFrame(…)` / `drawCompInstance(…)` / `mapBeats(…)` | 子合成实例的装配、长度、本地帧映射、绘制与节拍映射 |
+| `assertNoCycles(comps)` | 子合成引用成环**当场报错**（成环会无限递归） |
+
+## 片段（视频 / 图片序列）
+
+宿主侧抽帧、运行时按**源帧号**同步取图 —— 不用 `video` 元素，原因见[已知限制](../LIMITATIONS.md)。
+
+| 导出 | 说明 |
+|---|---|
+| `clipFrame(name, …)` / `clipInfo(name)` | 取某源帧的画面 / 片段的元信息（帧数、尺寸、fps） |
+| `clipNames()` / `clipsReady()` / `decodedCount(name)` | 已声明的片段名 / 是否全部就绪 / 已解出多少帧 |
+| `sourceIndex(name, n)` / `preloadClipFrames(…)` / `setClips(…)` | 帧号 → 源帧下标 / 预取 / 装配（后两个是宿主与测试用的） |
+
+## 声明式引擎（`scene.json` → 镜头）
+
+| 导出 | 说明 |
+|---|---|
+| `TEMPLATES` | **17 类模板 + 1 个容器**的注册表；键与 `SHOT_TYPES` 一一对应（有测试钉住） |
+| `compileScene(scene, {timeline, sentences, subs})` | 把 `scene.json` 编译成镜头表（两趟：先 `comps` 再顶层） |
+| `compileAnimate(…)` / `evalAnimate(…)` / `mergeAnimate(…)` | 关键帧轨道的编译、求值与合并 —— **模板与手写镜头共用**，所以「第 N 帧只是 N 的函数」这条不变量两边都成立 |
+
+> 想「拿 filmwright 当库编译 `scene.json`」就走这三个；`filmwright render` 走的是同一条路。
+
+## 效果链（编译与执行）
+
+| 导出 | 说明 |
+|---|---|
+| `compileEffects(decl)` | 把 `effects` 声明编译成可执行的步骤序列 |
+| `evalEffects(compiled, n)` | 按帧求值（关键帧参数在这一步落地） |
+| `isNoopEffects(…)` | 声明是不是等于「什么都不做」（走快路径，不碰 GPU） |
+| `applyEffects(srcCanvas, compiled, n)` | 跑一遍效果链，**返回结果画布**（没效果时返回 `null`，调用方走原路） |
+| `paintWithEffects(ctx, fx, alpha, n, drawInto)` | 画 + 合成（转场淡入要乘 alpha；合成用 `source-over` 保留引擎已画的背景） |
+| `getScratch(w, h)` | 共用暂存画布（避免每帧新建） |
+| `blurPlan(radius)` / `pyramidLevel(radius)` | 模糊的金字塔规划 —— **纯数学、零 GL 依赖** |
+
+## 场景规格与校验（契约层）
+
+`scene.json` 的规则本身。**`filmwright check` 的 `scene` 一道与浏览器 boot 查的是同一份实现。**
+
+| 导出 | 说明 |
+|---|---|
+| `validateScene(raw, {timeline, assetNames, clipNames})` | 总校验，返回 `{errors, warnings}`；每条错误带 `code / path / message / hint` |
+| `sceneSchema()` | 机器可读 schema（类型 / 字段 / 容量上限 / 对齐语法 / 错误码）—— MCP 的 `filmwright_schema` 用的就是它 |
+| `SHOT_TYPES` / `CONTAINER_TYPES` / `TEMPLATE_TYPES` / `SHOT_MAXES` / `SCENE_SCHEMA` / `SCENE_ERROR_CODES` | 类型清单 / 容器 / 模板 / 容量上限 / 规格版本 / 错误码表 |
+| `resolveAt(at, tl)` | `at` 写句 id / 块号时的解析 |
+| `validateEffects` / `validateMask` / `validate3D` / `validateLayers` / `validateAnimate` / `validateTransition` / `isValidTransition` / `needsThree` / `assertNoCyclesPlain` | 各叶子校验器与两个小工具（`needsThree` 判断要不要 3D 运行时） |
+| `ANIM_PROPS` / `MASK_SHAPES` / `TRANSITION_TYPES` / `TRANSITION_DIRECTIONS` | 可动画属性 / 遮罩形状 / 转场类型 / 转场方向 |
+
+## 效果链与 3D 的词汇表（契约层）
+
+有界词汇表（与 `scene.json` 的校验共用同一份，**不是文档抄一份**）。
+
+| 导出 | 说明 |
+|---|---|
+| `EFFECT_TYPES` / `EFFECT_SPECS` / `EFFECT_CHAIN_MAX` / `EFFECT_ERROR_CODES` / `GRADE_LOOKS` | 效果类型 / 每个效果的字段与范围 / 链长上限 / 错误码 / 调色预设 |
+| `SHAPES` / `ANIM3D_PROPS` / `LIGHT_TYPES` / `LIGHT_ANIM_PROPS` / `MAX_OBJECTS` / `MAX_LIGHTS` / `THEME_COLOR_KEYS` / `THREE_ERROR_CODES` | 3D 形状 / 可动画属性 / 光源类型 / 光源可动画属性 / 物体上限 / 光源上限 / 取主题色的键 / 错误码 |
+
+## overlay（背板 / 章节卡 / HUD / 进度 / 字幕 / 结尾）
+
+引擎内建件。**自己读 `view` 按比例摆，与分辨率无关**；镜头一般不用它们（`drawFrame` 会调）。
+
+| 导出 | 说明 |
+|---|---|
+| `drawBackdrop(ctx)` | 背板底纹 |
+| `drawChapterCard(ctx, …)` / `setChapterCards(…)` | 章节卡绘制 / 装配 |
+| `drawHud(ctx, …)` | 左上角的 HUD |
+| `drawProgress(ctx, …)` | 底部进度条 |
+| `drawSubtitle(ctx, …)` | 字幕带 |
+| `drawEnding(ctx, …)` | 片尾 |
+
+## 页面侧 h264 编码
+
+WebCodecs 编码在**页面里**跑（Node 侧只收裸流）。
+
+| 导出 | 说明 |
+|---|---|
+| `h264Available()` | 这台机器 / 这个页面能不能用硬件 h264 |
+| `createH264Encoder(…)` | 建编码器（含队列与背压） |
+| `annexBFromChunk(chunk)` | `EncodedVideoChunk` → Annex-B 裸流（ffmpeg 直接吃） |
+
+## 3D 图层（现成的 three，**可选**依赖）
+
+**不在文件顶层 `import 'three'`** —— 那样所有项目都要付 2.2MB 的加载代价；由镜头模块自己 `await loadThree()`。
+
+| 导出 | 说明 |
+|---|---|
+| `loadThree()` | 动态加载 three（返回 `{THREE, …}`；顶层 await 也是调用方的事，因为 `draw` 是同步的） |
+| `create3D(…)` | 建一个 3D 场景实例（形状 / 相机 / 光照都在有界词汇表内） |
+| `ensureThree()` / `getThree()` / `getRenderer()` | 取（必要时先建）3D 运行时 / three 命名空间 / 渲染器 |
+| `threeT` / `reset3D()` | 内建的 `three` 模板 / 重置 3D 运行时（测试与热重载用） |
 
 ## 一个完整的镜头示例
 

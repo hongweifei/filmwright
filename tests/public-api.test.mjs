@@ -11,7 +11,9 @@
 // （实测：重排后像素回归报「启动超时」，就是 `render.html` 里一行 `/kit/runtime/...` 没跟着改。）
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
+import {join, relative} from 'node:path';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const PAGES = ['src/host/pages/render.html', 'src/host/pages/preview.html'];
 
@@ -58,4 +60,50 @@ test('宿主页面只从公开面取东西：不深链 /kit/<子路径>，且用
   }
   assert.ok(checkedNames > 0, '一个名字都没核到 —— 判据在空集上恒绿');
   assert.equal(checkedPages, PAGES.length, '有页面没被扫到');
+});
+
+// 不参与「必须有入口」的模块：它们是**实现细节**，不是「不想公开」。
+// 规则一句话：**拆过的地方，API 是它的桶** —— 桶只转出的那些名字就是那一块的能力面，
+// 底下的部件模块只是实现（它们 `export` 是为了让兄弟模块 import，不是给人用的）。
+const IMPL_ONLY = new Set([
+  'src/contract/scene/effects.js', 'src/contract/scene/layers.js', 'src/contract/scene/mask.js',
+  'src/contract/scene/primitives.js', 'src/contract/scene/tables.js', 'src/contract/scene/three.js',
+  'src/contract/scene/timelineQuery.js', 'src/contract/scene/validate.js',   // 桶是 contract/scene.js
+  'src/runtime/scene/templates/core.js', 'src/runtime/scene/templates/ext.js',
+  'src/runtime/scene/templates/registry.js', 'src/runtime/scene/templates/helpers.js',  // 桶是 scene/templates.js
+  'src/runtime/fx/shaders.js',      // 14 段 GLSL 源码：入口是 compileEffects / applyEffects
+  'src/runtime/fx/stage.js',        // GpuStage 类：同上
+]);
+
+test('公开面覆盖能力面：`contract/` + `runtime/` 里每个具名导出都要有入口', async () => {
+  // 把审计的度量（「去重导出 175 个，只有 96 个可达」）变成**常驻判据**。
+  // 度量的意义是「整块能力没有入口」⇒ 判据按**名字**判可达（同名多实现的，名字有入口即可）。
+  // ⚠️ 用 `fileURLToPath` + `relative` 算相对路径：手拼 `ROOT + '/'` 会因为 ROOT 自带尾斜杠
+  // 变成 `//`，于是下面那张排除表**一条都匹配不上**（实测踩过：判据把该排除的部件全报成「没入口」）。
+  const ROOT = fileURLToPath(new URL('..', import.meta.url));
+  const relOf = (f) => relative(ROOT, f).replace(/\\/g, '/');
+  const walk = (d) => readdirSync(d, {withFileTypes: true})
+    .flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
+  const files = [...walk(join(ROOT, 'src/contract')), ...walk(join(ROOT, 'src/runtime'))]
+    .filter((f) => /\.(js|mjs)$/.test(f))
+    .filter((f) => !IMPL_ONLY.has(relOf(f)));
+
+  // 下限：枚举坏了就不算通过（「空集上的干净不算干净」）
+  assert.ok(files.length >= 20, `只扫到 ${files.length} 个模块 —— 枚举坏了`);
+
+  const pub = await import('../src/index.js');
+  const unreachable = [];
+  let total = 0;
+  for (const f of files) {
+    const m = await import(pathToFileURL(f).href);
+    for (const n of Object.keys(m)) {
+      if (n === 'default') continue;
+      total++;
+      if (!(n in pub)) unreachable.push(`${f.replace(/\\/g, '/').split('/src/')[1]} 的 ${n}`);
+    }
+  }
+  assert.ok(total >= 100, `只核到 ${total} 个导出 —— 枚举坏了`);
+  assert.deepEqual(unreachable, [],
+    '这些能力**没有入口**（要么加进 src/index.js，要么它本来该是模块私有、不该 export）：\n'
+    + unreachable.join('\n'));
 });

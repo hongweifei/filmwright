@@ -17,46 +17,66 @@
 // `/kit/index.js`，并由 `tests/public-api.test.mjs` 常驻盯着（页面用到的名字必须在公开面上）。
 
 // ---- 契约：配置与视口 ----
-export {theme, fonts, view, DESIGN, config, accentFor} from './contract/config.js';
+export {DEFAULT_FONTS, DEFAULT_FONT_FILES, DEFAULT_THEME, DESIGN, accent, accentFor, config, fonts, install, isInstalled, normalizeConfig, theme, view} from './contract/config.js';
 
 // ---- 契约：时间轴查询 ----
-export {S, BLK, cutBefore, cardFrom, cardRange, chapterAt, tailFrom, timeline} from './contract/timeline.js';
+export {BLK, S, cardFrom, cardRange, chapterAt, cutBefore, isReady, setTimeline, tailFrom, timeline} from './contract/timeline.js';
 
-// ---- 运行时：动效 ----
-export * from './runtime/motion/ease.js';
+// ---- 契约：场景规格与校验（scene.json 的规则本身） ----
+export {ANIM_PROPS, CONTAINER_TYPES, MASK_SHAPES, SCENE_ERROR_CODES, SCENE_SCHEMA, SHOT_MAXES, SHOT_TYPES, TEMPLATE_TYPES, TRANSITION_DIRECTIONS, TRANSITION_TYPES, assertNoCyclesPlain, isValidTransition, needsThree, resolveAt, sceneSchema, validate3D, validateAnimate, validateEffects, validateLayers, validateMask, validateScene} from './contract/scene.js';
+
+// ---- 契约：效果链与 3D 的词汇表 ----
+export {EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES, EFFECT_SPECS, EFFECT_TYPES, GRADE_LOOKS} from './contract/effects.js';
+export {ANIM3D_PROPS, LIGHT_ANIM_PROPS, LIGHT_TYPES, MAX_LIGHTS, MAX_OBJECTS, SHAPES, THEME_COLOR_KEYS, THREE_ERROR_CODES} from './contract/three.js';
+
+// ---- 运行时：动效（缓动） ----
+export {EASES, EASE_NAMES, clamp, easeIn3, easeInOut, easeOut3, easeOut4, easeOutBack, enter, exit, inv, kf, lerp, pulse, rnd, step} from './runtime/motion/ease.js';
 
 // ---- 运行时：绘制原语与组合件 ----
-export {font, measure, fit, roundRect, panel, pill, text, wrap, glowWith, arrowR,
-        codeBlock, terminal, caret, rule, bars, hexdump, spotlight, grid} from './runtime/draw/primitives.js';
-export {counter, bigStat, matrix, flow, chips, section, code} from './runtime/draw/widgets.js';
-export {picture, fitBox} from './runtime/draw/picture.js';
+export {arrowR, bars, caret, codeBlock, fit, font, glowWith, grid, hexdump, measure, panel, pill, roundRect, rule, spotlight, terminal, text, wrap} from './runtime/draw/primitives.js';
+export {bigStat, chips, code, counter, flow, matrix, section} from './runtime/draw/widgets.js';
+export {fitBox, picture} from './runtime/draw/picture.js';
 export {hexA} from './runtime/draw/color.js';
 
-// ---- 运行时：素材（图片；boot 时全部加载完）----
-export {img, imgSize, assetNames, assetsReady} from './runtime/assets.js';
+// ---- 运行时：素材与片段 ----
+export {assetNames, assetsReady, img, imgSize, loadAssets} from './runtime/assets.js';
+export {clipFrame, clipInfo, clipNames, clipsReady, decodedCount, preloadClipFrames, setClips, sourceIndex} from './runtime/clips.js';
 
-// ---- 运行时：片段（视频/图片序列；抽帧在宿主侧，这里按源帧号同步取帧）----
-export {clipFrame, clipInfo, clipNames, clipsReady, decodedCount, sourceIndex} from './runtime/clips.js';
-
-// ---- 运行时：图层合成（变换 / 组透明度 / 混合模式）----
-export {withLayer, applyLayerTransform, applyShotTransform, isValidTransform, BLEND_MODES, bufferStats} from './runtime/composite/layer.js';
-
-// ---- 运行时：嵌套合成（子合成实例与循环）----
-export {bindLocalShots, compLength, localFrame, drawCompInstance, mapBeats} from './runtime/composite/comp.js';
+// ---- 运行时：图层合成与嵌套合成 ----
+export {BLEND_MODES, applyLayerTransform, applyShotTransform, bufferStats, isValidTransform, needsBuffer, withLayer} from './runtime/composite/layer.js';
+export {assertNoCycles, bindLocalShots, compLength, drawCompInstance, localFrame, mapBeats} from './runtime/composite/comp.js';
 
 // ---- 运行时：版面 ----
-export {applyDesignScale, scale, scaleFactors, sX, sY, sSize, DESIGN_SAFE} from './runtime/layout/design.js';
+export {DESIGN_SAFE, applyDesignScale, sSize, sX, sY, scale, scaleFactors} from './runtime/layout/design.js';
 
-// ---- 运行时：阶段（镜头与装配）----
-// `boot` 公开在这里，理由见文件头：两份宿主页面都要用它。
-export {boot, drawFrame, shotAt, shots, chapterCards} from './runtime/stage/index.js';
+// ---- 运行时：声明式引擎（scene.json → 镜头） ----
+export {TEMPLATES, compileScene} from './runtime/scene/templates.js';
+export {compileAnimate, evalAnimate, mergeAnimate} from './runtime/scene/animate.js';
+
+// ---- 运行时：效果链（编译与执行） ----
+export {compileEffects, evalEffects, isNoopEffects} from './runtime/fx/compile.js';
+export {applyEffects, getScratch, paintWithEffects} from './runtime/fx/gpu.js';
+export {blurPlan, pyramidLevel} from './runtime/fx/blurPlan.js';
+
+// ---- 运行时：阶段（镜头装配与逐帧绘制） ----
+export {boot, chapterCards, drawFrame, shotAt, shots} from './runtime/stage/index.js';
+export {bindShots, normalizeTransition, setShots} from './runtime/stage/shots.js';
+export {transitionAt} from './runtime/stage/drawFrame.js';
+
+// ---- 运行时：overlay（背板 / 章节卡 / HUD / 进度 / 字幕 / 结尾） ----
+export {drawBackdrop} from './runtime/overlay/backdrop.js';
+export {drawChapterCard, setChapterCards} from './runtime/overlay/chapterCard.js';
+export {drawEnding} from './runtime/overlay/ending.js';
+export {drawHud} from './runtime/overlay/hud.js';
+export {drawProgress} from './runtime/overlay/progress.js';
+export {drawSubtitle} from './runtime/overlay/subtitle.js';
 
 // ---- 运行时：画面自检的**页面侧采样器** ----
-// 画质自检要读 canvas 像素，只能在页面里做；**判定**在 Node 侧
-// （`host/checks/browser/quality.mjs`）。宿主页面负责把它装上，所以它在公开面上。
-export {installAnalysis} from './runtime/qc/analysis.js';
+export {INK_THR, contentRect, installAnalysis} from './runtime/qc/analysis.js';
 
-// ---- 运行时：3D 图层（现成的 three，**可选**依赖）----
-// 不在文件顶层 `import 'three'` —— 那样所有项目都要付 2.2MB 的加载代价。
-// 由镜头模块自己 `await loadThree()`，顶层 await 也是那里的事（draw 是同步的）。
-export {loadThree, create3D} from './runtime/three/stage.js';
+// ---- 运行时：页面侧 h264 编码 ----
+export {annexBFromChunk, createH264Encoder, h264Available} from './runtime/encode/h264.js';
+
+// ---- 运行时：3D 图层（现成的 three，**可选**依赖） ----
+export {create3D, ensureThree, getRenderer, getThree, loadThree} from './runtime/three/stage.js';
+export {reset3D, threeT} from './runtime/three/scene3d.js';
