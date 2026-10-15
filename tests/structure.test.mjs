@@ -8,7 +8,7 @@
 // 三条都属于「规则写在文档里、没人守」⇒ 这里给它们牙。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync, readdirSync} from 'node:fs';
+import {readFileSync, readdirSync, statSync} from 'node:fs';
 import {dirname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -121,4 +121,23 @@ test('引擎不认识任何片子：`src/` 里不出现示例项目的名字，�
     }
   }
   assert.deepEqual(bad, [], '引擎里出现了具体片子的痕迹：\n' + bad.join('\n'));
+});
+
+test('可导航性：`tools/` 顶层每个文件都要在它自己的索引里出现（**反之亦然**）', () => {
+  // 与探针那条同族（第九轮）。**索引与文件是一对，只改一半就会悄悄腐坏**：
+  // 删文件不删行 ⇒ 悬空行；加文件不加行 ⇒ 没人知道它存在。两种都不会报错。
+  // （实测 2026-10-15 删三个零引用工具时两边都改到了，这条判据把它变成常驻要求。）
+  const dir = join(ROOT, 'tools');
+  const files = readdirSync(dir)
+    .filter((f) => statSync(join(dir, f)).isFile() && f !== 'README.md');   // 索引自己不算
+  assert.ok(files.length >= 20, `只扫到 ${files.length} 个顶层文件 —— 枚举坏了`);
+
+  const md = readFileSync(join(dir, 'README.md'), 'utf8');
+  const listed = new Set([...md.matchAll(/^\| `([^`]+)`/gm)].map((m) => m[1]));
+  assert.ok(listed.size >= 20, `只从索引里解析到 ${listed.size} 行 —— 解析写错了`);
+
+  const missing = files.filter((f) => !listed.has(f));
+  const gone = [...listed].filter((f) => !files.includes(f));
+  assert.deepEqual({missing, gone}, {missing: [], gone: []},
+    `索引与文件不一致 —— 没进索引的：${missing.join('、') || '无'}；索引里有但文件不在的：${gone.join('、') || '无'}`);
 });

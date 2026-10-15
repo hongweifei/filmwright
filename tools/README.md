@@ -38,7 +38,7 @@
 - **临时夹具放 `os.tmpdir()`、跑完即删**（`mkdtempSync` + `try/finally` 里的 `rmSync`），
   真项目与真源码全程只读。
 
-## 全部 47 个顶层文件
+## 全部 44 个顶层文件
 
 状态口径如下（**逐条实测得出**，不是按文件名归类 —— 这个仓库的文件名骗过人，见「已知问题」）：
 
@@ -117,16 +117,6 @@
 - `check-modules.mjs` 与 `boot-error.mjs` 是**一对页面诊断器**：模块加载失败时页面完全静默，
   一个查「谁 404」，一个取 `window.__bootError`。
 
-### 零引用（3 个）
-
-判定口径：全仓检索命中数极少，**且全部落在它自己的用法注释行内**。
-
-| 文件 | 干什么（取自它自己的头部注释） | 状态 |
-|---|---|---|
-| `ci-annotations.mjs` | 读某次 CI run 的失败 annotation（需要网络） | 零引用 |
-| `ci-artifact.mjs` | 下载某次 run 的 `ci-failure` artifact（未登录也能下载公开仓库的 artifact） | 零引用 |
-| `compare-primitives.py` | 逐个比对原引擎与 filmwright 的绘制原语，找出行为差异 | 零引用 |
-
 ### 由其它工具调用（1 个）
 
 | 文件 | 干什么（取自它自己的头部注释） | 状态 |
@@ -166,16 +156,15 @@
 
 ### 3. 零引用文件
 
-顶层 3 个（见上表），另加 `probes/probe-three.mjs`（**在 `probes/` 下，不在本表内**），共 4 个。
+**顶层已经没有了**：`ci-artifact.mjs` / `ci-annotations.mjs` / `compare-primitives.py`
+按本节的建议**已删除**（2026-10-15，用户拍板「零引用工具可以删」）——
+它们既没被任何东西调用，也不是 CI 失败现场的唯一通道（step summary + artifact + annotation 三条都还在，
+用 `gh` 或网页都能取）。
 
-**建议**：
-
-- `ci-artifact.mjs` / `ci-annotations.mjs` 是「未登录时取回失败现场」的调试工具（CI 的失败现场
-  走 step summary + artifact + annotation 三条通道）。若还要保留，就写进 `docs/qc.md` 的表；
-  若不再用，直接删 —— 它们现在既没被调用，也没被说明。
-- `compare-primitives.py` 是迁移期的一次性比对脚本，迁移结案后没有常驻用途。
-- `probes/probe-three.mjs` 的结论已在 `probes/README.md` 里标为「结论已定」，
-  但它没有被列进那张探针表（表里只有 10 个，探针实际有 16 个）。
+只剩 `probes/probe-three.mjs`（**在 `probes/` 下，不在本表内**）。**它保留**，理由与「零引用」不同：
+探针是**测量工具**，判据是「换个 GPU / 换个核数时能重跑」（见 `probes/README.md` 开头），
+所以「没人调用」本来就是它们的常态；而且它的结论已在 `probes/README.md` 的表里标为「结论已定」，
+**有入口、可发现**。
 
 ⚠️ 顺带发现：未入库草稿 `docs/design/DESIGN-3d.md` 里引用的是 `tools/probes/probe-3d.mjs`，
 **该文件不存在**（真名是 `probe-three.mjs`）。没有任何守卫抓到它，因为
