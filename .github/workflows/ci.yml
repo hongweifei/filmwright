@@ -78,6 +78,59 @@ jobs:
       - name: 调用安全（CI 无参调用 / 存在就直读）
         run: node tools/verify-invocation.mjs
 
+  # 「慢」作业：把三个最费时的验收拆出来单独跑。
+  # 为什么拆：`browser` 里那 ~20 个工具是**串行**的（约 13 分钟），
+  # 而 GitHub 给每个 job 一个独立 runner —— 拆开就是**真并行**，
+  # 墙钟从「最慢那条腿」≈13 分钟降到 max(快组, 慢组) ≈ 8 分钟。
+  # 代价是多两个 runner；覆盖率**一点没少**（同一批工具、同一批 OS）。
+  browser-slow:
+    name: 渲染·慢（长片 / 按段归因 / README 路径）· ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装依赖（MCP 重浏览器测试需要）
+        run: npm ci
+
+      - name: 安装 ffmpeg
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: 安装 ffmpeg（choco）
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - name: 确认环境（浏览器 / ffmpeg，缺失即失败）
+        run: |
+          set -euo pipefail
+          node -e "import('./src/host/browser/find.mjs').then((m) => console.log('浏览器：' + m.findBrowser()))"
+          command -v ffmpeg >/dev/null || { echo 'ffmpeg 不在 PATH'; exit 1; }
+
+      # 长片：单实例跑几千帧会不会退化、分片是否真的按比例加速、增量段缓存会不会失效、内存会不会涨。
+      # 默认 18000 帧（10 分钟量级）跑不完 CI；`--frames 1200` 把这些判据都覆盖到，
+      # 而耗时只有 2400 帧的一半（原来写 2400，实测这一项单独就要 204s）。
+      - name: 长片（单实例不退化 / 分片加速 / 段缓存 / 内存）
+        run: node tools/verify-longform.mjs --frames 1200 --no-big
+
+      # README 承诺的入门路径要**真的走通**（含全新 clone：没有 audio/ 也要出片到 renders/）
+      - name: README 快速开始路径（文档承诺要真的走通）
+        run: node tools/verify-readme.mjs
+
+      # 增量重渲按段归因：改一个镜头只重渲覆盖它的段
+      - name: 增量重渲的按段归因（改一个镜头只重渲覆盖它的段）
+        run: node tools/verify-attribution.mjs
+
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
     strategy:
@@ -244,18 +297,9 @@ jobs:
       - name: H.264 编码器（WebCodecs：有效视频 / 帧数一致 / 背压 / 报出编码配置）
         run: node tools/verify-h264.mjs
 
-      # 长片：单实例跑几千帧会不会退化、分片是否真的按比例加速、增量段缓存会不会失效、内存会不会涨。
-      # 默认 18000 帧（10 分钟量级）跑不完 CI；但**它是可参数化的** ——
-      # 实测 --frames 2400 --no-big 只要约 3.4 分钟（与 verify-attribution 的 177s 同量级），
-      # 而且这些判据在 2400 帧上同样成立。所以它不再是"只能手动跑"。
-      - name: 长片（单实例不退化 / 分片加速 / 段缓存 / 内存）
-        run: node tools/verify-longform.mjs --frames 2400 --no-big
-
-      - name: README 快速开始路径（文档承诺要真的走通）
-        run: node tools/verify-readme.mjs
-
-      - name: 增量重渲的按段归因（改一个镜头只重渲覆盖它的段）
-        run: node tools/verify-attribution.mjs
+      # ⚠️ 长片 / README 路径 / 按段归因这三步**已移到 `browser-slow` 作业** ——
+      # 它们合计约 8.8 分钟，是这里串行耗时的大头；拆出去才能真并行。
+      # 别把它们再加回来（加了就是重复跑）。
 
       - name: 预览页（拖动 / 播放 / 热重载）
         run: node tools/verify-preview.mjs

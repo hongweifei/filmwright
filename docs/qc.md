@@ -156,7 +156,8 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | 状态 | 工具 | 耗时 |
 |---|---|---|
 | **CI 自动跑** | `verify-encoding`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
-| **CI 自动跑** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-readme`（148s）、`verify-attribution`（177s）、**`verify-longform`（约 204s，`--frames 2400 --no-big`）**、`verify-preview`（browser job） | 合计约 **13 分钟** |
+| **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 100s，`--frames 1200 --no-big`）**、`verify-readme`（148s）、`verify-attribution`（177s） | 合计约 **7 分钟** |
+| **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-comp`（1.3s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-complex`（31.5s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-preview` | 合计约 **4.5 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts` / `verify-tts-e2e.py`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
 **26 个验收工具里 24 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
