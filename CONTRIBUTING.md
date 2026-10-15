@@ -30,6 +30,7 @@ node bin/filmwright.mjs check --project examples/minimal --static-only
 分层与硬规则见[架构文档](docs/architecture.md)，一句话版：
 
 - `contract` 不 import `runtime` / `host`；`runtime` 不 import `host`；镜头只 import `'filmwright'` 公开面；
+- 扩展名编码「在哪跑」：`contract/`、`runtime/` 一律 `.js`（进浏览器），`host/` 一律 `.mjs`（只在 Node）；
 - 引擎不认识任何具体片子；配置、时间轴、镜头全部注入；
 - 产物只落在 `.work/`（可删）与 `renders/`（成片）；工具在 `tools/` 跟仓库走；
 - 写错的配置要**当场报错并指出字段**，不静默退回默认值。

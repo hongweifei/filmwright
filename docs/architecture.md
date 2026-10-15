@@ -29,8 +29,14 @@ contract ← runtime ← host
 硬规则：
 
 - **`contract` 不许 import `runtime` 或 `host`；`runtime` 不许 import `host`。**
+- **扩展名就是「在哪跑」。** `contract/` 与 `runtime/` 全部是 `.js`（它们会被打进**浏览器里跑的那一份**），
+  `host/` 全部是 `.mjs`（**只在 Node 里跑**）。实测 14 / 35 / 30 个文件，**零例外**。
+  好处是 `git ls-files 'src/**/*.mjs'` 一眼就是「Node 侧清单」，看扩展名就知道新文件该放哪一层。
 - **`host` 不进公开面。** 镜头文件只 `import ... from 'filmwright'`（`src/index.js`），那上面导出的全部是浏览器里跑的东西。镜头 import 到 Node 侧的东西，会让库的内部结构和镜头耦合。
 - **引擎不认识任何片子。** 配置、时间轴、镜头全部由 `boot()` 注入；引擎里没有一个具体片子的名字。
+
+> 前两条由 `tests/structure.test.mjs` 钉住（扫全部 `src/` 源文件，带「扫到 0 个 / 解析到 0 条边即失败」的下限）。
+> 在此之前它们**只有文档、没有判据** —— 分层「0 违例」是一次人工把 162 条边逐条归类得出的结论。
 
 ## 一次渲染的完整链路
 
