@@ -1,7 +1,7 @@
 // 分片与格式决策：分几个片、用哪种帧格式 / 传输方式 / 预设。**纯函数**，不碰浏览器。
 import os from 'node:os';
 import {dirname, join, resolve, basename} from 'node:path';
-import {isValidFrameFormat} from '../browser/session.mjs';
+import {isValidFrameFormat} from '../browser/frameFormat.mjs';
 import {num, str} from './args.mjs';
 
 

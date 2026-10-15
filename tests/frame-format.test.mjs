@@ -7,7 +7,8 @@
 //   3) 非法值要报错并列出可用值（而不是静默回退到某个格式）
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {frameFormatExpr, isValidFrameFormat} from '../src/host/browser/session.mjs';
+// ⚠️ 帧格式的表达式与白名单已从 `session.mjs` 拆到 `frameFormat.mjs`（它与浏览器会话无关）。
+import {frameFormatExpr, isValidFrameFormat} from '../src/host/browser/frameFormat.mjs';
 import {frameFormatOf, presetOf, transportOf} from '../src/host/cli/commands.mjs';
 
 test('默认是 PNG（无损）—— 既有调用方不受优化影响', () => {
