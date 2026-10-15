@@ -105,28 +105,36 @@ if (orphans.length) {
   console.log('   ⇒ 要么在某份文档里引用它，要么删掉（历史里还找得到）。');
 }
 
-// ── 反方向（二）：`docs/` 下的**每一份文档**也必须被某份文档链接到 ──────────────
+// ── 反方向（二）：**每一份面向读者的仓库文档**都必须被某份文档链接到 ────────────
 // 上面那条只管**非 .md** 资产；**文档本身「没人链接」同样是孤儿**，而且更隐蔽：
 // 新写的文档只要忘了加进 README / getting-started 的索引表，就没有任何入口。
 // 实测（第八轮拆 `docs/scene.md`）：新写的 `docs/effects.md` / `docs/three.md`
 // 一开始没进索引表，**六个静态守卫全绿** —— 是我人工核对索引表才发现的。
-// 排除 `docs/design/`（本地草稿，未入库，本来就该没人链接）。
+// 第九轮把范围从 `docs/` 扩到**全部入库 `.md`**，当场又抓出两份真孤儿：`CHANGELOG.md`
+// 与 `tools/README.md`（都存在、都没人链接）。范围要**说清楚**，所以三类排除各有理由：
+//   · `README.md` 本身 —— 它是入口，不需要入站链接（要求它有人链接是循环的）；
+//   · `examples/**` —— 示例项目里的 `.md` 是**项目资产**（跟着那份片子走，如 `script/timeline.md`），
+//     不是仓库文档，不该被仓库的索引表管；
+//   · `.github/**` —— issue / PR 模板由 GitHub **自己**呈现，本来就不该被文档链接；
+//   · `docs/design/**` —— 本地草稿，未入库，本来就该没人链接（无 git 的遍历路径会扫到它们）。
 const relOf = (p) => relative(ROOT, p).replace(/\\/g, '/');
 let vacuous2 = false;
-const docsUnderDocs = docs.filter((p) => {
+const EXEMPT = ['.github/', 'docs/design/', 'examples/'];
+const linkedDocs = docs.filter((p) => {
   const r = relOf(p);
-  return r.startsWith('docs/') && !r.startsWith('docs/design/');
+  if (r === 'README.md') return false;
+  return !EXEMPT.some((x) => r.startsWith(x));
 });
-// 下限：`docs/` 下一份都扫不到 ⇒ 枚举坏了，别印「全部有入口」
-if (!docsUnderDocs.length) {
+// 下限：一份文档都扫不到 ⇒ 枚举坏了，别印「全部有入口」
+if (!linkedDocs.length) {
   vacuous2 = true;
-  console.log('\n✗ `docs/` 下一份文档都没扫到 —— 枚举坏了，这条反方向检查不算通过。');
+  console.log('\n✗ 一份仓库文档都没扫到 —— 枚举坏了，这条反方向检查不算通过。');
 }
-const orphanDocs = docsUnderDocs.filter((p) => !referenced.has(p));
+const orphanDocs = linkedDocs.filter((p) => !referenced.has(p));
 if (orphanDocs.length) {
-  console.log(`\n✗ ${orphanDocs.length} 份文档没有任何入口（没人链接它，读者找不到）：`);
+  console.log(`\n✗ ${orphanDocs.length} 份仓库文档没有任何入口（没人链接它，读者找不到）：`);
   for (const p of orphanDocs) console.log('   ' + relOf(p));
-  console.log('   ⇒ 把它加进 README 的文档索引（以及 getting-started 的「下一步读什么」）。');
+  console.log('   ⇒ 把它加进 README 的文档索引；社区健康文件放「状态与参与」那节。');
 }
 
 // ── 下限断言：空集上不许说自己「全部有效」──────────────────────────────────
@@ -151,7 +159,8 @@ if (!docs.length) {
 //   ⑤ 解不开的 `%` 转义 ⇒ 必须报出这条链接，而不是抛 URIError 崩掉
 // 全程只碰 os.tmpdir() 下的临时根，**从不改真源码**，跑完在 finally 里删干净。
 // 代价：本机实测这一段约 2.2s（5 次子进程 + 临时仓库里的 git 调用），正常扫描本身 0.24s。
-//     第八轮加了 ⑦（孤儿文档）两格 ⇒ 共 7 次子进程，约 +0.9s；嫌贵最省的裁法是去掉 ③（回绿那一步）。
+//     第八轮加了 ⑦（孤儿文档）两格、第九轮加了 ⑧（**根级**孤儿文档）两格 ⇒ 共 9 次子进程，约 +1.8s；
+//     嫌贵最省的裁法是去掉 ③（回绿那一步）或 ⑧b。
 //     ⚠️ try/finally 挡不住 SIGINT/SIGTERM（见 verify-incremental 的教训）；
 //     真要中途被杀，残留只在系统临时目录里，无害。
 let selfFailed = 0;
@@ -316,12 +325,33 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
     ok(r.status === 0,
       `⑦ 把链接加回去 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
 
+    // ⑧ 反方向（二）的范围是**全部仓库文档**，不只 `docs/`：造一份**根级**的孤儿文档 ⇒ 必须红
+    //    （第九轮扩范围后当场抓出 `CHANGELOG.md` 与 `tools/README.md` 两份真孤儿。
+    //     注意不能用「把 README 里指向 target.md 的链接删掉」来造这个缺陷 —— `target.md`
+    //     还被 `docs/guide.md` 链着，删一处它仍然有入口 ⇒ 那格会**假绿**。）
+    const orphanDoc = join(repo, 'orphan-root.md');
+    writeFileSync(orphanDoc, '# 没人链接的根级文档\n');
+    // ⚠️ 本工具用 `git ls-files '*.md'` 枚举 ⇒ **新写的文件必须先 `git add` 才看得见**。
+    // （这正是「未跟踪的新 md 守卫照样绿 ⇒ 绿 ≠ 提交后绿」那条教训；不 add 这一格会假绿。）
+    execFileSync('git', ['add', '--', 'orphan-root.md'], {cwd: repo, stdio: 'ignore'});
+    r = runTool(repo, '⑧');
+    ok(r.status === 1 && (r.stdout ?? '').includes('orphan-root.md')
+      && (r.stdout ?? '').includes('没有任何入口'),
+      `⑧ 根级的文档没人链接 ⇒ 退出码 1 并点名它（实际 ${rc(r)}）`);
+    rmSync(orphanDoc, {force: true});
+    // ⚠️ 光删文件不够：`git ls-files` 读的是**索引** ⇒ 必须把它从索引里也去掉，
+    // 否则「删掉之后回绿」那一格会红（我第一版就是这么红的 —— 红的是我的夹具没同步）。
+    execFileSync('git', ['rm', '-f', '--cached', '--', 'orphan-root.md'], {cwd: repo, stdio: 'ignore'});
+    r = runTool(repo, '⑧b');
+    ok(r.status === 0,
+      `⑧ 把它删掉 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
+
     if (selfFailed) {
       console.log('\n—— 子进程原始输出（便于定位）——');
       for (const l of logs) console.log(l.split('\n').map((x) => `   ${x}`).join('\n'));
     }
     console.log(selfFailed === 0
-      ? '负面对照全部符合预期（正例绿 / 坏链红且报出位置 / 改回去回绿 / 空根红 / 坏转义报出 / 孤儿资产红 / 孤儿文档红）。'
+      ? '负面对照全部符合预期（正例绿 / 坏链红且报出位置 / 改回去回绿 / 空根红 / 坏转义报出 / 孤儿资产红 / 孤儿文档红（docs/ 与根级各一格））。'
       : `\n✗ ${selfFailed} 条负面对照不符合预期。`);
   } catch (e) {
     ok(false, `负面对照自己出错（不许静默跳过）：${e && e.message}`);

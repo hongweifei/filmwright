@@ -203,6 +203,7 @@ my-film/
 | [质量保障](docs/qc.md) | 自检、像素回归、验收工具 |
 | [FAQ](docs/faq.md) | 报错与「为什么」类问题 |
 | [LIMITATIONS](LIMITATIONS.md) | **明确不做什么、以及做不到什么** —— 用之前先读 |
+| [CHANGELOG](CHANGELOG.md) | 版本历史（未发布区记着每次改动与它的验证） |
 
 ## 状态与参与
 
@@ -215,6 +216,8 @@ my-film/
 - 明确不做的（视频素材、富文本排版……）与原因见 [LIMITATIONS](LIMITATIONS.md)。
   注意**外挂字幕不在其中** —— `filmwright srt` 可以导出（成片里字幕仍是烧进画面的，那是刻意的）。
 - 欢迎报告问题与贡献：见 [CONTRIBUTING](CONTRIBUTING.md)（含提交规范与验证纪律）。
+  参与本项目请遵守[行为准则](CODE_OF_CONDUCT.md)；安全相关问题走[安全策略](SECURITY.md)
+  （**别开公开 issue**）。
 
 ## 许可
 
