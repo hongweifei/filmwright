@@ -282,9 +282,15 @@ jobs:
           const size = statSync(f).size;
           if (size <= 0) { console.error('产物是空文件：' + f); process.exit(1); }
           const want = JSON.parse(require('node:fs').readFileSync('examples/minimal/script/timeline.json','utf8')).total_frames;
-          const got = Number(execFileSync('ffprobe', ['-v','error','-count_frames','-select_streams','v:0',
-            '-show_entries','stream=nb_read_frames','-of','csv=p=0', f], {encoding:'utf8'}).trim());
-          console.log(f, size, 'bytes,', got, 'frames');
+          // ⚠️ **别直接 Number(ffprobe 输出)** —— `-of csv` 的输出**随 ffprobe 版本变**：
+          // ubuntu 的 6.1.1 给 `1596`，而 windows runner 上的版本给 **`1596,`（带尾随逗号）**，
+          // `Number('1596,')` 是 **NaN**，于是 windows job 报「产物 NaN」而 ubuntu 通过。
+          // 改成**取输出里第一个整数**，对两种格式都成立。
+          const raw = execFileSync('ffprobe', ['-v','error','-count_frames','-select_streams','v:0',
+            '-show_entries','stream=nb_read_frames','-of','csv=p=0', f], {encoding:'utf8'});
+          const m = /(\d+)/.exec(raw);
+          const got = m ? Number(m[1]) : NaN;
+          console.log(f, size, 'bytes,', got, 'frames', '(ffprobe 原文 ' + JSON.stringify(raw.trim()) + ')');
           if (got !== want) { console.error('帧数不对：产物 ' + got + '，时间轴 ' + want); process.exit(1); }
           "
 
