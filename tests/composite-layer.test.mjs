@@ -101,15 +101,20 @@ test('交叉一致性：contract/scene.js 与 runtime/composite/layer.js 的 tra
     {blend: 'multiply'}, {origin: [1, 2]},
     'x', 42, [], {x: 'a'}, {scale: 0}, {scale: -1}, {rotate: 'r'},
     {alpha: 2}, {alpha: -0.1}, {origin: [1]}, {origin: 'c'}, {origin: [1, 'y']},
+    {blend: '不存在的模式'}, {blend: 3}, {blend: ''},
   ];
   for (const c of cases) {
     assert.equal(contract.isValidTransform(c), layer.isValidTransform(c),
       `两处判定不一致：${JSON.stringify(c)}（contract=${contract.isValidTransform(c)} runtime=${layer.isValidTransform(c)}）`);
   }
-  // blend 白名单只在 runtime 有（contract 只判「是字符串」），这是**有意的不对称**：
-  // contract 层不知道 Canvas 支持哪些模式，运行时会兜住非法名（画不出就退回默认）。
-  assert.equal(layer.isValidTransform({blend: '不存在的模式'}), false, 'runtime 应拒非法混合模式');
-  assert.equal(contract.isValidTransform({blend: '不存在的模式'}), true, 'contract 只判类型（有意）');
+  // 混合模式的**取值白名单两处都要判**。它原先只在 runtime 有，contract 只判「是字符串」——
+  // 那让 `scene.json` 里的非法 blend **通过 8 道自检**，到 runtime 又被 Canvas **静默忽略**
+  // （`globalCompositeOperation` 对非法值不生效）⇒ 按 source-over 画：不报错、不崩。
+  // 名单已上提到 contract，两边共用同一份。
+  for (const bad of [{blend: '不存在的模式'}, {blend: 3}, {blend: ''}]) {
+    assert.equal(layer.isValidTransform(bad), false, `runtime 应拒 ${JSON.stringify(bad)}`);
+    assert.equal(contract.isValidTransform(bad), false, `contract 也应拒 ${JSON.stringify(bad)}`);
+  }
 });
 
 // ---------- 设计坐标变换 ----------

@@ -18,13 +18,14 @@
 //     作用于一个稍后会自己调 applyDesignScale 的镜头 —— 它做的是共轭变换
 //     T_device = D ∘ T_design ∘ D⁻¹，使最终结果恰好是 D ∘ T_design ∘ 内容。
 import {view, DESIGN} from '../../contract/viewport.js';
+import {BLEND_MODES} from '../../contract/scene.js';
 
-/** 允许的混合模式（Canvas 2D 的 globalCompositeOperation 里与合成相关的子集）。 */
-export const BLEND_MODES = [
-  'source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten',
-  'color-dodge', 'color-burn', 'hard-light', 'soft-light',
-  'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
-];
+// 混合模式名单的**单一来源在 contract** —— `scene.json` 的校验也要用它，而 contract 不能
+// import runtime（分层规则），所以只能是 runtime 反过来 import contract（方向是对的）。
+// 这里**原样再导出**，`src/index.js` 的公共面因此一行都不用改。
+// 名单放 contract 的代价是零：`contract/scene.js` 本来就在渲染页的加载路径上
+// （`runtime/stage/shots.js` 已经 import 它）。
+export {BLEND_MODES};
 const BLENDS = new Set(BLEND_MODES);
 
 /** 变换形状校验（scene 规格与手写镜头共用）。 */

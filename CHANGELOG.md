@@ -144,6 +144,16 @@
 
 ### 修复
 
+- **非法混合模式静默降级成 `source-over`**（「声明了但没生效」那一族的第 5 例）：
+  `blend` 的取值白名单原先**只在 runtime 判**，而 `scene.json` 走的是 contract 那份校验
+  （只判「是不是字符串」）⇒ 写错一个混合模式**能通过全部静态自检**；到了 runtime，
+  `withLayer` 直接 `ctx.globalCompositeOperation = blend`，而 **Canvas 对非法值是静默忽略的**
+  ⇒ 画面按 `source-over` 画：不报错、不崩、测试也不红。实测：往 `examples/gallery` 的第一个镜头塞
+  `{"blend":"不存在的模式"}`，`check --static-only` 报「8 道自检全部通过」。
+  修法是把 `BLEND_MODES`（16 种）**上提到 contract 做单一来源**，两份校验共用同一份名单
+  （`runtime/composite/layer.js` 原样再导出 ⇒ 公共面一行未改），报错的 `hint` 直接列出可用取值。
+  判据：`tests/scene.test.mjs` 加一条负面对照（非法值必须报 `SCENE_BAD_TRANSFORM`、`hint` 含可用取值）
+  **外加反向保险**（合法值不许被误报）。撤掉白名单 ⇒ 该判据红、`check` 退回「8 道全过」，两个方向都验过。
 - **文档与实现的漂移（十余处）**：README 的「面向复杂制作」只写了四件事（实际八件）；
   `examples/promo` 的解说词、字幕与画面文字写着「九道自检」（实际十道）；
   「声明式 3D 还没做」「没有 GPU 加速路径」「base64 先不做」「没有外挂 SRT 输出」

@@ -253,6 +253,31 @@ test('负面对照：未知字段必须响，不静默忽略', () => {
   assert.ok(e.path.startsWith('shots['), 'path 要指到具体镜头与字段：' + e.path);
 });
 
+test('负面对照：非法混合模式要在校验期就报（不能静默降级成 source-over）', () => {
+  // 起因：`blend` 的取值白名单原先只在 runtime 判，contract 只判「是不是字符串」⇒
+  // `scene.json` 里写错一个混合模式**能通过全部静态自检**；到 runtime 时 `withLayer`
+  // 直接 `ctx.globalCompositeOperation = blend`，而 Canvas 对非法值是**静默忽略**的
+  // ⇒ 按 `source-over` 画：不报错、不崩，用户只看到「我写了 blend 却没用」。
+  // 实测：往 examples/gallery 第一个镜头塞 `{"blend":"不存在的模式"}`，
+  // `check --static-only` 报「8 道自检全部通过」。名单已上提到 contract。
+  const r = validateScene({shots: [
+    {type: 'title', at: 1, title: 't', transform: {blend: '不存在的模式'}},
+  ]}, {timeline: tl});
+  const e = r.errors.find((x) => x.code === 'SCENE_BAD_TRANSFORM');
+  assert.ok(e, '非法 blend 必须报 SCENE_BAD_TRANSFORM：' + JSON.stringify(r.errors));
+  assert.ok(e.path.endsWith('.transform'), 'path 要指到 transform：' + e.path);
+  // hint 必须给出**可用取值**（本仓库对 hint 的要求：能照着改，不是「你写错了」）
+  assert.ok(e.hint.includes('multiply') && e.hint.includes('source-over'),
+    'hint 要列出可用的混合模式：' + e.hint);
+
+  // 反向保险：合法的值不许被误报 —— 否则上面那条可能只是「一律报错」的恒真断言
+  const ok = validateScene({shots: [
+    {type: 'title', at: 1, title: 't', transform: {blend: 'multiply'}},
+  ]}, {timeline: tl});
+  assert.equal(codes(ok).includes('SCENE_BAD_TRANSFORM'), false,
+    '合法 blend 不该报错：' + JSON.stringify(ok.errors));
+});
+
 test('负面对照：image 引用未声明的素材', () => {
   const r = validateScene({shots: [
     {type: 'title', at: 1, title: 't'}, {type: 'image', at: 2, asset: 'nope'},

@@ -177,6 +177,26 @@ const TYPE_NOTES = {
 export const TRANSITION_TYPES = ['crossfade', 'fade', 'slide', 'wipe', 'zoom'];
 export const TRANSITION_DIRECTIONS = ['left', 'right', 'up', 'down'];
 
+/**
+ * 允许的混合模式（Canvas 2D 的 `globalCompositeOperation` 里与合成相关的子集）。
+ * **单一来源**：`runtime/composite/layer.js` 从这里 import 并原样再导出（公共面不变）。
+ *
+ * 它**必须**在 contract 里，不能只在 runtime：`scene.json` 的校验走 contract，而取值不合法
+ * 要**在校验期就报**。原来只有 runtime 判白名单，于是 `{"blend":"不存在的模式"}` 通过校验，
+ * 到了 runtime `withLayer` 直接 `ctx.globalCompositeOperation = blend`，而 Canvas 对非法值
+ * 是**静默忽略**的 ⇒ 按 `source-over` 画，不报错、不崩（实测 `check --static-only` 8 道全过）。
+ */
+export const BLEND_MODES = [
+  'source-over', 'multiply', 'screen', 'overlay', 'darken', 'lighten',
+  'color-dodge', 'color-burn', 'hard-light', 'soft-light',
+  'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity',
+];
+const BLENDS = new Set(BLEND_MODES);
+
+/** `transform` 的字段说明（三处报错共用；`blend` 直接列出可用取值，别让用户去猜）。 */
+const TRANSFORM_HINT = '可用字段：x / y（设计坐标位移）、scale（>0）、rotate（度）、alpha（0–1）、'
+  + `blend（以下之一：${BLEND_MODES.join(' / ')}）、origin（[x,y] 旋转缩放中心）`;
+
 /** 转场声明是否合法（与 runtime/stage/shots.js 的 normalizeTransition 同一套规则）。 */
 export function isValidTransition(v) {
   if (typeof v === 'number') return Number.isInteger(v) && v >= 1;
@@ -192,18 +212,12 @@ export function isValidTransition(v) {
 /**
  * 图层变换是否合法。
  *
- * 与 `runtime/composite/layer.js` 的同名函数**有一处刻意的不同**：`blend` 这里只判
- * 「是不是字符串」，取值白名单（16 种混合模式）只在 runtime 判 —— 因为 contract
- * 不能 import runtime（分层规则），而 `BLEND_MODES` 定义在 runtime 里。
- * 原注释写「必须一致」是**错的**：`tests/composite-layer.test.mjs` 有反例 ——
- * 同一个 `{blend:'不存在的模式'}`，runtime 判 false、contract 判 true（有意）。
+ * 与 `runtime/composite/layer.js` 的同名函数**判的是同一套规则**：`BLEND_MODES` 已上提到
+ * 本文件，两份都查白名单（原先只有 runtime 查，见 `BLEND_MODES` 的注释：那让 scene.json
+ * 的非法混合模式静默降级成 `source-over`）。
  *
- * ⚠️ 这个不对称有一个**已知后果**：`scene.json` 走的是**这一份**，所以
- * `{"blend": "不存在的模式"}` **能通过校验**；到了 runtime，`withLayer` 直接
- * `ctx.globalCompositeOperation = blend`，而 Canvas 对非法值是**静默忽略**的
- * ⇒ 画面按 `source-over` 画，不报错、不崩 —— 正是「声明了但没生效」那一族。
- * 手写镜头那条路没这个问题（`shots.js` 调的是 runtime 那份，会当场抛）。
- * 要收口就得把 `BLEND_MODES` 上提到 contract，让两份都判白名单。
+ * `contract` 仍然不能 import `runtime`（分层规则）—— 现在是 runtime 反过来 import contract，
+ * 方向是对的。
  */
 export function isValidTransform(t) {
   if (t === undefined || t === null) return true;
@@ -212,7 +226,7 @@ export function isValidTransform(t) {
   if (!num(t.x) || !num(t.y) || !num(t.scale) || !num(t.rotate)) return false;
   if (t.scale !== undefined && t.scale <= 0) return false;
   if (t.alpha !== undefined && !(typeof t.alpha === 'number' && t.alpha >= 0 && t.alpha <= 1)) return false;
-  if (t.blend !== undefined && typeof t.blend !== 'string') return false;
+  if (t.blend !== undefined && !BLENDS.has(t.blend)) return false;
   if (t.origin !== undefined) {
     if (!Array.isArray(t.origin) || t.origin.length !== 2) return false;
     if (!t.origin.every((v) => typeof v === 'number' && Number.isFinite(v))) return false;
@@ -757,7 +771,7 @@ export function validateLayers(raw, path = 'shots') {
       }
       if (layer.transform !== undefined && !isValidTransform(layer.transform)) {
         push('SCENE_LAYER_SHAPE', `${lp}.transform`, '层的 transform 形状不对',
-          '与镜头 transform 同一套字段：x / y / scale / rotate / alpha / blend / origin');
+          '与镜头 transform 同一套字段；' + TRANSFORM_HINT);
       }
       if (layer.animate !== undefined) {
         out.push(...validateAnimate(layer.animate, layer.transform, `${lp}.animate`));
@@ -792,7 +806,7 @@ export function validateLayers(raw, path = 'shots') {
     }
     if (layer.transform !== undefined && !isValidTransform(layer.transform)) {
       push('SCENE_LAYER_SHAPE', `${lp}.transform`, '层的 transform 形状不对',
-        '与镜头 transform 同一套字段：x / y / scale / rotate / alpha / blend / origin');
+        '与镜头 transform 同一套字段；' + TRANSFORM_HINT);
     }
     if (layer.animate !== undefined) {
       out.push(...validateAnimate(layer.animate, layer.transform, `${lp}.animate`));
@@ -1209,7 +1223,7 @@ export function validateScene(raw, {timeline, assetNames, clipNames} = {}) {
     if (shot.transform !== undefined && !isValidTransform(shot.transform)) {
       errors.push(err('SCENE_BAD_TRANSFORM', `${path}.transform`,
         `图层变换形状不对：${JSON.stringify(shot.transform)}`,
-        '可用字段：x / y（设计坐标位移）、scale（>0）、rotate（度）、alpha（0–1）、blend（混合模式名）、origin（[x,y] 旋转缩放中心）'));
+        TRANSFORM_HINT));
     }
     if (shot.animate !== undefined) {
       errors.push(...validateAnimate(shot.animate, shot.transform, `${path}.animate`));

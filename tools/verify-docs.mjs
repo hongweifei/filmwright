@@ -55,8 +55,15 @@ function facts() {
   const mcp = readFileSync(join(ROOT, 'src/host/mcp/server.mjs'), 'utf8');
   const mcpToolCount = (mcp.match(/registerTool\(/g) || []).length;
 
-  const layer = readFileSync(join(ROOT, 'src/runtime/composite/layer.js'), 'utf8');
-  const blendModes = (layer.match(/BLEND_MODES = \[([\s\S]*?)\]/)[1].match(/'/g) || []).length / 2;
+  // 混合模式名单的**单一来源在 contract**（`layer.js` 只是再导出），所以从这里数。
+  // 找不到就**明确报错**：原来的 `[1]` 会抛 `TypeError: Cannot read properties of null` ——
+  // 那种红读不出「名单被搬走了，判据要跟着改」，只会让人以为是工具坏了。
+  const bm = scene.match(/export const BLEND_MODES = \[([\s\S]*?)\]/);
+  if (!bm) {
+    throw new Error('verify-docs: src/contract/scene.js 里找不到 `export const BLEND_MODES = [...]`'
+      + '（名单被改名或搬走了，这条判据要跟着改）');
+  }
+  const blendModes = (bm[1].match(/'/g) || []).length / 2;
 
   // 转场类型从**单一来源**读（`contract/scene.js` 的 `TRANSITION_TYPES`，`shots.js` 也 import 它）。
   // 原来是在 shots.js 里 `normalizeTransition` 之后 700 字符的窗口里正则捞：那个窗口只捞得到
@@ -394,7 +401,8 @@ function fixtureFiles() {
   const files = {
     // ── facts() 会读的实现文件 ──
     'src/contract/scene.js': `export const SHOT_TYPES = [${q(types)}];\n`
-      + `export const CONTAINER_TYPES = [${q(containers)}];\n`,
+      + `export const CONTAINER_TYPES = [${q(containers)}];\n`
+      + `export const BLEND_MODES = ['normal', 'multiply'];\n`,
     'src/host/checks/index.mjs': `export async function runChecks({staticOnly} = {}) {\n`
       + `  const results = [];\n`
       + staticChecks.map((n) => `  results.push('${n}');\n`).join('')
@@ -404,7 +412,8 @@ function fixtureFiles() {
     'src/host/cli/index.mjs': `const COMMANDS = [['render', '渲染'], ['check', '自检']];\n`,
     'src/host/mcp/server.mjs': `server.registerTool('a', {}, () => {});\n`
       + `server.registerTool('b', {}, () => {});\n`,
-    'src/runtime/composite/layer.js': `export const BLEND_MODES = ['normal', 'multiply'];\n`,
+    // 混合模式的名单在 contract（这里只是再导出）—— 夹具照实镜像这个安排
+    'src/runtime/composite/layer.js': `export {BLEND_MODES} from '../../contract/scene.js';\n`,
     'src/runtime/stage/shots.js': `export function normalizeTransition(t) {\n`
       + `  if (t === 'fade') return 'crossfade';\n  return t || 'crossfade';\n}\n`,
     'src/host/media/clips.mjs': `export const CLIPS = true;\n`,   // 有了它，② 那句否定才过期
