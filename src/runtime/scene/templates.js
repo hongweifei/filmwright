@@ -868,28 +868,38 @@ export function compileScene(scene, tl) {
     if (raw.type === 'layers') {
       const shotStart = resolveAt(raw.at, tl);
       const built = (raw.layers ?? []).map((layer, i) => {
+        // 空物体：不画内容、只提供变换。**必须先判它再碰 content** —— 校验层要求
+        // `empty: true` 的层**不给** content（给了报互斥），所以无条件读 `c.type`
+        // 会让这个能力的唯一合法写法在编译期抛 TypeError、整个镜头起不来
+        // （实测踩过：`empty` 只写在绘制循环里、编译这一段漏了）。
+        const empty = layer.empty === true;
         const c = layer.content;
-        const tpl2 = TEMPLATES[c.type];
-        if (!tpl2) throw new Error('filmwright: 层内容用了没有模板的类型 ' + c.type);
+        const tpl2 = empty ? null : TEMPLATES[c.type];
+        if (!empty && !tpl2) throw new Error('filmwright: 层内容用了没有模板的类型 ' + c.type);
         // 层内容的绝对起点 = 镜头起点 + (层的 from - 1)
         const ls = shotStart + ((layer.from ?? 1) - 1);
         // 层内容也是一次模板调用，但**不带 at**（校验已拦）；beats 支持它自己的节奏
-        const contentRaw = {...c, at: ls};
-        const contentShot = {...contentRaw, start: ls, sid: null,
+        const contentRaw = empty ? null : {...c, at: ls};
+        const contentShot = empty ? {beats: []} : {...contentRaw, start: ls, sid: null,
           beats: tpl2.beats ? tpl2.beats(contentRaw, ls, null) : [ls]};
         return {
           z: layer.z ?? i,                       // 不写 z 则按声明顺序（后面的在上）
           seq: i,                                 // 同 z 时按声明顺序稳定
           idx: i,                                 // **声明下标**：`follow` 指的就是它
           follow: layer.follow,                   // 跟着同容器里的哪一层（下标）
-          empty: layer.empty === true,            // 空物体：不画内容，只提供变换
+          empty,
+          ls,
           fromOff: (layer.from ?? 1) - 1,         // 层窗口（相对镜头起点的偏移）
           toOff: layer.to !== undefined ? layer.to - 1 : null,
           contentShot,
           tpl: tpl2,
           transform: layer.transform,
-          anim: compileAnimate(layer.animate, {beats: contentShot.beats, from: ls}),
-          fx: compileEffects(layer.effects, {beats: contentShot.beats, from: ls}),
+          // 空物体没有自己的内容 ⇒ 没有自己的节拍表，所以它的 animate / effects
+          // 要等**本容器的**节拍表算出来再编译（见下面那一趟循环）。
+          rawAnimate: layer.animate,
+          rawEffects: layer.effects,
+          anim: empty ? null : compileAnimate(layer.animate, {beats: contentShot.beats, from: ls}),
+          fx: empty ? null : compileEffects(layer.effects, {beats: contentShot.beats, from: ls}),
         };
       });
       // `follow` 用**声明下标**找父层 —— `built` 下面会按 z 排序，所以这里先留一份下标表
@@ -897,6 +907,14 @@ export function compileScene(scene, tl) {
       // 由远到近：z 小的先画（在下），同 z 按声明顺序
       built.sort((a, b) => (a.z - b.z) || (a.seq - b.seq));
       const beats = [...new Set(built.flatMap((b) => b.contentShot.beats))].sort((a, b) => a - b);
+      // 空物体的 animate / effects 借**本容器的节拍表**（其余层拍号的并集）编译：
+      // 「跟着节拍转/呼吸」正是空物体最常见的用法，而它自己没有内容就没有自己的拍。
+      // 容器里全是空物体时表为空 ⇒ 只有 `frame` 键的关键帧可用（拍号无从谈起）。
+      for (const b of built) {
+        if (!b.empty) continue;
+        b.anim = compileAnimate(b.rawAnimate, {beats, from: b.ls});
+        b.fx = compileEffects(b.rawEffects, {beats, from: b.ls});
+      }
       return {
         start: shotStart,
         beats,
