@@ -32,6 +32,9 @@ jobs:
         with:
           # engines 要求 >=22：驱动浏览器要用全局 WebSocket，Node 20 上没有。
           node-version: '22'
+          # 缓存 npm 的下载缓存（`npm ci` 装的是同一份 lockfile ⇒ 命中率很高）。
+          # 三个作业各自省 20–40s，代价是缓存本身（GitHub 侧免费额度内）。
+          cache: 'npm'
 
       # 核心命令零依赖；只有 MCP 测试需要 @modelcontextprotocol/sdk。
       # 装依赖让 tests/mcp.test.mjs 不被跳过（没装时它会优雅 skip）。
@@ -99,6 +102,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: 安装依赖（MCP 重浏览器测试需要）
         run: npm ci
@@ -147,6 +151,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: 安装依赖（MCP 重浏览器测试需要）
         run: npm ci

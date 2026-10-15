@@ -111,7 +111,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `tools/probes/profile-current.mjs` | **当前管线的复测**（上面那个量的是 CDP 路径，现在默认是二进制 POST 流，旧数据不准了）：绘制 / JPEG 取像素 / **WebCodecs 编码**三段。实测 720p：绘制 0.19ms、JPEG **16.47ms**（占 99%）、WebCodecs **2.18ms**（快 7.5×） |
 | `tools/probes/check-determinism.mjs` | **快速确定性检查**：同一个效果、同一帧渲染两次比哈希。`verify-effects` 里已有同一判据，但它跑一次约 **10 分钟**，排查着色器问题（如 `displace`）时**迭代太慢**；这个工具**全部 11 个效果只要 35 秒**（快 17×），判据完全一致，定位到的问题可用 `verify-effects` 复核 |
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |
-| `verify-longform.mjs` | 量单实例退化、分片加速比、增量段缓存规模、全分辨率吞吐。**可参数化**（`--frames N --no-big`）：默认 18000 帧（10 分钟量级）跑不完 CI，但 `--frames 2400` 只要约 3.4 分钟，判据同样成立 —— 所以它**已经进了 CI** |
+| `verify-longform.mjs` | 量单实例退化、分片加速比、增量段缓存规模、全分辨率吞吐。**可参数化**（`--frames N --no-big`）：默认 18000 帧（10 分钟量级）跑不完 CI，CI 里跑 `--frames 1200`（判据同样成立，耗时减半）—— 所以它**已经进了 CI** |
 | `verify-attribution.mjs` | 验增量重渲按段归因：改一个镜头只重渲覆盖它的段，改全局输入则全失效 |
 | `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |
 | `verify-imperative.mjs` | 验**手写镜头与声明式同能力**：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
@@ -132,7 +132,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 ## CI 怎么跑
 
-`.github/workflows/ci.yml` 分两个 job × 平台矩阵：
+`.github/workflows/ci.yml` 分**三个** job × 平台矩阵：
 
 - **static**——`ubuntu` / `macOS` / `windows` 三个 OS 都跑：单元测试 + 静态自检（不启浏览器）。核心零依赖，这是「跨平台」最便宜也最真的证据。MCP 的**协议层**测试（握手、tools/list、只读工具）在这里跑。
 - **browser**——`ubuntu` / `windows`：无头浏览器 + ffmpeg。逐帧 + 画质自检、MCP 的**重浏览器**测试（`FILMWRIGHT_TEST_BROWSER=1` 才跑 stills/review 回图）、渲染确定性自证（同运行内 capture → verify）、负面对照、素材与预览页验证、端到端出片并验帧数。macOS 渲染不进矩阵——没有本地实测证据，不猜。
@@ -164,8 +164,9 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
 
 （`verify-longform` 原来在这张表里是"手动跑（10 分钟量级）"—— 那说的是它的**默认规模**
-18000 帧。它其实是**可参数化**的：`--frames 2400 --no-big` 只要约 3.4 分钟，
-而"单实例不退化 / 分片加速 / 段缓存 / 内存"这些判据在 2400 帧上同样成立。
+18000 帧。它其实是**可参数化**的：CI 里跑 `--frames 1200 --no-big`（原来写 2400，
+但那些判据在 1200 帧上同样成立，耗时减半），
+而"单实例不退化 / 分片加速 / 段缓存 / 内存"这些判据在 1200 帧上同样成立。
 **核实之后把它接进了 CI** —— 之前那个"只能手动跑"的说法我一直没核过。）
 
 ### 单元测试覆盖率：57.69%（**低的那部分是设计使然，不是质量问题**）
