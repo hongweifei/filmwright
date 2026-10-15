@@ -234,10 +234,14 @@ export function tts(ctx) {
   // PYTHONIOENCODING：Windows 上 Python 默认按 CP936 写 stderr，而 Node 按 UTF-8
   // 解码 —— 中文提示会全成乱码（实测「微软侧 TTS 服务不可用」整段变成 ????）。
   // 强制 UTF-8，两边编码才对齐。
+  // PYTHONDONTWRITEBYTECODE：Python 会在**源码目录**旁边写 `__pycache__/*.pyc`，
+  // 而 `files: ["src"]` 是目录白名单 —— 本机跑过一次 tts，字节码就跟着发布物走
+  // （实测 `npm pack` 里多出 39.7kB 的 `cpython-314` 字节码）。**别让它写**，
+  // 光靠 `!src/**/__pycache__` 是事后过滤，这里是断根。
   const r = spawnSync('python', [py, '--project', ctx.projectDir], {
     stdio: json ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     encoding: 'utf8',
-    env: {...process.env, PYTHONIOENCODING: 'utf-8'},
+    env: {...process.env, PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1'},
   });
   if (r.error) {
     const e = new Error('filmwright: 起不了 python —— ' + r.error.message);
@@ -277,7 +281,7 @@ export async function voices(ctx) {
   const script = join(RUNTIME_ROOT, 'host', 'tts', 'list_voices.py');
   const r = spawnSync('python', [script, '--project', ctx.projectDir, ...(isJson(ctx.args) ? ['--json'] : [])], {
     encoding: 'utf8',
-    env: {...process.env, PYTHONIOENCODING: 'utf-8'},
+    env: {...process.env, PYTHONIOENCODING: 'utf-8', PYTHONDONTWRITEBYTECODE: '1'},
   });
   if (r.error) {
     const e = new Error('filmwright: 起不了 python —— ' + r.error.message);

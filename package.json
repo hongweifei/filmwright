@@ -59,7 +59,9 @@
     "index.html",
     "README.md",
     "LIMITATIONS.md",
-    "LICENSE"
+    "LICENSE",
+    "!src/**/__pycache__",
+    "!docs/design/**"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

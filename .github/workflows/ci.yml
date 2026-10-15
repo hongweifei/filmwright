@@ -55,6 +55,14 @@ jobs:
         # 直接拒绝读取，才知道出事了。这类问题必须在 CI 上自动拦住。
         run: node tools/verify-encoding.mjs
 
+      # 发布物：npm 包里不许混进本机的东西。两件实测事故，`git status` 当时都干净：
+      #   ① `src/host/tts/__pycache__/*.pyc` —— 跑过一次 Python 就有，而 `files: ["src"]`
+      #      是目录白名单，它正好在白名单里；
+      #   ② `docs/design/*.md`（本地草稿、未跟踪）—— `files: ["docs"]` 会把它发到 registry。
+      # 共同点：**「未跟踪」不等于「不会发布」**。git 忽略它，npm 照收。
+      - name: 发布物（npm 包不许含本机草稿 / 字节码）
+        run: node tools/verify-package.mjs
+
       - name: 文档与实现一致（模板数 / 自检道数 / 事实性说法）
         # 曾发现 26 处脱节：文档说「视频没有内建支持」而 clips 已实现、
         # 说「13 类模板」而实际 15 类、自检道数在七/八/九之间混用。

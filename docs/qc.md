@@ -99,6 +99,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-clip-render.mjs` | 验片段在浏览器里真的取到并画出：帧随 n 变化、同一帧两次相同、源帧映射、未声明片段名报错 |
 | `verify-tts.mjs` | 验 TTS 契约：`voices` 报出引擎可用性与回退结果、真跑一遍产出三件套、timeline 如实标注引擎与 `subs_timing`、音频与时间轴一致、逐句缓存命中、换引擎必须让缓存失效 |
 | `verify-encoding.mjs` | 全仓文本必须是合法 UTF-8 且无 BOM —— 抓肉眼看不见的问题（曾把 `.gitignore` 写成 GBK） |
+| `verify-package.mjs` | **发布物守卫**：不问 git、直接问 npm「你到底会打包哪些文件」——**本机的东西**（`__pycache__` 字节码、本地 `docs/design/` 草稿、`.work`、成片、日志）一个都不许进包，该发的源码一个都不许漏。⚠️ 它要抓的两件事**只在本机出现**（CI 是干净检出 ⇒ 命中集是空集），所以**每次运行先拿合成清单自检规则有牙**（含「空清单不算干净」），否则它在 CI 上会永远绿 |
 | `verify-docs.mjs` | 把**文档里的数字**与实现比对（模板数 / 自检道数 / 单元测试数 / 效果数 / **验收工具数及其中自动跑的数量**），并核 `docs/qc.md` 的工具表与 CI 接线一致（接进 CI 却没进表的会红）；跳过 CHANGELOG 已发布区与引号内的**引述**。**它报了就去改文档，别改实现迁就文档**；另有 `--list-negative` 只列出否定式断言（只列不判） |
 | `verify-links.mjs` | 文档里的**内部链接**必须指向存在的文件（外链与页内锚点不管）。这类东西最容易悄悄腐烂：**文件改名/移动后链接不会报错，只会 404**，而 `verify-docs` 核数字与事实性说法、核不到链接。只扫**入库的** `.md` |
 | `verify-mask.mjs` | 遮罩（阶段 ③）：四种形状 + 反选都要**确实改变画面**、**五种输出互不相同**（不是同一个路径换名字）、同一遮罩两次渲染**逐字节一致**。⚠️ 判据设计上踩过一次：第一版用 `stat`（居中的数字）+ 居中遮罩，**四种形状都覆盖住了内容** ⇒ 输出全相同；改成**跨整幅**的模板 + 只裁左半才显出差差异 —— **是判据选错了量测对象，不是产品问题** |
@@ -157,13 +158,13 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 | 状态 | 工具 | 耗时 |
 |---|---|---|
-| **CI 自动跑** | `verify-encoding`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
+| **CI 自动跑** | `verify-encoding`、`verify-package`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
 | **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 80s，`--frames 1200 --no-big`）**、`verify-attribution`（177s） | 逐项之和约 **4.3 分钟** |
 | **CI 自动跑 · `browser-doc` 作业** | `verify-readme`（148s）—— 按 README 的路径真跑一遍（含全新 clone） | 逐项之和约 **2.5 分钟** |
 | **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（17.6s；原 `verify-comp` / `verify-complex` 的独有判据已并入它，现含父子绑定 / 空物体那一节）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-preview` | 逐项之和约 **4.5 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
-**24 个验收工具里 22 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
+**25 个验收工具里 23 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
 
 （`verify-longform` 原来在这张表里是"手动跑（10 分钟量级）"—— 那说的是它的**默认规模**
@@ -188,7 +189,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 1. **跑在浏览器里的绘制代码**：`primitives` 17%、`widgets` 16%、`hud` 19%、
    `subtitle` 17%、`scene3d` 28%、`templates` 37%、`gpu` 58%。
    Node 单元测试**根本测不到它们**（要真画布/WebGL）；
-   它们的覆盖来自 **24 个验收工具**（真的开浏览器跑）与**像素回归**。
+   它们的覆盖来自 **25 个验收工具**（真的开浏览器跑）与**像素回归**。
 2. **要外部工具的主机代码**：`renderRange` 17%、`mux` 26%、`commands` 37%、
    `session` 19%。要 ffmpeg 与浏览器，同样由端到端工具覆盖。
 
