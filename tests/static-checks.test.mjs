@@ -125,6 +125,26 @@ test('imports：镜头把 import 伸到项目之外 → 报（「只 import film
   });
 });
 
+test('imports：**动态** `import(…)` 的相对路径也要查（原先漏了这条）', () => {
+  // 实测漏过一个真 bug：拆 `commands.mjs` 时 `mcp()` 里的 `await import('../mcp/server.mjs')`
+  // 没跟着降层，而它的 catch 把 `ERR_MODULE_NOT_FOUND` 报成「MCP 服务器需要依赖 sdk」
+  // （依赖其实装着）—— 静态 import 全对，只有动态那条断了。
+  // 坏的方向：
+  withProject({'index.js': "export const f = () => import('./nope.js');\n"}, (proj) => {
+    const r = checkImports(join(proj, 'shots'), proj, {insideOnly: proj});
+    assert.equal(r.ok, false, '动态 import 指向不存在的文件必须报');
+    assert.ok(r.problems.some((p) => p.includes('nope.js')), r.problems.join('\n'));
+  });
+  // 好的方向（反向保险：没有它，「一律报错」也能让上面那条恒绿）
+  withProject({
+    'index.js': "export const f = () => import('./helpers.js');\n",
+    'helpers.js': 'export const x = 1;\n',
+  }, (proj) => {
+    const r = checkImports(join(proj, 'shots'), proj, {insideOnly: proj});
+    assert.equal(r.ok, true, '指向存在文件的动态 import 不该被误报：' + r.problems.join('\n'));
+  });
+});
+
 test('imports：不传 insideOnly 时不判内外（runtime 源码自己就要用相对导入）', () => {
   withProject({
     'index.js': "import {text} from '../../src/runtime/primitives.js';\nexport const SHOTS = [text];\n",

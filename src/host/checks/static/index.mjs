@@ -89,10 +89,14 @@ export function checkImports(dir, label = dir, {insideOnly = null} = {}) {
   const bad = [];
   for (const f of files) {
     const src = stripComments(readFileSync(f, 'utf8'));
-    const re = /(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]/g;
+    // 三种写法都要认：`from '…'`（静态）、`import '…'`（副作用导入）、`import('…')`（**动态**）。
+    // ⚠️ 动态那条原先漏了（`import\s*['"]` 匹配不到 `import(`）—— 实测因此放过一个真 bug：
+    // 拆 `commands.mjs` 时 `mcp()` 里的 `await import('../mcp/server.mjs')` 没跟着降层，
+    // 而它的 catch 把 `ERR_MODULE_NOT_FOUND` 报成「MCP 服务器需要依赖 sdk」（依赖其实装着）。
+    const re = /(?:import|export)[^'"]*?from\s*['"]([^'"]+)['"]|import\s*['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)/g;
     let m;
     while ((m = re.exec(src))) {
-      const spec = m[1] || m[2];
+      const spec = m[1] || m[2] || m[3];
       if (!spec || !spec.startsWith('.')) continue;
       const abs = resolve(dirname(f), spec);
       if (insideOnly && !isInside(insideOnly, abs)) {
