@@ -1,9 +1,11 @@
-// 仓库结构的**硬规则**——都写在 `docs/architecture.md` 的「三层结构，依赖只向下」那节，
+// 仓库结构的**硬规则与可导航性**——规则写在 `docs/architecture.md` 的「三层结构，依赖只向下」那节，
 // 但此前**没有常驻判据**：
 //   · 分层方向：审计那次是人工把 162 条相对边**逐条归类**才得出「0 违例」的；
 //   · 扩展名：`.js` / `.mjs` 的分布实测零例外，可这条规则**一个字都没写在文档里**，
 //     于是「新加一个文件该用什么扩展名」全靠看邻居。
-// 两条都属于「规则写在文档里、没人守」⇒ 这里给它们牙。
+// 第三条是**可导航性**：「没人链接的文档」那种孤儿（第八轮给 verify-links 补的判据）
+// 在工具目录里也有对应物 —— 一个没写进索引的探针，后来的人根本不知道它存在。
+// 三条都属于「规则写在文档里、没人守」⇒ 这里给它们牙。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync, readdirSync} from 'node:fs';
@@ -84,4 +86,16 @@ test('扩展名编码「在哪跑」：contract/runtime 是 `.js`（进浏览器
     if (layer === 'entry' && r !== 'src/index.js') bad.push(`${r}：src/ 根下只允许 index.js`);
   }
   assert.deepEqual(bad, [], '扩展名不符合「在哪跑」的规则：\n' + bad.join('\n'));
+});
+
+test('可导航性：`tools/probes/` 下每个探针都要在它自己的 README 里出现', () => {
+  // 实测（2026-10-15，补之前）：16 个探针里有 **6 个**从没写进 `probes/README.md` ——
+  // 一个没进索引的探针，后来的人根本不知道它存在（同族：第八轮给「没人链接的文档」补的判据）。
+  const dir = join(ROOT, 'tools', 'probes');
+  const probes = readdirSync(dir).filter((f) => f.endsWith('.mjs'));
+  assert.ok(probes.length >= 10, `只扫到 ${probes.length} 个探针 —— 枚举坏了，这条不算通过`);
+  const md = readFileSync(join(dir, 'README.md'), 'utf8');
+  const unlisted = probes.filter((f) => !md.includes(f));
+  assert.deepEqual(unlisted, [],
+    '这些探针没写进 tools/probes/README.md（补一行「回答什么问题」）：' + unlisted.join(', '));
 });

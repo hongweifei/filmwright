@@ -34,6 +34,12 @@ node tools/probes/<名字>.mjs <仓库根>    # 多数探针的第一个参数�
 | `probe-encode.mjs` | 硬件编码的**启动成本 vs 稳态**（编码器复用） | 结论已定（启动是假象主因） |
 | `probe-gpu-2d.mjs` | 「用 3D 画 2D」拆成**光栅化 vs 合成**两段 | 结论已定；**其 proxy 有缺陷**（见下） |
 | `probe-native-canvas.mjs` | 本地 `@napi-rs/canvas` vs 浏览器 Canvas 2D，**同一份绘制代码** | 结论已定（本地慢 21%） |
+| `bench-steady.mjs` | **把测法固定下来**的稳态基准（起始帧 / 长度 / `--shards` / `--gpu` 可调） | **活的** —— 报任何性能数字前先按它跑，免得重复犯「测法不一致」那类错 |
+| `check-determinism.mjs` | **快速**确定性检查：同一效果、同一帧、两次渲染比哈希 | **活的** —— 改渲染路径后先跑它（同一判据比 `verify-effects` 快一个量级） |
+| `profile-current.mjs` | 当前渲染管线**逐段耗时**（绘制 / JPEG 编码 / WebCodecs 编码） | 结论已定（成本结构：编码占 >90%） |
+| `profile-h264-path.mjs` | h264 路径**真实循环**的逐段耗时，并对比不同 `latencyMode` | 结论已定（h264 路径选型的依据） |
+| `sweep-jpeg.mjs` | JPEG 质量 → 编码耗时 / 载荷大小的曲线 | 结论已定（默认质量的依据） |
+| `probe-three.mjs` | three 能否在**无头渲染页**里不用打包器加载并真渲染；哪个后端可用 | 结论已定（3D 立项前的可行性问答，见 `verify-three`） |
 
 ## 已知的探针缺陷（写下来免得被误导）
 
