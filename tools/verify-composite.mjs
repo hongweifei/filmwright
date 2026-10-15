@@ -22,6 +22,12 @@
 //     （这一条是 verify-comp.mjs 删除后必须补上的空档：它自己拿常量重算了一遍
 //      localFrame，接错 cycleLen 也照样全绿）。
 //
+//   D 父子绑定（`follow`）与空物体（`empty`）：量**方向 / 单调 / 逐字节等价**，不是
+//     「画面变了」。父=空物体 ⇒ 画面里能动的东西只有子层，于是「只动父、不动子」时
+//     子的重心必须同向移动；父只旋转 90° 时子的 +x 偏置必须转到下方（相加式/替换式/
+//     忽略父的实现都做不到）；父变换全默认时写不写 `follow` 逐字节相同；空物体把变换
+//     设成任意值画面逐字节不变。负面对照：去掉 `follow`（绑定失效）⇒ 同一个谓词判红。
+//
 // 每个变异都在**同一个渲染页里重新 boot 一次**（boot 是公开入口，会走
 // 校验 → compileScene → 装镜头表这条真路），不逐个变异开浏览器：
 // 开一次约 1.7s，十几次就是十几秒和十几个 Chrome 实例（机器忙时会等 boot 等到超时）。
@@ -99,6 +105,33 @@ const regionStats = (grid, baseGrid, idx) => {
 };
 const signedDiff = (a, b) => a.map((v, i) => (v === null || b[i] === null ? 0 : v - b[i]));
 const maxAbsDiff = (a, b) => a.reduce((m, v, i) => Math.max(m, Math.abs(v - b[i])), 0);
+
+/** 指定块集合上的亮度加权重心（块坐标：x 向右、y 向下）。 */
+const centroid = (grid, idx) => {
+  let sx = 0, sy = 0, w = 0;
+  for (const i of idx) {
+    const v = grid[i];
+    if (v === null || v <= 0) continue;
+    sx += v * (i % COLS);
+    sy += v * Math.floor(i / COLS);
+    w += v;
+  }
+  return w > 0 ? {x: sx / w, y: sy / w, w} : null;
+};
+
+/**
+ * 「变化覆盖的那块区域」内的重心位移 —— 只在**改动覆盖的区域**上量。
+ * 位移为 0 有两种情况：区域为空（画面没动）或重心恰好没移，都在 blocks 里分得清。
+ */
+const moveOf = (g0, g1, tol = 0.5) => {
+  const idx = changedBlocks(g0, g1, tol);
+  const c0 = centroid(g0, idx);
+  const c1 = centroid(g1, idx);
+  return {blocks: idx.length, dx: c0 && c1 ? c1.x - c0.x : 0, dy: c0 && c1 ? c1.y - c0.y : 0};
+};
+
+/** D 段「跟着父往右动」的谓词本体：正反两处都用它，负面对照才有意义。 */
+const followedRight = (m) => m.blocks > 0 && m.dx > 0;
 
 /**
  * 在**同一个页面里**用另一份 scene 重新 boot。
@@ -505,6 +538,151 @@ console.log('\n=== C) 嵌套合成：声明式 comps 编译成实例，并在真
 await sessM.close();
 if (typeof mixOpen.server.closeProject === 'function') mixOpen.server.closeProject();
 else mixOpen.server.close();
+
+// ================= D) 父子绑定（follow）与空物体（empty） =================
+// 判据要有**区分力**：这里量的是方向 / 单调 / 逐字节等价，不是「画面变了」。
+console.log('\n=== D) 父子绑定（follow）与空物体（empty） ===');
+{
+  const P_LB = `${ROOT}/examples/scenecast`;
+  const projLB = await loadProject(P_LB);
+  const SIZE_LB = projLB.raw.size ?? {width: 1280, height: 720};
+  const layerScene = (layers) => ({shots: [{type: 'layers', at: 1, layers}]});
+  // 子层内容只用 ASCII：不依赖宿主机装没装中文字体（那是另一条守卫的事）。
+  const KID = {content: {type: 'title', title: 'BIND', sub: 'follow-empty'}, z: 1};
+  // 父用**空物体**：它自己不画像素 ⇒ 画面里唯一能动的东西就是子层。
+  const EMPTY_AT = (t) => ({empty: true, z: 0, ...(t ? {transform: t} : {})});
+  const sceneLB = layerScene([EMPTY_AT({x: 0}), {...KID, follow: 0}]);
+  const serverLB = await serveProject(P_LB, {raw: projLB.raw, timeline: projLB.timeline,
+    shotsRel: null, scene: sceneLB});
+  const sessLB = await openSession(`http://127.0.0.1:${serverLB.address().port}/`, SIZE_LB);
+  try {
+    // 帧号**由实现报出**（不写死帧号：镜头起点与总帧数随夹具变）。
+    const infoLB = await shotInfoOf(sessLB, sceneLB);
+    const FRAME_LB = Math.floor((infoLB.starts[0] + infoLB.total) / 2);
+    console.log(`  探针帧 ${FRAME_LB}：镜头起点 ${infoLB.starts[0]}、总帧数 ${infoLB.total}（由实现报出）`);
+    const renderLB = async (sc) => {
+      await sessLB.evaluate(bootSceneExpr(sc));
+      return {png: await sessLB.frame(FRAME_LB), grid: await gridAt(sessLB, FRAME_LB)};
+    };
+
+    // —— D1 只动父、不动子 ⇒ 子也动（方向 + 单调）——
+    const kidBefore = JSON.stringify(KID);
+    const base = await renderLB(sceneLB);
+    const moves = [];
+    for (const dx of [60, 120]) {
+      const m = moveOf(base.grid, (await renderLB(layerScene([EMPTY_AT({x: dx}), {...KID, follow: 0}]))).grid);
+      moves.push({dx, ...m});
+      console.log(`  父 x=${dx}：变化块 ${m.blocks}/${base.grid.length}，` +
+        `重心位移 dx=${m.dx.toFixed(3)} dy=${m.dy.toFixed(3)}（块坐标）`);
+    }
+    ok(moves.every((m) => m.blocks > 0),
+      '只动父的变换 ⇒ 画面里确有变化的块（父是空物体，动的只能是子层）');
+    ok(moves.every(followedRight),
+      `跟随层的重心随父**同向**右移（${moves.map((m) => m.dx.toFixed(2)).join(' < ')} 块）`);
+    ok(moves[1].dx > moves[0].dx && moves[0].dx > 0,
+      `位移**单调**：父右移 60 → ${moves[0].dx.toFixed(2)} 块，右移 120 → ${moves[1].dx.toFixed(2)} 块`);
+    ok(JSON.stringify(KID) === kidBefore,
+      '两次之间**子层声明一个字都没改**（只改了父的变换）—— 所以动的是「绑定」而不是各自独立');
+
+    // —— D2 有效变换 = 父的变换 ∘ 自己的变换（组合，不是替换、不是相加）——
+    const cParent = await renderLB(layerScene([EMPTY_AT({x: 100}), {...KID, follow: 0}]));
+    const cChild = await renderLB(layerScene([EMPTY_AT({x: 0}), {...KID, follow: 0, transform: {x: 100}}]));
+    const cNone = await renderLB(layerScene([EMPTY_AT({x: 0}), {...KID, follow: 0}]));
+    console.log(`  父 x=100 + 子 x=0 ${hash(cParent.png)} / 父 x=0 + 子 x=100 ${hash(cChild.png)} /` +
+      ` 都不动 ${hash(cNone.png)}`);
+    ok(cParent.png.equals(cChild.png),
+      '纯平移的两种写法**逐字节相同**（父的位移进子的坐标系 = 子的位移进父的坐标系）');
+    ok(!cParent.png.equals(cNone.png),
+      '负面对照：两者都**不等于「都不动」** ⇒ 父与自己的变换**都**真的参与了合成（丢任一侧都会塌回基准）');
+    const mFlat = moveOf(cNone.grid,
+      (await renderLB(layerScene([EMPTY_AT({}), {...KID, follow: 0, transform: {x: 100}}]))).grid);
+    const mRot = moveOf(cNone.grid,
+      (await renderLB(layerScene([EMPTY_AT({rotate: 90}), {...KID, follow: 0, transform: {x: 100}}]))).grid);
+    console.log(`  父 rotate=0° + 子 x=100：dx=${mFlat.dx.toFixed(3)} dy=${mFlat.dy.toFixed(3)}；` +
+      `父 rotate=90° + 子 x=100：dx=${mRot.dx.toFixed(3)} dy=${mRot.dy.toFixed(3)}`);
+    ok(mFlat.dx > 0 && Math.abs(mFlat.dy) < Math.abs(mFlat.dx), '父不旋转时，子的 +x 偏置把重心推**右**');
+    ok(mRot.blocks > 0 && mRot.dy > 0 && Math.abs(mRot.dx) < Math.abs(mRot.dy),
+      '父**只旋转 90°（没有任何平移）**时子的 +x 偏置落到**下方** —— 相加式/替换式/忽略父都得不到这个结果');
+
+    // —— D3 父是全默认变换 ⇒ 写不写 follow 逐字节相同（快路径没被破坏）——
+    const DEF = {x: 0, y: 0, scale: 1, rotate: 0};
+    const withFollow = await renderLB(layerScene([EMPTY_AT(DEF), {...KID, follow: 0, transform: {x: 30}}]));
+    const noFollow = await renderLB(layerScene([EMPTY_AT(DEF), {...KID, transform: {x: 30}}]));
+    ok(withFollow.png.equals(noFollow.png),
+      `父变换全默认 ⇒ 绑定等价于恒等变换（${hash(withFollow.png)} = ${hash(noFollow.png)}）`);
+
+    // —— D4 空物体自己不产生任何像素 ——
+    const e1 = await renderLB(layerScene([EMPTY_AT({})]));
+    const e2 = await renderLB(layerScene([EMPTY_AT({x: 400, y: -120, rotate: 33, scale: 1.5,
+      alpha: 0.4, blend: 'multiply'})]));
+    const e3 = await renderLB(layerScene([{content: {type: 'title', title: 'E'}, z: 0}]));
+    ok(e1.png.equals(e2.png),
+      `把空物体的变换设成任意值（位移/旋转/缩放/透明度/混合）⇒ 画面**逐字节不变**（${hash(e1.png)}）`);
+    ok(!e1.png.equals(e3.png),
+      `负面对照：同一位置换成真有内容的层 ⇒ 画面必须不同（${hash(e1.png)} ≠ ${hash(e3.png)}），` +
+      '证明上面那条不是「整帧本来就空」的假绿');
+
+    // —— D5 空物体自己的 animate（它没有内容 ⇒ 没有自己的节拍表，借本容器的）——
+    // 空物体最常见的用法就是「按节拍转/呼吸」，所以带 `beat` 的关键帧必须能编译：
+    // 借不到拍号时 compileAnimate 会当场抛「这个节点只有 0 拍」。
+    const kid200 = {...KID, follow: 0, transform: {x: 200}};
+    const still = await renderLB(layerScene([EMPTY_AT({}), kid200]));
+    const beatKeyed = await renderLB(layerScene([
+      {empty: true, z: 0, animate: {rotate: [{beat: 1, v: 0}]}}, kid200]));
+    ok(beatKeyed.png.equals(still.png),
+      `空物体的 \`beat\` 键能编译：单拍 v=0 与不写 animate 逐字节相同（${hash(still.png)}）`);
+    const driven = await renderLB(layerScene([
+      {empty: true, z: 0, animate: {rotate: [{frame: 1, v: 0}, {frame: 2, v: 90}]}}, kid200]));
+    const mDrive = moveOf(still.grid, driven.grid);
+    console.log(`  空物体按帧旋转 90° ⇒ 子层（自身 x=200）：变化块 ${mDrive.blocks}，` +
+      `dx=${mDrive.dx.toFixed(3)} dy=${mDrive.dy.toFixed(3)}`);
+    ok(mDrive.blocks > 0 && mDrive.dy > 0 && Math.abs(mDrive.dx) < Math.abs(mDrive.dy),
+      '空物体自己的 animate 真的驱动了跟随者：子的 +x 偏置被转到**下方**');
+
+    // —— D6 负面对照：绑定失效（去掉 follow）⇒ 同一个谓词必须判红 ——
+    const broke = await renderLB(layerScene([EMPTY_AT({x: 120}), {...KID}]));
+    const mBroke = moveOf(base.grid, broke.grid);
+    console.log(`  父 x=120、子**不跟随**：变化块 ${mBroke.blocks}，重心 dx=${mBroke.dx.toFixed(3)}`);
+    ok(broke.png.equals(base.png),
+      '绑定失效时画面与「父不动」**逐字节相同**（父是空物体、子不跟随 ⇒ 什么都不该动）');
+    ok(followedRight(moves[1]) === true && followedRight(mBroke) === false,
+      '同一个谓词：跟随 ⇒ true，绑定失效 ⇒ false（判据有牙，不是恒真）');
+
+    // —— D8 contract：合法写法要过、非法要报、码已登记（纯函数，不启浏览器）——
+    const {validateScene, SCENE_ERROR_CODES} = await imp('src/contract/scene.js');
+    const declared = new Set(SCENE_ERROR_CODES);
+    const errsOf = (layers) => validateScene({shots: [{type: 'layers', at: 1, layers}]},
+      {timeline: projLB.timeline}).errors;
+    const kid2 = {content: {type: 'title', title: 'X'}, z: 2};
+    const CASES = [
+      ['合法：follow 1 → 0', [EMPTY_AT({}), {...KID, follow: 0}], false],
+      ['合法：空物体不给 content', [EMPTY_AT({}), kid2], false],
+      ['follow 不是整数', [EMPTY_AT({}), {...KID, follow: 0.5}], true],
+      ['follow 越界', [EMPTY_AT({}), {...KID, follow: 2}], true],
+      ['follow 自引用', [EMPTY_AT({}), {...KID, follow: 1}], true],
+      ['follow 成环 1→2→1', [EMPTY_AT({}), {...KID, follow: 2}, {...kid2, follow: 1}], true],
+      ['empty 不是布尔 / 又给了 content',
+        [{empty: 'yes', content: {type: 'title', title: 'X'}, z: 0}, kid2], true],
+    ];
+    const seen = new Set();
+    for (const [label, layers, wantErr] of CASES) {
+      const errs = errsOf(layers);
+      for (const e of errs) {
+        seen.add(e.code);
+        // 错误是给模型读的 prompt：hint 不能是空的（否则模型只知道"错了"、不知道怎么改）。
+        if (!e.hint) ok(false, `  ↳ ${e.code}@${e.path} 的 hint 是空的`);
+      }
+      ok((errs.length > 0) === wantErr, `${label} ⇒ ${wantErr ? '要报' : '要过'}：` +
+        (errs.map((e) => `${e.code}@${e.path}`).join(', ') || '（无错误）'));
+    }
+    const unregistered = [...seen].filter((c) => !declared.has(c));
+    ok(unregistered.length === 0,
+      `报出来的码都在 SCENE_ERROR_CODES 里登记过（用到未登记：${unregistered.join(', ') || '无'}）`);
+  } finally {
+    await sessLB.close();
+    serverLB.closeProject();
+  }
+}
 
 // ================= 收尾 =================
 rmSync(MIX, {recursive: true, force: true});
