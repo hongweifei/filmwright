@@ -118,9 +118,11 @@ if (!raw._format) {
 const base = raw.frames;
 const differs = [];
 let same = 0;
+let compared = 0;
 for (const n of frames) {
   const want = base[n];
   if (!want) { console.log(`  f${n}  基准里没有这一帧，跳过`); continue; }
+  compared++;
   const got = pixelDigest(shot(n));
   if (got === want) { same++; console.log(`  f${n}  相同  ${got.slice(0, 16)}`); }
   else differs.push([n, got.slice(0, 16), want.slice(0, 16)]);
@@ -132,4 +134,16 @@ if (differs.length) {
   console.log('\n纯结构调整不该改画面 —— 这些差异要么是故意的（那就重新 capture），要么是 bug。');
   process.exit(1);
 }
-console.log(`\n✓ ${same} 帧画面全部与基准相同（像素级）`);
+
+// ⚠️ **一帧都没比上不是通过**：请求的帧号与基准里的帧号完全错开时（例如基准是用自定义
+// `--frames` 抓的，verify 忘了带同一个选项 ⇒ 走默认帧号），上面那圈一次都没进 `compared`，
+// 却印出「✓ 0 帧画面全部与基准相同」并退出 0。**空集上的干净不算干净**（本仓库反复踩的那条）。
+// 实测踩过：`examples/gallery` 的基准用 14 个自定义帧号抓，verify 忘带 `--frames` ⇒ 0 帧比上。
+if (!compared) {
+  console.log(`\n✗ ${frames.length} 个请求帧**没有一个**在基准里（基准里有 ${Object.keys(base).length} 个）。`);
+  console.log('  多半是 verify 忘了带与 capture 相同的 `--frames`。');
+  console.log('  一帧都没比上不是通过 —— 空集上的「全部相同」不算相同。');
+  process.exit(1);
+}
+console.log(`\n✓ ${same} 帧画面全部与基准相同（像素级）`
+  + (compared < frames.length ? `（另有 ${frames.length - compared} 个请求帧不在基准里，已跳过）` : ''));

@@ -274,7 +274,10 @@ for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
   process.on(sig, () => { dropTmp(); process.exit(code); });
 }
 
-const TEMPL_REL = 'src/runtime/scene/templates.js';
+// ⚠️ 缺陷注入的**目标文件**：三个锚点都在 `revealText` 里，而它随 templates.js 的拆分
+// （原 1036 行 → 5 个文件）搬到了 `templates/helpers.js`。
+// 锚点漂了不会假绿 —— 下面命中次数 ≠ 1 时**报红**（见 DEFECTS 那段的 ok(false, 'neg-anchor', …)）。
+const TEMPL_REL = 'src/runtime/scene/templates/helpers.js';
 const indent = (s) => s.trimEnd().split('\n').map((l) => '    | ' + l).join('\n');
 
 /** 三份缺陷，各只该红它对应的那一条（内层只跑标题这三条判据）。 */
