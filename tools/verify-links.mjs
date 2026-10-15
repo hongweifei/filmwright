@@ -105,6 +105,30 @@ if (orphans.length) {
   console.log('   ⇒ 要么在某份文档里引用它，要么删掉（历史里还找得到）。');
 }
 
+// ── 反方向（二）：`docs/` 下的**每一份文档**也必须被某份文档链接到 ──────────────
+// 上面那条只管**非 .md** 资产；**文档本身「没人链接」同样是孤儿**，而且更隐蔽：
+// 新写的文档只要忘了加进 README / getting-started 的索引表，就没有任何入口。
+// 实测（第八轮拆 `docs/scene.md`）：新写的 `docs/effects.md` / `docs/three.md`
+// 一开始没进索引表，**六个静态守卫全绿** —— 是我人工核对索引表才发现的。
+// 排除 `docs/design/`（本地草稿，未入库，本来就该没人链接）。
+const relOf = (p) => relative(ROOT, p).replace(/\\/g, '/');
+let vacuous2 = false;
+const docsUnderDocs = docs.filter((p) => {
+  const r = relOf(p);
+  return r.startsWith('docs/') && !r.startsWith('docs/design/');
+});
+// 下限：`docs/` 下一份都扫不到 ⇒ 枚举坏了，别印「全部有入口」
+if (!docsUnderDocs.length) {
+  vacuous2 = true;
+  console.log('\n✗ `docs/` 下一份文档都没扫到 —— 枚举坏了，这条反方向检查不算通过。');
+}
+const orphanDocs = docsUnderDocs.filter((p) => !referenced.has(p));
+if (orphanDocs.length) {
+  console.log(`\n✗ ${orphanDocs.length} 份文档没有任何入口（没人链接它，读者找不到）：`);
+  for (const p of orphanDocs) console.log('   ' + relOf(p));
+  console.log('   ⇒ 把它加进 README 的文档索引（以及 getting-started 的「下一步读什么」）。');
+}
+
 // ── 下限断言：空集上不许说自己「全部有效」──────────────────────────────────
 // 枚举一旦坏掉（拿不到 git、路径写错、根指错），上面那段一条链接都扫不到，
 // 却照样印「✓ 全部指向存在的文件」并退出 0 —— 那是个永远绿的检查。
@@ -127,6 +151,7 @@ if (!docs.length) {
 //   ⑤ 解不开的 `%` 转义 ⇒ 必须报出这条链接，而不是抛 URIError 崩掉
 // 全程只碰 os.tmpdir() 下的临时根，**从不改真源码**，跑完在 finally 里删干净。
 // 代价：本机实测这一段约 2.2s（5 次子进程 + 临时仓库里的 git 调用），正常扫描本身 0.24s。
+//     第八轮加了 ⑦（孤儿文档）两格 ⇒ 共 7 次子进程，约 +0.9s；嫌贵最省的裁法是去掉 ③（回绿那一步）。
 //     ⚠️ try/finally 挡不住 SIGINT/SIGTERM（见 verify-incremental 的教训）；
 //     真要中途被杀，残留只在系统临时目录里，无害。
 let selfFailed = 0;
@@ -151,7 +176,11 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
     // 夹具：`internal` 是**这份夹具自己声明的**内部链接条数（外链与页内锚点不算）。
     // 期望值从这份声明算，不从实现反推 —— 免得不小心把实现的漏算当成正确答案。
     const FIXTURE = {
-      'README.md': {internal: 1, text: '# 夹具根\n\n[目标文件](target.md)\n'},
+      // ⚠️ 两条内部链接（`target.md` + `docs/guide.md`）：第二条是为了让 `docs/` 下
+      // **每份文档都有入口**（反方向（二））—— 夹具自己也得满足这条不变量，
+      // 否则「好夹具必须绿」那一格会因为夹具不合规而红（实测踩过：
+      // 加了新判据但没同步夹具，① 与 ③ 两格一起假红）。
+      'README.md': {internal: 2, text: '# 夹具根\n\n[目标文件](target.md)\n[指南](docs/guide.md)\n'},
       'target.md': {internal: 0, text: '# 目标文件\n'},
       'docs/guide.md': {
         // 4 条内部链接：../target.md、child.md、../data/thing.json、a%20b.md
@@ -273,12 +302,26 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
     ok(r.status === 0,
       `⑥ 把它删掉 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
 
+    // ⑦ 反方向（二）：`docs/` 下的**文档**没人链接 ⇒ 必须红
+    //    （新写的文档忘了进索引表就是这种孤儿；判据与 ⑥ 分开，因为查的是两类东西）
+    const readmeFile = join(repo, 'README.md');
+    const README = FIXTURE['README.md'].text;
+    writeFileSync(readmeFile, README.replace('[指南](docs/guide.md)\n', ''));
+    r = runTool(repo, '⑦');
+    ok(r.status === 1 && (r.stdout ?? '').includes('docs/guide.md')
+      && (r.stdout ?? '').includes('没有任何入口'),
+      `⑦ docs/ 下的文档没人链接 ⇒ 退出码 1 并点名它（实际 ${rc(r)}）`);
+    writeFileSync(readmeFile, README);
+    r = runTool(repo, '⑦b');
+    ok(r.status === 0,
+      `⑦ 把链接加回去 ⇒ 重新绿（实际 ${rc(r)}）—— 证明上面那条红是它造成的`);
+
     if (selfFailed) {
       console.log('\n—— 子进程原始输出（便于定位）——');
       for (const l of logs) console.log(l.split('\n').map((x) => `   ${x}`).join('\n'));
     }
     console.log(selfFailed === 0
-      ? '负面对照全部符合预期（正例绿 / 坏链红且报出位置 / 改回去回绿 / 空根红 / 坏转义报出 / 孤儿资产红）。'
+      ? '负面对照全部符合预期（正例绿 / 坏链红且报出位置 / 改回去回绿 / 空根红 / 坏转义报出 / 孤儿资产红 / 孤儿文档红）。'
       : `\n✗ ${selfFailed} 条负面对照不符合预期。`);
   } catch (e) {
     ok(false, `负面对照自己出错（不许静默跳过）：${e && e.message}`);
@@ -288,4 +331,4 @@ if (process.env.FW_VERIFY_LINKS_NESTED === '1') {
 }
 
 // 用 exitCode 而不是 process.exit()：管道里的 stdout 是异步刷的，硬退出会截断输出。
-process.exitCode = (bad.length || orphans.length || vacuous || selfFailed) ? 1 : 0;
+process.exitCode = (bad.length || orphans.length || orphanDocs.length || vacuous || vacuous2 || selfFailed) ? 1 : 0;
