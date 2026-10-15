@@ -128,12 +128,15 @@ export async function openSession(url, size, opts = {}) {
    * 整个流程挂到 job 超时，报出来是「进程被杀」，掩盖真实原因。
    * 默认 30s；单帧渲染/截图给 60s（正常 ~80ms，超了就是真卡住）。
    */
-  const sendTimeout = (method, params = {}, ms = 30000) => new Promise((res, rej) => {
+  const sendTimeout = (method, params = {}, ms = 30000, label = '') => new Promise((res, rej) => {
     if (wsClosed) { rej(new Error('filmwright: 浏览器连接已断开（' + wsClosed + '）')); return; }
     const myId = ++id;
     const timer = setTimeout(() => {
       pending.delete(myId);
-      rej(new Error(`filmwright: CDP ${method} 超过 ${ms}ms 没响应（浏览器可能卡死或已退出）`));
+      // `label` 说清**当时在干什么** —— 原先只报 `CDP Runtime.evaluate`，出问题时看不出是哪一步
+      // （画面采样？逐帧绘制？截图？），排查得靠猜。
+      rej(new Error(`filmwright: CDP ${method}${label ? `（${label}）` : ''} 超过 ${ms}ms 没响应`
+        + '（浏览器可能卡死或已退出）'));
     }, ms);
     pending.set(myId, {res, rej, timer});
     ws.send(JSON.stringify({id: myId, method, params}));
@@ -255,7 +258,8 @@ export async function openSession(url, size, opts = {}) {
         window.__renderFrame(${n});
         return document.querySelector('canvas').toDataURL(${fmt});
       })()`;
-      const r = await sendTimeout('Runtime.evaluate', {expression: expr, returnByValue: true}, 60000);
+      const r = await sendTimeout('Runtime.evaluate', {expression: expr, returnByValue: true}, 60000,
+        `单帧渲染+取图（第 ${n} 帧）`);
       if (r.result?.exceptionDetails) {
         throw new Error('filmwright: 第 ' + n + ' 帧抛错：' + JSON.stringify(r.result.exceptionDetails).slice(0, 400));
       }
@@ -344,7 +348,8 @@ export async function openSession(url, size, opts = {}) {
         return ${total};
       })()`;
       const r = await sendTimeout('Runtime.evaluate',
-        {expression: expr, returnByValue: true, awaitPromise: true}, timeoutMs ?? budget);
+        {expression: expr, returnByValue: true, awaitPromise: true}, timeoutMs ?? budget,
+        `流式渲染（${from}–${to} 帧）`);
       if (r.result?.exceptionDetails) {
         const d = r.result.exceptionDetails;
         const msg = d.exception?.description || d.text || JSON.stringify(d);
@@ -361,7 +366,7 @@ export async function openSession(url, size, opts = {}) {
       const r = await sendTimeout('Runtime.evaluate', {
         expression: `document.querySelector('canvas').toDataURL(${frameFormatExpr(opts2.frameFormat)})`,
         returnByValue: true,
-      }, 60000);
+      }, 60000, `取画布（第 ${n} 帧）`);
       const dataUrl = r.result?.result?.value;
       if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
         throw new Error('filmwright: 第 ' + n + ' 帧从 canvas 读数失败（toDataURL 没返回图像）');
@@ -373,7 +378,7 @@ export async function openSession(url, size, opts = {}) {
       const r = await sendTimeout('Runtime.evaluate', {
         expression: `(window.__lastError = null, window.__renderFrame(${n}), window.__lastError)`,
         returnByValue: true,
-      });
+      }, 30000, `逐帧绘制检查（第 ${n} 帧）`);
       return r.result?.result?.value ?? null;
     },
     async screenshot() {
@@ -381,8 +386,18 @@ export async function openSession(url, size, opts = {}) {
       if (!shot.result?.data) throw new Error('filmwright: 截图失败');
       return Buffer.from(shot.result.data, 'base64');
     },
-    async evaluate(expr) {
-      const r = await send('Runtime.evaluate', {expression: expr, returnByValue: true, awaitPromise: true});
+    /**
+     * 页面求值。
+     *
+     * `ms` 是**这一次往返**的预算。贵的页面工作要**自己分片**，不要靠把预算调大 ——
+     * 调大只是把悬崖往后挪，真卡住时会白等更久。（实测教训：整条时间轴的画面采样
+     * 塞进一次调用，2100 帧的片子要 13–55 秒，卡在 30s 默认值上，
+     * 于是时不时报「超过 30000ms 没响应」，而浏览器其实好好的。
+     * 现在采样在 `host/checks/browser/qualityCheck.mjs` 里分片。）
+     */
+    async evaluate(expr, ms = 30000, label = '页面求值') {
+      const r = await sendTimeout('Runtime.evaluate',
+        {expression: expr, returnByValue: true, awaitPromise: true}, ms, label);
       return r.result?.result?.value;
     },
     lastError: () => lastErr,
