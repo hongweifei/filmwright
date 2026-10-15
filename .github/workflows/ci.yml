@@ -70,6 +70,14 @@ jobs:
       - name: 文档内部链接（改文件名时最容易漏）
         run: node tools/verify-links.mjs
 
+      # 「同一个根因换个位置又回来」的两类，各让 CI 红过一次以上：
+      #   ① CI 不带参数跑工具，而工具写着 resolve(process.argv[2]) → 抛 ERR_INVALID_ARG_TYPE；
+      #   ② existsSync 为真 ≠ 能读（Windows 上别的进程持有句柄 → EBUSY）。
+      # ② 用棘轮：当前的 10 处读的是用户项目文件（非跨进程写），记录在案；
+      #    新出现必须审一遍属于哪一类。
+      - name: 调用安全（CI 无参调用 / 存在就直读）
+        run: node tools/verify-invocation.mjs
+
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
     strategy:
