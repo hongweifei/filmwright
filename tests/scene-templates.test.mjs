@@ -125,3 +125,49 @@ test('compileScene：没有模板的类型当场抛错', () => {
   assert.throws(() => compileScene({shots: [{type: 'nope', at: 1}]}, {sentences: [], subs: []}),
     /没有模板的类型/);
 });
+
+test('revealText：`base` 非有限 ⇒ 退化成整块画出来（而不是一个字都不画）', async () => {
+  // 补上「修了但**没有常驻判据**」的最后一个缺口：`base=NaN` 时每个字的进度都是 NaN
+  // ⇒ `if (t > 0)` 全为假 ⇒ **一个字都不画** —— 文字**静默消失**（不报错、不崩、测试不红）。
+  // 兜底是「退化成整块画法」（见 `templates/helpers.js` 里那段注释），此前没人钉住它。
+  const {revealText} = await import('../src/runtime/scene/templates/helpers.js');
+  // `measure()`（draw/primitives.js）会**惰性建一张量字画布**：Node 里没有 document，补一个最小的。
+  // 只喂 `measureText`，其余方法一律吞掉 —— 崩掉是「测试跑不起来」，不是判据红。
+  if (typeof globalThis.document === 'undefined') {
+    globalThis.document = {
+      createElement: () => ({
+        getContext: () => new Proxy({}, {
+          get: (t, k) => (k === 'measureText' ? (s) => ({width: String(s).length * 12})
+            : (k in t ? t[k] : () => {})),
+          set: (t, k, v) => { t[k] = v; return true; },
+        }),
+      }),
+    };
+  }
+  // 用 Proxy 造 ctx：`text()` 内部调什么方法、读什么属性都接得住
+  // （否则会因为漏写一个 ctx 方法而崩 —— 那是**崩溃，不是判据**）
+  const draw = (base) => {
+    const calls = [];
+    const ctx = new Proxy({}, {
+      get(t, k) {
+        if (k === 'measureText') return (s) => ({width: String(s).length * 12});
+        if (k in t) return t[k];
+        return (...args) => { calls.push([k, ...args]); };
+      },
+      set(t, k, v) { t[k] = v; return true; },
+    });
+    revealText(ctx, '静默消失', 400, 300, {size: 40, family: 'wide'}, 30,
+      {stagger: 3, dur: 12, dy: 26}, base);
+    return calls.filter((c) => c[0] === 'fillText');
+  };
+
+  // 方向一：有限的 base ⇒ 走逐字（4 个码点 = 4 次绘制）
+  assert.equal(draw(10).length, 4, '有限 base 应当逐字画');
+  // 方向二：非有限的 base ⇒ **整串必须仍然被画出来**
+  const fb = draw(Number.NaN);
+  assert.ok(fb.some((c) => String(c[1]) === '静默消失'),
+    'base=NaN 时必须退化成整块画法 —— 一个字都不画就是「文字静默消失」那个 bug 回来了');
+  assert.equal(fb.length, 1, '整块画法应当只画一次');
+  // 方向三：字段没传下来（undefined）与 NaN 同罪
+  assert.equal(draw(undefined).length, 1, 'base 缺失（undefined）同样要走整块兜底');
+});
