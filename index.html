@@ -77,7 +77,7 @@ export function renderFrame(n) {
     ctx.fillStyle = '#20060a';
     ctx.fillRect(0, 0, view.W, view.H);
     ctx.fillStyle = '#FF6B6B';
-    ctx.font = '20px monospace';
+    ctx.font = '20px "Cascadia Mono", "Consolas", "Noto Sans SC", monospace';
     ctx.fillText(msg.slice(0, 120), 30, 60);
     if (e && e.stack) {
       String(e.stack).split('\n').slice(1, 6).forEach((l, i) => {

@@ -3,6 +3,7 @@
 // —— 静默退回会让一个拼错的字段变成「看起来正常但不对」的片子。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {
   normalizeConfig, DEFAULT_THEME, DEFAULT_FONTS, DEFAULT_FONT_FILES,
   install, accent,
@@ -47,6 +48,26 @@ test('自带的中文兜底字体必须真的会被预加载（否则那个字�
   assert.ok(preloaded.includes('Noto Sans SC'),
     `DEFAULT_FONTS 里回退到 "Noto Sans SC"，但它不在 DEFAULT_FONT_FILES 里 ⇒ 名字解析不到任何字形。`
     + ` 实际预加载：${preloaded.join(' / ')}`);
+});
+
+// 同一类的另一半：**宿主页面里手写的字体栈**。`index.html` / `preview.html` 里
+// 有一条「把错误画进画面」的路径（错误信息是中文），还有 UI 里显示镜头名 / 错误信息的地方 ——
+// 字体栈漏了兜底，在没装中文字体的机器上会让**错误文字自己隐形**：
+// 本该"让失败可见"的机制，恰好在最需要它的机器上失效。
+test('宿主页面里画中文的字体栈也必须带中文兜底', () => {
+  const files = ['index.html', 'src/host/project/preview.html'];
+  let scanned = 0;
+  for (const rel of files) {
+    const src = readFileSync(new URL(`../${rel}`, import.meta.url), 'utf8');
+    for (const [i, line] of src.split('\n').entries()) {
+      if (!/monospace|sans-serif/.test(line)) continue;
+      scanned++;
+      if (/Noto Sans SC/.test(line)) continue;
+      assert.fail(`${rel}:${i + 1} 的字体栈没有中文兜底：${line.trim()}`);
+    }
+  }
+  // 下限：一个字体栈都没扫到 ⇒ 这条判据在空集上恒绿（这条坑踩过多次）
+  assert.ok(scanned > 0, `一个字体栈都没扫到（扫了 ${files.join(' / ')}）—— 扫描逻辑坏了，不是"干净"`);
 });
 
 test('空配置要报错，而不是给出一部空片', () => {

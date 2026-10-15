@@ -16,7 +16,7 @@
     padding: 10px 14px; border-bottom: 1px solid #1b2436; flex: none;
   }
   header .name { font-weight: 700; }
-  header .meta { color: #8b99b4; font-family: monospace; font-size: 12px; }
+  header .meta { color: #8b99b4; font-family: "Cascadia Mono", "Consolas", "Noto Sans SC", monospace; font-size: 12px; }
   header .grow { flex: 1; }
   .status { font-size: 12px; padding: 3px 8px; border-radius: 10px; border: 1px solid #22304a; color: #8b99b4; }
   .status.ok { border-color: #35d07f; color: #35d07f; }
@@ -34,9 +34,9 @@
   aside h2 { font-size: 12px; color: #8b99b4; text-transform: uppercase; letter-spacing: 1px; margin: 14px 0 6px; }
   aside h2:first-child { margin-top: 0; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  td { padding: 2px 0; font-family: monospace; }
+  td { padding: 2px 0; font-family: "Cascadia Mono", "Consolas", "Noto Sans SC", monospace; }
   td:last-child { text-align: right; color: #e9f0fa; }
-  .shot { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; font-family: monospace; font-size: 12px; cursor: pointer; }
+  .shot { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; font-family: "Cascadia Mono", "Consolas", "Noto Sans SC", monospace; font-size: 12px; cursor: pointer; }
   .shot:hover { color: #3fa7ff; }
   .shot.cur { color: #35d07f; font-weight: 700; }
   .shot .rng { color: #5a677f; }
@@ -50,10 +50,10 @@
   }
   button:hover { border-color: #3fa7ff; }
   input[type=range] { flex: 1; accent-color: #3fa7ff; }
-  .frame { font-family: monospace; color: #8b99b4; min-width: 150px; text-align: right; }
+  .frame { font-family: "Cascadia Mono", "Consolas", "Noto Sans SC", monospace; color: #8b99b4; min-width: 150px; text-align: right; }
   .err {
     padding: 8px 14px; background: #20060a; color: #ff6b6b;
-    font-family: monospace; font-size: 12px; white-space: pre-wrap; flex: none;
+    font-family: "Cascadia Mono", "Consolas", "Noto Sans SC", monospace; font-size: 12px; white-space: pre-wrap; flex: none;
     border-bottom: 1px solid #4a1218; display: none;
   }
   .err.on { display: block; }
@@ -149,7 +149,7 @@ function paint(n) {
     ctx.fillStyle = '#20060a';
     ctx.fillRect(0, 0, view.W, view.H);
     ctx.fillStyle = '#FF6B6B';
-    ctx.font = '20px monospace';
+    ctx.font = '20px "Cascadia Mono", "Consolas", "Noto Sans SC", monospace';
     ctx.fillText(('FRAME ' + cur + ': ' + (e && e.message || e)).slice(0, 120), 30, 60);
   }
   ctx.restore();
