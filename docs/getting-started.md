@@ -58,6 +58,8 @@ node bin/filmwright.mjs all --project my-film
 |---|---|
 | [教程](tutorial.md) | 从零做一个片子的完整流程 |
 | [场景规格](scene.md) | `scene.json`：AI/模板路线的入口 |
+| [效果链](effects.md) | `effects` 的 11 个效果与 GPU 档位取舍 |
+| [3D 图层](three.md) | 声明式 / 命令式两种写法 |
 | [AI / agent 接入](ai.md) | MCP、`--json` 契约、agent 工作回路 |
 | [配置参考](config.md) | `film.config.mjs` 全部字段 |
 | [API 参考](api.md) | 镜头里能 import 的一切 |

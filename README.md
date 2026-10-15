@@ -192,6 +192,8 @@ my-film/
 | [入门](docs/getting-started.md) | 装环境、跑通示例 |
 | [教程](docs/tutorial.md) | 从零做一个片子的完整流程 |
 | [场景规格](docs/scene.md) | `scene.json`：AI/模板路线的入口，声明内容即出画面 |
+| [效果链](docs/effects.md) | `effects`：11 个效果、`--gpu` 档位的取舍、`displace` 的实施清单 |
+| [3D 图层](docs/three.md) | 声明式与命令式两种写法、retained-mode 陷阱、性能实测 |
 | [AI / agent 接入](docs/ai.md) | MCP 服务器、`--json` 契约、推荐工作回路、错误码速查 |
 | [狗粮记录](docs/dogfood.md) | 用 filmwright 做它自己的介绍片：暴露的问题与「模板不够用」清单 |
 | [配置参考](docs/config.md) | `film.config.mjs` 全部字段与校验规则 |
