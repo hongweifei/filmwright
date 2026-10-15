@@ -106,7 +106,8 @@ export function annexBFromChunk(bytes, description) {
  *   · fps          帧率（时间戳按它算）
  *   · bitrate      目标码率（bit/s）
  *   · onChunk      (chunk: EncodedVideoChunk) => void|Promise  每个编码单元回调
- *   · maxQueue     队列上限（默认 4）：超过就等它排空 —— **背压**
+ *   · maxQueue     队列上限（**默认 8**）：达到就等它排空 —— **背压**
+ *                  ⚠️ 验收要拿**这里报出来的值**去比对，不要硬编码（改过默认值就会失配，实测踩到）
  * @returns {Promise<{encode, flush, close, config, info}>}
  */
 export async function createH264Encoder(o) {
@@ -193,11 +194,13 @@ export async function createH264Encoder(o) {
     async flush() {
       await enc.flush();
       if (firstError) throw firstError;
-      return {frames, chunks, bytes, config: {...config}};
+      // **把背压上限也报出来** —— 验收拿它比对，而不是硬编码 4/8。
+      // （实测踩过：默认从 4 改成 8，验收里写死 `<= 4` 就红，而实现是对的。）
+      return {frames, chunks, bytes, config: {...config}, maxQueue};
     },
     close() { try { enc.close(); } catch { /* 已关 */ } },
     get queueSize() { return enc.encodeQueueSize; },
     /** 给日志/自检用：**实际用的编码配置**（别让人以为走了硬件）。 */
-    info: () => ({config: {...config}, frames, chunks, bytes}),
+    info: () => ({config: {...config}, frames, chunks, bytes, maxQueue}),
   };
 }

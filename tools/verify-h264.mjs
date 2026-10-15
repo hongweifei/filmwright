@@ -86,11 +86,14 @@ await withSession(PROJECT, proj, {gpu: USE_GPU}, async (sess) => {
   console.log(`  实际编码配置：${JSON.stringify(r.stat.config)}`);
   console.log(`  编码 ${r.stat.frames} 帧 → ${r.stat.chunks} 个 chunk，共 ${(r.stat.bytes / 1024).toFixed(0)} KB`);
   console.log(`  入队 p50 ${r.p50.toFixed(2)} ms/帧；flush ${r.flushMs.toFixed(0)} ms`);
-  console.log(`  编码队列峰值 ${r.maxQueue}（上限 4）\n`);
+  // ⚠️ 上限从**实现报出来的值**读，不硬编码 —— 实测踩过：默认从 4 改成 8 之后，
+  // 这里写死 `<= 4` 就红了，而实现完全正确。**判据不该复制实现的常量。**
+  const limit = r.stat.maxQueue;
+  console.log(`  编码队列峰值 ${r.maxQueue}（上限 ${limit}，由实现报出）\n`);
 
   ok(r.stat.frames === N, `编码帧数与请求一致（${r.stat.frames}/${N}）`);
   ok(r.stat.chunks > 0 && r.stat.bytes > 0, '产出了编码数据');
-  ok(r.maxQueue <= 4, `**背压生效**：队列峰值 ${r.maxQueue} ≤ 4（不等队列会堆爆内存）`);
+  ok(r.maxQueue <= limit, `**背压生效**：队列峰值 ${r.maxQueue} ≤ ${limit}（不等队列会堆爆内存）`);
   ok(!!r.stat.config.codec && /^avc1\./.test(r.stat.config.codec),
     `报出了实际用的编码配置（${r.stat.config.codec}）—— 不让人以为走了硬件`);
 

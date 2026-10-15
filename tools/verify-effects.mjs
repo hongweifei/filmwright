@@ -411,11 +411,18 @@ for (const fr of [15, 30, 45, 60]) {
   console.log(`  第 ${String(fr).padStart(2)} 帧 有模糊 ${e.toFixed(3)}  无效果 ${be.toFixed(3)}   hash ${withFx.hash}`);
 }
 ok(kfSamples.every((s) => s.e < s.baseE), '每一帧都比**同帧**的不写 effects 更模糊');
+// ⚠️ 判据用**归一化比值**（本帧边缘能量 ÷ 本帧无效果的边缘能量），不用原始值 ——
+// 模板本身在动，源内容的边缘能量随时间变，原始值会出现 1.6% 级的反向
+// （CI 实测：1.115 → 1.071 → 1.088 → 1.031 被判"非单调"而红）。
+// 归一化把**内容漂移**除掉，剩下的才是"模糊在渐入"。
+const kfRatio = kfSamples.map((s) => s.e / s.baseE);
 let monoT = true;
-for (let i = 1; i < kfSamples.length; i++) {
-  if (!(kfSamples[i].e < kfSamples[i - 1].e)) monoT = false;
+for (let i = 1; i < kfRatio.length; i++) {
+  if (!(kfRatio[i] < kfRatio[i - 1])) monoT = false;
 }
-ok(monoT, `边缘能量随时间**单调下降**（${kfSamples.map((s) => s.e.toFixed(2)).join(' → ')}）—— 确实在渐入`);
+ok(monoT, `模糊比例随时间**单调下降**（${kfRatio.map((r) => r.toFixed(3)).join(' → ')}）`
+  + ` —— 确实在渐入。（原始边缘能量 ${kfSamples.map((s) => s.e.toFixed(2)).join(' → ')}；`
+  + `用同帧无效果归一化，除掉模板自身的内容漂移。）`);
 
 // 最锋利的一条：关键帧的**终点**应当与等值静态参数逐位相同 ——
 // 它同时证明了「插值端点精确」与「轨道求值没错位」两件事。
