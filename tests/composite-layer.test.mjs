@@ -92,29 +92,29 @@ test('blend 白名单与非默认判定', () => {
   assert.equal(layer.needsBuffer({alpha: null, blend: null}), false, 'null 表示没设，不是非默认值');
 });
 
-test('交叉一致性：contract/scene.js 与 runtime/composite/layer.js 的 transform 规则不漂移', async () => {
-  // contract 不能 import runtime（分层规则），所以 transform 的形状校验写了两份。
-  // 这条测试钉住两份判定结果一致 —— 漂移的后果是「校验放过了运行时画不出的东西」。
+test('`isValidTransform` 只有一份实现（runtime 再导出 contract 的），且判定行为被钉住', async () => {
+  // 原先 contract 与 runtime **各写了一份逻辑逐字相同**的实现（contract 不能 import runtime），
+  // 靠一条 25 例的差分测试挡漂移。2026-10-15 收敛：runtime 改成**再导出 contract 的**，
+  // 于是这里可以断言**同一性**（`===`）—— 同一个函数对象，从根上不可能漂。
   const contract = await import('../src/contract/scene.js');
-  const cases = [
-    undefined, null, {}, {x: 1}, {y: -2}, {scale: 1.5}, {rotate: 30}, {alpha: 0.5},
-    {blend: 'multiply'}, {origin: [1, 2]},
-    'x', 42, [], {x: 'a'}, {scale: 0}, {scale: -1}, {rotate: 'r'},
+  assert.equal(layer.isValidTransform, contract.isValidTransform,
+    'runtime 的 isValidTransform 必须是 contract 的那个（再导出），不该再有第二份实现');
+  assert.equal(layer.BLEND_MODES, contract.BLEND_MODES,
+    '混合模式名单同理：两处指向**同一个对象**（不是两份内容相同的副本）');
+
+  // 语料仍然要过 —— 但钉的是**判定行为**（哪类输入合法），不再是「两份一致」。
+  // 两个方向都列，且带数量下限（空语料上的「全过」不算过）。
+  const pass = [undefined, null, {}, {x: 1}, {y: -2}, {scale: 1.5}, {rotate: 30},
+    {alpha: 0.5}, {blend: 'multiply'}, {origin: [1, 2]}];
+  const reject = ['x', 42, [], {x: 'a'}, {scale: 0}, {scale: -1}, {rotate: 'r'},
     {alpha: 2}, {alpha: -0.1}, {origin: [1]}, {origin: 'c'}, {origin: [1, 'y']},
-    {blend: '不存在的模式'}, {blend: 3}, {blend: ''},
-  ];
-  for (const c of cases) {
-    assert.equal(contract.isValidTransform(c), layer.isValidTransform(c),
-      `两处判定不一致：${JSON.stringify(c)}（contract=${contract.isValidTransform(c)} runtime=${layer.isValidTransform(c)}）`);
-  }
-  // 混合模式的**取值白名单两处都要判**。它原先只在 runtime 有，contract 只判「是字符串」——
-  // 那让 `scene.json` 里的非法 blend **通过 8 道自检**，到 runtime 又被 Canvas **静默忽略**
-  // （`globalCompositeOperation` 对非法值不生效）⇒ 按 source-over 画：不报错、不崩。
-  // 名单已上提到 contract，两边共用同一份。
-  for (const bad of [{blend: '不存在的模式'}, {blend: 3}, {blend: ''}]) {
-    assert.equal(layer.isValidTransform(bad), false, `runtime 应拒 ${JSON.stringify(bad)}`);
-    assert.equal(contract.isValidTransform(bad), false, `contract 也应拒 ${JSON.stringify(bad)}`);
-  }
+    // 混合模式的**取值白名单**：非法值必须被拒。原先只有 runtime 判白名单，contract 只判
+    // 「是字符串」⇒ `scene.json` 里的非法 blend 通过 8 道自检，到 runtime 又被 Canvas
+    // **静默忽略**（`globalCompositeOperation` 对非法值不生效）⇒ 按 source-over 画：不报错、不崩。
+    {blend: '不存在的模式'}, {blend: 3}, {blend: ''}];
+  assert.ok(pass.length + reject.length >= 20, '语料太少 —— 这条判据会变成空转');
+  for (const c of pass) assert.equal(layer.isValidTransform(c), true, `应放过：${JSON.stringify(c)}`);
+  for (const c of reject) assert.equal(layer.isValidTransform(c), false, `应拒绝：${JSON.stringify(c)}`);
 });
 
 // ---------- 设计坐标变换 ----------

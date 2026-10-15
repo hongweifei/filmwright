@@ -63,6 +63,19 @@ test('kf 多段：在段边界处取到正确的那一段', () => {
 
 // ─────────────────────────── 缓动词汇表 ───────────────────────────
 
+test('缓动词汇表的两份**必须逐项对齐**（名字与顺序都一样）', () => {
+  // 这份名单**必然有两份**，是分层逼出来的：`scene.json` 的 `ease` 字段由 contract 校验
+  // （`contract/scene/tables.js` 的 `EASE_NAMES`），实现放在 `runtime/motion/ease.js` 的 `EASES`
+  // —— 而 contract **不能 import runtime**（分层规则，见 `docs/architecture.md`）。
+  // ⇒ 收敛不了成一份，那就**把两份钉死**：
+  //   · 实现里多一个缓动、名单里没有 ⇒ `scene.json` 会拒掉一个运行时其实支持的写法（用户莫名其妙）；
+  //   · 名单里多一个、实现里没有 ⇒ `EASES[name]` 是 undefined，动画静默不生效。
+  // 顺序也要一致：`EASES` 是按名单顺序建的，`Object.keys` 的顺序就是给人看的「有哪些缓动」。
+  assert.deepEqual(Object.keys(EASES), EASE_NAMES,
+    'runtime 的 EASES 与 contract 的 EASE_NAMES 必须逐项、按序一致（两边各自加一个就会漂）');
+  assert.ok(EASE_NAMES.length >= 5, `名单只有 ${EASE_NAMES.length} 个 —— 枚举坏了，这条会变成空转`);
+});
+
 test('每种缓动的端点精确：e(0)=0、e(1)=1', () => {
   for (const name of EASE_NAMES) {
     const e = EASES[name];

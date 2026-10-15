@@ -18,31 +18,17 @@
 //     作用于一个稍后会自己调 applyDesignScale 的镜头 —— 它做的是共轭变换
 //     T_device = D ∘ T_design ∘ D⁻¹，使最终结果恰好是 D ∘ T_design ∘ 内容。
 import {view, DESIGN} from '../../contract/viewport.js';
-import {BLEND_MODES} from '../../contract/scene.js';
 
-// 混合模式名单的**单一来源在 contract** —— `scene.json` 的校验也要用它，而 contract 不能
-// import runtime（分层规则），所以只能是 runtime 反过来 import contract（方向是对的）。
-// 这里**原样再导出**，`src/index.js` 的公共面因此一行都不用改。
-// 名单放 contract 的代价是零：`contract/scene.js` 本来就在渲染页的加载路径上
+// 混合模式名单**与变换形状校验**的单一来源都在 contract —— `scene.json` 的校验也要用它们，
+// 而 contract 不能 import runtime（分层规则），所以只能是 runtime 反过来 import contract
+// （方向是对的）。这里**原样再导出**，`src/index.js` 的公共面因此一行都不用改。
+// 放 contract 的代价是零：`contract/scene.js` 本来就在渲染页的加载路径上
 // （`runtime/stage/shots.js` 已经 import 它）。
-export {BLEND_MODES};
-const BLENDS = new Set(BLEND_MODES);
-
-/** 变换形状校验（scene 规格与手写镜头共用）。 */
-export function isValidTransform(t) {
-  if (t === undefined || t === null) return true;   // 可选
-  if (typeof t !== 'object' || Array.isArray(t)) return false;
-  const num = (v) => v === undefined || (typeof v === 'number' && Number.isFinite(v));
-  if (!num(t.x) || !num(t.y) || !num(t.scale) || !num(t.rotate)) return false;
-  if (t.scale !== undefined && t.scale <= 0) return false;       // 缩放必须为正
-  if (t.alpha !== undefined && !(typeof t.alpha === 'number' && t.alpha >= 0 && t.alpha <= 1)) return false;
-  if (t.blend !== undefined && !BLENDS.has(t.blend)) return false;
-  if (t.origin !== undefined) {
-    if (!Array.isArray(t.origin) || t.origin.length !== 2) return false;
-    if (!t.origin.every((v) => typeof v === 'number' && Number.isFinite(v))) return false;
-  }
-  return true;
-}
+//
+// ⚠️ `isValidTransform` 原先在本文件**另有一份实现**（逻辑逐字相同、只差注释）——
+// 那正是「同一套规则写两遍」，两边可以各自漂，而且只有一条 25 例的差分测试挡着。
+// 2026-10-15 收敛成这一行再导出：**同一个函数对象**，从根上不可能漂。
+export {BLEND_MODES, isValidTransform} from '../../contract/scene.js';
 
 /** 是否真的需要离屏缓冲（组透明度或非默认混合模式）。 */
 export function needsBuffer(t) {
