@@ -873,6 +873,10 @@ export function compileScene(scene, tl) {
       ...(raw.animate !== undefined ? {animate: raw.animate} : {}),
       // 效果链同理：不透传的话 scene.json 写了 effects 也不会生效
       ...(raw.effects !== undefined ? {effects: raw.effects} : {}),
+      // 遮罩同理 —— **这里必须逐个透传**：镜头对象是显式构造的，
+      // 少写一行就等于 scene.json 里那个字段被静默丢掉（遮罩第一版就漏了这一行：
+      // 校验通过、渲染无变化，排查才发现是"编译时丢了"）。
+      ...(raw.mask !== undefined ? {mask: raw.mask} : {}),
       scene: shot,
       draw(ctx, n, t, accent) {
         ctx.save();

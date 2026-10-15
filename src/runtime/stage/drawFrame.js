@@ -147,6 +147,7 @@ function paintShot(ctx, shot, n, t, accent, tr, hasLayer, alpha) {
     transform: tr,
     alpha,
     blend: tr?.blend ?? null,
+    mask: shot.mask ?? null,
     mode: 'shot',
   }, (c) => shot.draw.call(shot, c, n, t, accent));
 }
@@ -162,8 +163,8 @@ function drawShotWithAlpha(ctx, shot, n, t, accent, fadeAlpha) {
   // 曾把转场 alpha 直接当图层的 alpha 传，把 transform.alpha 覆盖掉了 ——
   // 表现是「alpha 字段设了没反应」。
   const combined = fadeAlpha * (tr?.alpha ?? 1);
-  const hasLayer = !!tr && (tr.x || tr.y || tr.rotate || (tr.scale !== undefined && tr.scale !== 1)
-    || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
+  const hasLayer = !!shot.mask || (!!tr && (tr.x || tr.y || tr.rotate || (tr.scale !== undefined && tr.scale !== 1)
+    || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined));
 
   // 有效果链且**这一帧不全直通** ⇒ 先把镜头画进离屏画布，过 GPU，再贴回主画布。
   // 逐帧判"是否直通"是必要的：radius 可以是关键帧轨道，"从 0 渐入"的第一帧

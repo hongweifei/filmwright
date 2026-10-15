@@ -51,6 +51,8 @@ export function needsBuffer(t) {
   // 结果每个图层都走缓冲、快路径永久失效（实测踩过）。
   if (t.alpha != null && t.alpha < 1) return true;
   if (t.blend != null && t.blend !== 'source-over') return true;
+  // 有遮罩就必须走缓冲：`clip()` 要裁在**图层自己的**画布上，不能裁到主画布
+  if (t.mask) return true;
   return false;
 }
 
@@ -140,7 +142,39 @@ export function bufferStats() {
 }
 
 /**
- * 画一个图层：可选变换 + 组透明度 + 混合模式。
+ * 把一个遮罩规格建成路径并裁剪当前上下文。
+ *
+ * 坐标是**设计坐标的归一化值**（0–1，相对设计画布）—— 这样遮罩与分辨率无关，
+ * 换竖屏/换尺寸不用改数字（与模板的 `scale()` 体系一致）。
+ *
+ * `invert`（反选/挖洞）用 **even-odd 填充规则**实现：路径里先放整幅矩形、再放遮罩形状，
+ * 偶数奇数规则下中间那块就成了洞 —— 不需要 `destination-out` 那一套，也不用第二张缓冲。
+ */
+function clipMask(ctx, m) {
+  const W = view.W, H = view.H;
+  const x = (m.x ?? 0) * W, y = (m.y ?? 0) * H;
+  const w = (m.w ?? 1) * W, h = (m.h ?? 1) * H;
+  ctx.beginPath();
+  if (m.invert) ctx.rect(0, 0, W, H);          // 反选：先铺满，形状成为洞
+  if (m.shape === 'rounded') {
+    const r = Math.max(0, Math.min(m.r ?? 0.12, 0.5)) * Math.min(w, h);
+    ctx.roundRect(x, y, w, h, r);
+  } else if (m.shape === 'ellipse') {
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+  } else if (m.shape === 'polygon') {
+    for (const [i, p] of (m.points ?? []).entries()) {
+      const X = p[0] * W, Y = p[1] * H;
+      if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y);
+    }
+    ctx.closePath();
+  } else {
+    ctx.rect(x, y, w, h);                       // 默认 rect
+  }
+  ctx.clip(m.invert ? 'evenodd' : 'nonzero');
+}
+
+/**
+ * 画一个图层：可选变换 + 组透明度 + 混合模式 + 遮罩。
  *
  * @param {CanvasRenderingContext2D} ctx
  * @param {{transform?:object, alpha?:number, blend?:string, mode?:'shot'|'design'}} opts
@@ -149,10 +183,10 @@ export function bufferStats() {
  * @param {(c:CanvasRenderingContext2D)=>void} fn 图层内容
  */
 export function withLayer(ctx, opts, fn) {
-  const {transform: t = null, alpha = 1, blend = null, mode = 'design'} = opts ?? {};
+  const {transform: t = null, alpha = 1, blend = null, mode = 'design', mask = null} = opts ?? {};
   const apply = mode === 'shot' ? applyShotTransform : applyLayerTransform;
 
-  if (!needsBuffer({...t, alpha, blend})) {
+  if (!needsBuffer({...t, alpha, blend, mask})) {
     // 快路径：直接在主画布上变换绘制 —— 不引入缓冲，输出与「没有图层合成」时一致
     ctx.save();
     if (t) apply(ctx, t);
@@ -171,8 +205,16 @@ export function withLayer(ctx, opts, fn) {
     // 承接当前上下文的变换：这样无论调用点在哪一层（单位矩阵或已按设计缩放），
     // 缓冲里的内容都与直接绘制时落在同样的设备坐标上。
     bctx.setTransform(ctx.getTransform());
+    // ⚠️ **裁剪必须包在 save/restore 里**：`clip()` 是画布状态的一部分，
+    // 而缓冲是**池化复用**的 —— 不还原的话裁剪区会残留，后续帧的裁剪与它**相交**，
+    // 于是第 N 帧依赖"之前渲过多少帧"，**直接违反核心不变量**（实测：同一帧两次渲染不一致）。
+    bctx.save();
+    // 遮罩裁在**图层变换之前**（即设计坐标里）—— 语义是「这块内容只在遮罩内可见」，
+    // 而不是「遮罩跟着图层一起位移/旋转」。要跟着动就把遮罩写进图层内容的坐标系里。
+    if (mask) clipMask(bctx, mask);
     if (t) apply(bctx, t);
     fn(bctx);
+    bctx.restore();
   } catch (e) {
     // fn 抛错：缓冲**必须**归还再放行 —— 长片渲染中任何一层抛错漏掉一个缓冲，
     // 几千帧累加就是 OOM（这条有专门的负面对照测试）。
