@@ -94,7 +94,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-mix.mjs` | **验配乐混音**：真跑 ffmpeg，只测音乐那一路，证明「人声在场时被压低、人声停下后恢复、duck 越大压得越深」，并验产物带双流与缺文件报错 |
 | `verify-determinism.mjs` | **验捕获确定性**：多轮渲染同一区间，全部帧必须逐字节一致。钉住「取像素不能有竞态」——曾经用 `Page.captureScreenshot` 时有 3/60 帧偶发取到上一帧 |
 | `verify-incremental.mjs` | **验增量重渲的安全性**（瘦身后只留本工具独有的三条）：引擎源码变更必须让段缓存**全部**失效（全仓只此一处动 `src/runtime/motion/ease.js`）、改一个影响画面的文件 → 帧数据确实变 → 改回原样 → **精确回到基线**、复用产物与全量重渲的**整段逐帧指纹**相同（`ffmpeg framemd5`，不抽样）。⚠️「`--proxy 0.5` → 640×360」那节**已删**（与 `verify-composite` 逐字重复）；「首跑全渲 / 二跑全复用」的计数断言也删了（由 `verify-attribution` / `verify-composite` 守） |
-| `verify-composite.mjs` | **图层合成与嵌套合成的端到端验收**（原 `verify-comp.mjs` / `verify-complex.mjs` **已删**，独有判据并入这里）：`x` / `rotate` / `alpha` / `blend` 各自的改动**互不相同**（逐块亮度差向量两两不等）、alpha 的亮度差**方向**按 `(1-alpha)` 量化、三种能力逐个关掉时**只在它所属镜头的区间**变而另外两镜**逐块不变**、嵌套 comp 实例看到的本地帧与页面内探针**逐像素一致**（不靠整帧像素比对——整帧含随全局时间漂移的背景/HUD）；带一条**负面对照**（把「全默认值」改成 `x:1` 必须被判红） |
+| `verify-composite.mjs` | **图层合成与嵌套合成的端到端验收**（原 `verify-comp.mjs` / `verify-complex.mjs` **已删**，独有判据并入这里）：`x` / `rotate` / `alpha` / `blend` 各自的改动**互不相同**（逐块亮度差向量两两不等）、alpha 的亮度差**方向**按 `(1-alpha)` 量化、三种能力逐个关掉时**只在它所属镜头的区间**变而另外两镜**逐块不变**、嵌套 comp 实例看到的本地帧与页面内探针**逐像素一致**（不靠整帧像素比对——整帧含随全局时间漂移的背景/HUD）；带一条**负面对照**（把「全默认值」改成 `x:1` 必须被判红）。**D 节（父子绑定 / 空物体）**：只动父 ⇒ 跟随层在**变化覆盖的那块区域**内的重心同向右移且随 Δ **单调**（父是空物体 ⇒ 动的只可能是子层）、父**只旋转 90°**（无平移）⇒ 子的 +x 偏置落到**下方**（相加式/替换式/忽略父都做不到）、父变换全默认时写不写 `follow` **逐字节相同**、空物体变换任取画面**逐字节不变**；负面对照＝去掉 `follow`（绑定失效）⇒ **同一个谓词**必须判红 |
 | `verify-clips.mjs` | 验素材管线 host 侧：抽帧帧数、内容寻址缓存命中、改参数重抽、断点安全、源文件缺失与 start 超时长 |
 | `verify-clip-render.mjs` | 验片段在浏览器里真的取到并画出：帧随 n 变化、同一帧两次相同、源帧映射、未声明片段名报错 |
 | `verify-tts.mjs` | 验 TTS 契约：`voices` 报出引擎可用性与回退结果、真跑一遍产出三件套、timeline 如实标注引擎与 `subs_timing`、音频与时间轴一致、逐句缓存命中、换引擎必须让缓存失效 |
@@ -160,7 +160,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | **CI 自动跑** | `verify-encoding`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
 | **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 80s，`--frames 1200 --no-big`）**、`verify-attribution`（177s） | 逐项之和约 **4.3 分钟** |
 | **CI 自动跑 · `browser-doc` 作业** | `verify-readme`（148s）—— 按 README 的路径真跑一遍（含全新 clone） | 逐项之和约 **2.5 分钟** |
-| **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（8.9s；原 `verify-comp` / `verify-complex` 的独有判据已并入它）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-preview` | 逐项之和约 **4.4 分钟** |
+| **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（17.6s；原 `verify-comp` / `verify-complex` 的独有判据已并入它，现含父子绑定 / 空物体那一节）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-preview` | 逐项之和约 **4.5 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
 **24 个验收工具里 22 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），

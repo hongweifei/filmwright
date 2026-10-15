@@ -648,7 +648,7 @@ console.log('\n=== D) 父子绑定（follow）与空物体（empty） ===');
     ok(followedRight(moves[1]) === true && followedRight(mBroke) === false,
       '同一个谓词：跟随 ⇒ true，绑定失效 ⇒ false（判据有牙，不是恒真）');
 
-    // —— D8 contract：合法写法要过、非法要报、码已登记（纯函数，不启浏览器）——
+    // —— D7 contract：合法写法要过、非法要报、码已登记（纯函数，不启浏览器）——
     const {validateScene, SCENE_ERROR_CODES} = await imp('src/contract/scene.js');
     const declared = new Set(SCENE_ERROR_CODES);
     const errsOf = (layers) => validateScene({shots: [{type: 'layers', at: 1, layers}]},
@@ -678,6 +678,14 @@ console.log('\n=== D) 父子绑定（follow）与空物体（empty） ===');
     const unregistered = [...seen].filter((c) => !declared.has(c));
     ok(unregistered.length === 0,
       `报出来的码都在 SCENE_ERROR_CODES 里登记过（用到未登记：${unregistered.join(', ') || '无'}）`);
+    // 错误是给**模型**读的 prompt：越界这一条必须给出**实际可用的下标范围**
+    // （范围从夹具自己声明的层数算出来，不写死实现的措辞）。
+    const rangeLayers = [EMPTY_AT({}), {...KID, follow: 99}];
+    const rangeErrs = errsOf(rangeLayers);
+    const rangeText = rangeErrs.map((e) => `${e.message} ${e.hint}`).join(' ');
+    const hi = String(rangeLayers.length - 1);
+    ok(rangeErrs.length > 0 && new RegExp(`0\\D{0,6}${hi}`).test(rangeText),
+      `越界这条把**可用的下标范围**（0…${hi}）写进了 message/hint：${rangeText}`);
   } finally {
     await sessLB.close();
     serverLB.closeProject();
