@@ -142,7 +142,7 @@ const FIELDS = {
   compare: {heading: 'str?', left: 'side', right: 'side'},
   steps: {heading: 'str?', steps: 'arr<{t, d?}>'},
   table: {heading: 'str?', columns: 'arr<str>', rows: 'arr<row>'},
-  quote: {text: 'text', who: 'str?', from: 'str?'},
+  quote: {text: 'text', who: 'str?', from: 'str?', reveal: 'obj?'},
   terminal: {heading: 'str?', title: 'str?', lines: 'arr<term>'},
   chips: {heading: 'str?', items: 'arr<chip>'},
   bars: {heading: 'str?', items: 'arr<bar>', unit: 'str?'},

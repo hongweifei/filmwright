@@ -89,6 +89,38 @@ function staggerFrames(sid, count, from) {
 // ---------- 各模板 ----------
 // 约定：draw(ctx, n, shot, accent)，this 绑定镜头区间（this.from / this.to）。
 
+/**
+ * 逐字入场：把一串文字**按码点**逐字画出来，每字带自己的落位偏移与透明度。
+ *
+ * ⚠️ 逐字定位的陷阱：**每个字必须按自己的 advance 居中**，不能沿用整串的 align ——
+ * 早年手写逐字定位时忘了复位 textAlign，`"MoonBit"` 上屏成了 `"MoonB it"`。
+ * 这里给每个字传 `align:'center'` + 它自己盒子的中心 x，从根上避开那个坑。
+ *
+ * 纯函数：每个字的进度只依赖 n。
+ * `offset` 让**跨行接着数** —— `quote` 折行之后，整段仍是一句一句地进，而不是每行从 0 重来。
+ *
+ * @param {object} rv `{stagger, dur, dy}`：字间隔几帧 / 单字用几帧 / 从下方多少像素落位
+ * @param {number} base 第一个字开始入场的帧号
+ * @param {number} offset 本串第一个字在整段里的序号（跨行用）
+ */
+function revealText(ctx, str, x, y, opt, n, rv, base, offset = 0) {
+  const chars = [...String(str)];              // 按**码点**切：中文/emoji 都不能按 UTF-16 切
+  const per = rv.stagger ?? 3;
+  const dur = rv.dur ?? 12;
+  const dy = rv.dy ?? 26;
+  const spacing = opt.spacing ?? 0;
+  const f = font(opt.size, opt.family, opt.weight);
+  const adv = chars.map((c) => measure(c, f));
+  const totalW = adv.reduce((a, b) => a + b, 0) + spacing * Math.max(0, chars.length - 1);
+  let px = x - totalW / 2;
+  for (const [i, c] of chars.entries()) {
+    const t0 = base + (offset + i) * per;
+    const t = easeOut3(inv(n, t0, t0 + dur));
+    if (t > 0) text(ctx, c, px + adv[i] / 2, y + (1 - t) * dy, {...opt, maxW: null, alpha: t});
+    px += adv[i] + spacing;
+  }
+}
+
 const title = {
   // 片头的节拍是它自己的入场时间线（8 起、40 落位、58 分隔线走完）
   beats: (shot, start) => [start + 8, start + 40, start + 58],
@@ -115,24 +147,7 @@ const title = {
     // 这里给每个字传 `align:'center'` + 它自己盒子的中心 x，从根上避开那个坑。
     // 纯函数：每个字的进度只依赖 n。
     if (shot.reveal) {
-      const rv = shot.reveal;
-      const chars = [...String(shot.title)];          // 按**码点**切：中文/emoji 都不能按 UTF-16 切
-      const per = rv.stagger ?? 3;                     // 每个字间隔几帧
-      const dur = rv.dur ?? 12;                        // 单字入场用几帧
-      const dy = rv.dy ?? 26;                          // 从下方多少像素落位
-      const base = 8;                                  // 与 title 的入场同步（beats[0]）
-      const adv = chars.map((c) => measure(c, font(titleOpt.size, titleOpt.family, titleOpt.weight)));
-      const totalW = adv.reduce((a, b) => a + b, 0) + titleOpt.spacing * (chars.length - 1);
-      let px = cx - totalW / 2;
-      for (const [i, c] of chars.entries()) {
-        const t = easeOut3(inv(n, base + i * per, base + i * per + dur));
-        if (t > 0) {
-          text(ctx, c, px + adv[i] / 2, y + (1 - t) * dy, {
-            ...titleOpt, maxW: null, alpha: t,
-          });
-        }
-        px += adv[i] + titleOpt.spacing;
-      }
+      revealText(ctx, shot.title, cx, y, titleOpt, n, shot.reveal, 8);   // 8 = title 的入场帧
     } else {
       text(ctx, shot.title, cx, y, titleOpt);
     }
@@ -446,8 +461,17 @@ const quote = {
       glow: hexA(accent, 0.7 * pulse), glowBlur: 26,
     });
     const startY = 320 - (lines.length - 1) * 30;
+    const lineOpt = {size: 44, weight: 800, color: C.text, align: 'center', baseline: 'middle'};
+    // 逐字入场：**跨行接着数**（offset），所以整段是一句一句地进，不是每行从 0 重来
+    let charBase = 0;
     lines.forEach((l, i) => {
-      text(ctx, l, 640, startY + i * 60, {size: 44, weight: 800, color: C.text, align: 'center', baseline: 'middle'});
+      const y = startY + i * 60;
+      if (shot.reveal) {
+        revealText(ctx, l, 640, y, lineOpt, n, shot.reveal, frames[0], charBase);
+        charBase += [...l].length;
+      } else {
+        text(ctx, l, 640, y, lineOpt);
+      }
     });
     if (shot.who || shot.from) {
       const who = [shot.who, shot.from].filter(Boolean).join(' · ');

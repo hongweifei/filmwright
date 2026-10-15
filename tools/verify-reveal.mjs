@@ -64,6 +64,22 @@ ok(same, same
   : `落位后的逐字帧与整块画法**不同**（${a.length} vs ${b.length} 字节）`
     + ' ⇒ 间距/字宽/光晕有错位，要查');
 
+// ── quote：**跨行接着数**（折行之后整段仍是一句一句地进，不是每行从 0 重来）──
+const Q = {type: 'quote', who: 'filmwright',
+  text: '一句要长到需要折行的话，用来验证逐字入场跨行之后仍然连续，而不是每行各自重新开始。'};
+const q10 = shot({...Q, reveal: RV}, 10, 'q1');
+const q70 = shot({...Q, reveal: RV}, 70, 'q2');
+const q70b = shot({...Q, reveal: RV}, 70, 'q3');
+const qPlain = shot(Q, 70, 'q4');
+console.log(`  quote 逐字 第10帧 ${q10.hash}  第70帧 ${q70.hash}；整块 第70帧 ${qPlain.hash}`);
+ok(q10.hash !== q70.hash, 'quote：逐字入场同样生效（第 10 帧 ≠ 第 70 帧）');
+ok(q70.hash === q70b.hash, 'quote：同一帧两次渲染**逐字节一致**');
+const qa = rawRgb(q70.png), qb = rawRgb(qPlain.png);
+const qSame = qa.length === qb.length && qa.equals(qb);
+ok(qSame, qSame
+  ? 'quote：落位后与整块画法**逐字节相同** ⇒ 跨行折行也没排坏'
+  : `quote：落位后与整块画法不同（${qa.length} vs ${qb.length} 字节）—— 跨行 offset 可能算错了`);
+
 rmSync(P, {recursive: true, force: true});
 console.log(bad === 0 ? '\n✓ 逐字入场全部符合预期' : `\n✗ ${bad} 项失败`);
 process.exit(bad ? 1 : 0);
