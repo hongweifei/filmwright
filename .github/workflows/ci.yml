@@ -212,6 +212,11 @@ jobs:
       - name: 遮罩（四种形状 / 反选 / 可复现）
         run: node tools/verify-mask.mjs
 
+      # 逐字入场（阶段 ④ 的动效语言）：逐个进场、不引入不确定性、
+      # **落位后与整块画法逐字节相同**（raw RGB 直接比 —— 间距/字宽/光晕错位都会露出来）。
+      - name: 逐字入场（逐个进场 / 可复现 / 落位后不排坏字）
+        run: node tools/verify-reveal.mjs
+
       - name: 四项复杂能力协作（图层变换 + 嵌套循环 + 素材片段 + 增量）
         run: node tools/verify-complex.mjs
 

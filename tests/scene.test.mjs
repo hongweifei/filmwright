@@ -2,7 +2,7 @@
 // 重点是错误路径：每条守卫都必须被故意喂一个坏数据，证明它会红。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {resolveAt, validateScene, SHOT_TYPES, SCENE_SCHEMA, SCENE_ERROR_CODES, sceneSchema, SHOT_MAXES} from '../src/contract/scene.js';
+import {resolveAt, validateScene, SHOT_TYPES, SCENE_SCHEMA, SCENE_ERROR_CODES, sceneSchema, SHOT_MAXES, MASK_SHAPES} from '../src/contract/scene.js';
 import {setTimeline, cutBefore, BLK} from '../src/contract/timeline.js';
 
 const tl = {
@@ -441,4 +441,70 @@ test('错误码登记表与源码一致：用了没登记、登记了没用，�
   const unused = [...declared].filter((c) => !used.has(c));
   assert.deepEqual(undeclared, [], '源码用了未登记的错误码');
   assert.deepEqual(unused, [], '登记表里有源码没用到的码');
+});
+
+// ─────────────────────── 遮罩（阶段 ③）───────────────────────
+
+/** 本文件里取错误列表的小工具（与上面几处用同一条时间轴形状）。 */
+const TL_FX = {fps: 30, total_frames: 300,
+  chapters: [{n: 1, title: 'c', from: 1}],
+  sentences: [{id: 'S01', chapter: 1, from: 1, to: 300, text: 'x',
+    subs: [{from: 1, to: 300, text: 'x'}]}],
+  subs: [{from: 1, to: 300, text: 'x'}]};
+const errs = (sceneObj) => validateScene(sceneObj, {timeline: TL_FX}).errors;
+
+const maskErrs = (mask) => errs({shots: [{type: 'bullets', at: 1, items: [{t: '一'}], mask}]});
+
+test('mask：四种形状都合法，不认识的形状要报并列出可用值', () => {
+  assert.deepEqual(maskErrs({shape: 'rect'}), []);
+  assert.deepEqual(maskErrs({shape: 'rounded', x: 0.1, y: 0.1, w: 0.5, h: 0.5, r: 0.3}), []);
+  assert.deepEqual(maskErrs({shape: 'ellipse', x: 0, y: 0, w: 1, h: 1}), []);
+  assert.deepEqual(maskErrs({shape: 'polygon', points: [[0, 0], [1, 0], [0.5, 1]]}), []);
+  assert.deepEqual(maskErrs({shape: 'rect', invert: true}), [], '反选是合法参数');
+  const e = maskErrs({shape: 'star'});
+  assert.deepEqual(e.map((x) => x.code), ['SCENE_MASK_SHAPE']);
+  for (const s of MASK_SHAPES) assert.ok(e[0].hint.includes(s) || e[0].message.includes(s), `要列出 ${s}`);
+});
+
+test('mask：坐标必须是 0–1 归一化（写像素值要报出来）', () => {
+  const codes = (m) => maskErrs(m).map((x) => x.code);
+  assert.deepEqual(codes({shape: 'rect', x: 1.5}), ['SCENE_MASK_RANGE']);
+  assert.deepEqual(codes({shape: 'rect', w: -0.1}), ['SCENE_MASK_RANGE']);
+  assert.deepEqual(codes({shape: 'rect', r: 2}), ['SCENE_MASK_RANGE']);
+  // 常见误用：写像素（640/1280）—— 必须报，否则遮罩会静默跑到画外
+  // （x 与 w 都越界 ⇒ 两条错误，所以用 includes 而不是等值）
+  const px = codes({shape: 'ellipse', x: 640, w: 1280});
+  assert.ok(px.length >= 2 && px.every((c) => c === 'SCENE_MASK_RANGE'),
+    '写像素值必须报出来：' + JSON.stringify(px));
+  assert.deepEqual(codes({shape: 'rect', invert: 'yes'}), ['SCENE_MASK_SHAPE']);
+});
+
+test('mask：polygon 至少 3 个点，每个点都要在 0–1', () => {
+  const codes = (m) => maskErrs(m).map((x) => x.code);
+  assert.deepEqual(codes({shape: 'polygon', points: [[0, 0], [1, 1]]}), ['SCENE_MASK_POLYGON']);
+  assert.deepEqual(codes({shape: 'polygon', points: 'x'}), ['SCENE_MASK_POLYGON']);
+  assert.deepEqual(codes({shape: 'polygon', points: [[0, 0], [1, 0], [2, 1]]}), ['SCENE_MASK_POLYGON']);
+  assert.deepEqual(codes({shape: 'polygon', points: [[0, 0], [1, 0], [0.5]]}), ['SCENE_MASK_POLYGON']);
+});
+
+test('mask：图层级也能挂（镜头与图层两处都要校验）', () => {
+  const s = {type: 'layers', at: 1, layers: [
+    {content: {type: 'bullets', items: [{t: '一'}]}, z: 0},
+    {content: {type: 'bullets', items: [{t: '二'}]}, z: 1, mask: {shape: 'star'}},
+  ]};
+  const e = errs({shots: [s]});
+  assert.ok(e.some((x) => x.code === 'SCENE_MASK_SHAPE' && /mask/.test(x.path)),
+    '图层上的非法遮罩要报：' + JSON.stringify(e.map((x) => x.path)));
+});
+
+// ─────────────────────── 逐字入场（阶段 ④）───────────────────────
+
+test('title.reveal：对象合法，且不写就与以前逐字节相同（opt-in）', () => {
+  const t = (reveal) => errs({shots: [{type: 'title', at: 1, title: '标题', ...(reveal ? {reveal} : {})}]});
+  assert.deepEqual(t(null), [], '不写 reveal 当然合法');
+  assert.deepEqual(t({}), [], '空对象合法（全用默认值）');
+  assert.deepEqual(t({stagger: 3, dur: 12, dy: 26}), []);
+  // 字段白名单：reveal 必须被 title 认识，否则连合法写法都过不了
+  const e = errs({shots: [{type: 'title', at: 1, title: '标题', reveal: {stagger: 2}}]});
+  assert.deepEqual(e, [], 'reveal 不该被当成"title 没有字段"');
 });
