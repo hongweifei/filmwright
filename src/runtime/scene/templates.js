@@ -147,7 +147,14 @@ const title = {
     // 这里给每个字传 `align:'center'` + 它自己盒子的中心 x，从根上避开那个坑。
     // 纯函数：每个字的进度只依赖 n。
     if (shot.reveal) {
-      revealText(ctx, shot.title, cx, y, titleOpt, n, shot.reveal, 8);   // 8 = title 的入场帧
+      // ⚠️ **base 必须相对镜头起点算**：title 的节拍是 `[start + 8, …]`，
+      // 而 `start` 是**镜头**的起点（`this.from`）。
+      // 原来这里写死 `8` —— 那只在「镜头恰好从第 1 帧开始」时才对。
+      // 任何真实项目（镜头从第 100 帧起）里，逐字动画会在**镜头出现之前**就播完，
+      // 观众看到的是「已经落位」⇒ 与整块画法一模一样，等于这个功能没做。
+      // （`quote` 用 `frames[0]`、`bullets` 用 `Math.max(this.from, …)`，都是从镜头算的；
+      //  只有 title 这一处漏了 —— 三处口径必须一致。）
+      revealText(ctx, shot.title, cx, y, titleOpt, n, shot.reveal, this.from + 8);
     } else {
       text(ctx, shot.title, cx, y, titleOpt);
     }

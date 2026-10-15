@@ -82,22 +82,27 @@ const shot = (extra, n, tag) => {
   cpSync(join(ROOT, 'examples', 'gallery'), P, {recursive: true});
   rmSync(join(P, 'audio'), {recursive: true, force: true});
   rmSync(join(P, 'renders'), {recursive: true, force: true});
-  writeFileSync(join(P, 'scene.json'), JSON.stringify({shots: [{at: 1, ...extra}]}, null, 2));
+  // `extra.shots` 可以整份覆盖（用于「晚起的 title」那种需要填充镜头的情形：
+  // 契约要求**首个镜头必须在第 1 帧**，所以不能只放一个 `at: 150` 的镜头）。
+  const shots = extra.shots ?? [{at: 1, ...extra}];
+  writeFileSync(join(P, 'scene.json'), JSON.stringify({shots}, null, 2));
   // ⚠️ **二分「夹具 vs 引擎」**：把写进去的 scene.json 读回来核一遍。
   // 加这条是因为 CI（Linux）报「逐字帧与整块帧**哈希完全相同**」而本机（Windows）不同 ——
   // 那说明逐字分支根本没走。可能是「夹具没写进去」，也可能是「引擎没读它」，
   // 这条断言把前一半钉死：夹具错了就在**这里**红，而不是在下游判据上红得莫名其妙。
-  const back = JSON.parse(readFileSync(join(P, 'scene.json'), 'utf8')).shots[0];
-  if (extra.reveal !== undefined && back.reveal === undefined) {
-    throw new Error(`filmwright: 夹具的 reveal 没写进 scene.json（${join(P, 'scene.json')}）`);
+  const backShots = JSON.parse(readFileSync(join(P, 'scene.json'), 'utf8')).shots;
+  const wantReveal = shots.filter((s) => s.reveal !== undefined).length;
+  const gotReveal = backShots.filter((s) => s.reveal !== undefined).length;
+  if (wantReveal !== gotReveal) {
+    throw new Error(`filmwright: 夹具的 reveal 没写进 scene.json（期望 ${wantReveal} 个，读到 ${gotReveal} 个）`);
   }
   // ⚠️ **自定位诊断**：把夹具实际写进去的 reveal 打出来。
   // CI（Linux）报「逐字帧与整块帧哈希完全相同」而本机（Windows）不复现 ⇒
   // 下一次再红时，这一行就能说明「夹具里到底有没有 reveal」，
   // 不用再靠读代码猜（接线、路径、项目类型我都已经逐一排除过）。
   if (extra.reveal !== undefined) {
-    console.log(`  [diag] 夹具 shot 的键：${Object.keys(back).join(' ')}`);
-    console.log(`  [diag] 夹具 reveal = ${JSON.stringify(back.reveal)}`);
+    console.log(`  [diag] 夹具 shot 的键：${Object.keys(extra).join(' ')}`);
+    console.log(`  [diag] 夹具 reveal = ${JSON.stringify(extra.reveal)}`);
   }
   mkdirSync(join(P, 'out'), {recursive: true});
   execFileSync('node', [join(ROOT, 'bin', 'filmwright.mjs'), 'stills', '--project', P,
@@ -233,6 +238,29 @@ function bulletsJudges() {
     + `实测最大差 ${big.max} —— 错位/丢字距会顶到两百以上）`);
 }
 
+// ── **晚起的 title**：真实项目里镜头从第几百帧起，逐字必须相对**镜头起点**算 ──
+// 这条抓的是「base 写死成 8」那类 bug：写死时动画在镜头出现**之前**就播完，
+// 画面与整块画法**一模一样**（正是 CI 上报的那个症状）。
+// ⚠️ 三个真实示例的 title 都在第 1 帧，所以**只有这条判据**能照出这个 bug。
+function lateTitleJudges() {
+  // 契约要求**首个镜头必须在第 1 帧** ⇒ 先放一个填充镜头，title 晚起到第 150 帧
+  const filler = {type: 'stat', at: 1, value: 1, label: '填充'};
+  const LT = {type: 'title', at: 150, title: '晚起的标题', sub: '副标题'};
+  const mid = shot({shots: [filler, {...LT, reveal: RV}]}, 160, 'late-title-reveal-mid');
+  const plain = shot({shots: [filler, LT]}, 160, 'late-title-plain-mid');
+  console.log(`  晚起 title（at=150）逐字 第160帧 ${mid.hash}；整块 第160帧 ${plain.hash}`);
+  // ⚠️ **判据必须是「幅度」而不是「哈希不同」**：撤掉修复实测发现，
+  // 即使全部字都已落位（`base` 写死成 8），哈希**仍然不同** ——
+  // 因为逐字是**每字一份光晕**、整块是**一份光晕**，那点残差就能让哈希变。
+  // 有区分力的量是「有没有大残差」：动画中 ⇒ 大量 |Δ| ≥ BIG 的像素；
+  // 已落位 ⇒ 只剩光晕/抗锯齿残差（实测 ≥48 为 0）。这条是本次的关键修正。
+  const big = bigDiffPixels(rawRgb(mid.png), rawRgb(plain.png));
+  console.log(`  晚起 title 第160帧的大残差：|Δ| ≥ ${BIG} 的像素 ${big.n}，最大差 ${big.max}`);
+  ok(big.n > 0, 'late-title-interim',
+    `晚起 title：镜头不在第 1 帧时逐字**真的在动**（|Δ| ≥ ${BIG} 的像素 ${big.n}，必须 > 0 —— `
+    + '`base` 写死成 8 会让动画在镜头出现前播完，只剩光晕残差、这里就是 0）');
+}
+
 // ── 负面对照 ──────────────────────────────────────────────────────────────────
 const TMP_ROOTS = [];
 const dropTmp = () => {
@@ -350,6 +378,7 @@ if (!INNER) {
 // ⚠️ bullets 那组**不进内层**：内层（负面对照的子进程）按设计只跑标题那三条以控成本，
 // 我加进来时忘了这层，5 次额外渲染把内层的预算撑爆 ⇒ 缺陷① 那次「一条判据都没跑到」。
 if (!INNER) bulletsJudges();
+if (!INNER) lateTitleJudges();
   selfCheck();
 }
 rmSync(P, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
