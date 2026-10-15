@@ -105,6 +105,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-invocation.mjs` | 守「**同一个根因换个位置又回来**」的两类（各让 CI 红过）：① CI 里很多步骤**不带参数**跑工具，而工具若写 `resolve(process.argv[2])` 会抛 `ERR_INVALID_ARG_TYPE`（本地带参数跑就发现不了）；② `existsSync` 为真**≠能读**（Windows 上别的进程持有句柄 → `EBUSY`）。② 用棘轮：当前的读的都是用户项目文件（非跨进程写），记录在案，**新出现必须审一遍** |
 | `dead-exports.mjs` | 死导出**棘轮**：`src/` 里"导出但没人用"的符号记录在名单里，**新出现**就红；名单里已被清理的也红（防名单腐烂）。"没人用"不等于"该删"（可能是给使用者的公开 API），所以不做一刀切 |
 | `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
+| `tools/probes/sweep-jpeg.mjs` | **JPEG 质量 → 编码耗时/载荷**的曲线。逐帧剖析显示绘制只占 0.19ms、瓶颈全在 `toBlob`，而降质量能**直接**省编码时间。实测：0.92→0.85 省 24% 编码时间、载荷 −30%，PSNR 只花 1.3 dB；**低于 0.75 到地板**（再降不再省时间）。⚠️ 端到端只有 **4.3%**（流水线重叠），别把微基准当端到端 |
 | `tools/probes/profile-current.mjs` | **当前管线的复测**（上面那个量的是 CDP 路径，现在默认是二进制 POST 流，旧数据不准了）：绘制 / JPEG 取像素 / **WebCodecs 编码**三段。实测 720p：绘制 0.19ms、JPEG **16.47ms**（占 99%）、WebCodecs **2.18ms**（快 7.5×） |
 | `tools/probes/check-determinism.mjs` | **快速确定性检查**：同一个效果、同一帧渲染两次比哈希。`verify-effects` 里已有同一判据，但它跑一次约 **10 分钟**，排查着色器问题（如 `displace`）时**迭代太慢**；这个工具**全部 11 个效果只要 35 秒**（快 17×），判据完全一致，定位到的问题可用 `verify-effects` 复核 |
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |

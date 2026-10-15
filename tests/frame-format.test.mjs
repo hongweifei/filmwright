@@ -15,10 +15,17 @@ test('默认是 PNG（无损）—— 既有调用方不受优化影响', () => 
   assert.equal(frameFormatExpr(null), `'image/png'`);
 });
 
-test('jpeg：无质量参数时用 0.92（实测的视觉透明档）', () => {
-  assert.equal(frameFormatExpr('jpeg'), `'image/jpeg', 0.92`);
-  assert.equal(frameFormatExpr('jpg'), `'image/jpeg', 0.92`, 'jpg 是 jpeg 的别名');
-  assert.equal(frameFormatExpr('JPEG'), `'image/jpeg', 0.92`, '大小写不敏感');
+test('jpeg：无质量参数时用 0.85（实测：编码省 24%、画质只花 1.3 dB）', () => {
+  // 原来是 0.92。改成 0.85 的依据（同一次会话内配对，720p）：
+  //   编码耗时 25.80 → 19.60 ms（−24%）；载荷 55.8 → 38.9 KB；
+  //   q=0.85 vs q=0.92 的 PSNR 46.49 dB（而 q=0.92 本身离 PNG 路线只有 47.79 dB）。
+  // **端到端只有 4.3%**（900 帧交替两轮：67.37s → 64.45s）——
+  // 编码省下的时间只有一部分落在关键路径上。别把微基准的百分比当端到端收益。
+  assert.equal(frameFormatExpr('jpeg'), `'image/jpeg', 0.85`);
+  assert.equal(frameFormatExpr('jpg'), `'image/jpeg', 0.85`, 'jpg 是 jpeg 的别名');
+  assert.equal(frameFormatExpr('JPEG'), `'image/jpeg', 0.85`, '大小写不敏感');
+  // 想要原来的高保真：显式写 jpeg:92
+  assert.equal(frameFormatExpr('jpeg:92'), `'image/jpeg', 0.92`, '显式 92 仍可回到原档');
 });
 
 test('jpeg:NN：质量按百分比换算成 0–1', () => {
