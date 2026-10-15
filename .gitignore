@@ -5,9 +5,15 @@ node_modules/
 .work/
 
 # 历史遗留名（早期产物落在这些目录，别让它们再进来）
-out/
-qc/
-renders/
+#
+# ⚠️ **必须锚定到根**（前导 `/`）。写成裸 `qc/` 时，gitignore 的目录模式会匹配
+# **任意深度**同名目录 —— 于是 `src/runtime/qc/`（源码）也被吃掉了：`git add` 会
+# 静默跳过它，本地一切正常、CI 上那个文件根本不存在。实测踩过一次（2026-10-15，
+# `src/runtime/checks/analysis.js` 搬到 `src/runtime/qc/` 时 `git add` 报了
+# "paths are ignored"，幸好没把警告当噪音）。`out/` 与 `renders/` 同理，一并锚定。
+/out/
+/qc/
+/renders/
 
 # 示例项目的产物
 examples/*/out/
