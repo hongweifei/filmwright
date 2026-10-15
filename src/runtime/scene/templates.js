@@ -880,6 +880,9 @@ export function compileScene(scene, tl) {
         return {
           z: layer.z ?? i,                       // 不写 z 则按声明顺序（后面的在上）
           seq: i,                                 // 同 z 时按声明顺序稳定
+          idx: i,                                 // **声明下标**：`follow` 指的就是它
+          follow: layer.follow,                   // 跟着同容器里的哪一层（下标）
+          empty: layer.empty === true,            // 空物体：不画内容，只提供变换
           fromOff: (layer.from ?? 1) - 1,         // 层窗口（相对镜头起点的偏移）
           toOff: layer.to !== undefined ? layer.to - 1 : null,
           contentShot,
@@ -889,6 +892,8 @@ export function compileScene(scene, tl) {
           fx: compileEffects(layer.effects, {beats: contentShot.beats, from: ls}),
         };
       });
+      // `follow` 用**声明下标**找父层 —— `built` 下面会按 z 排序，所以这里先留一份下标表
+      const byIdx = new Map(built.map((b) => [b.idx, b]));
       // 由远到近：z 小的先画（在下），同 z 按声明顺序
       built.sort((a, b) => (a.z - b.z) || (a.seq - b.seq));
       const beats = [...new Set(built.flatMap((b) => b.contentShot.beats))].sort((a, b) => a - b);
@@ -908,17 +913,42 @@ export function compileScene(scene, tl) {
               const off = n - shotStart;
               if (off < L.fromOff) continue;
               if (L.toOff !== null && off > L.toOff) continue;
+              // 空物体：**不画任何内容**，它的作用只是给别的层提供变换
+              if (L.empty) continue;
               const tr = mergeAnimate(L.transform, L.anim, n);
               const hasLayer = !!tr && (tr.x || tr.y || tr.rotate
                 || (tr.scale !== undefined && tr.scale !== 1)
                 || tr.alpha !== undefined || tr.blend !== undefined || tr.origin !== undefined);
-              const paint = (cc) => {
+              const leaf = (c2) => {
                 if (!hasLayer) {
-                  L.tpl.draw.call(this, cc, n, L.contentShot, accent ?? accentFor(1));
+                  L.tpl.draw.call(this, c2, n, L.contentShot, accent ?? accentFor(1));
                 } else {
-                  withLayer(cc, {transform: tr, alpha: tr?.alpha ?? 1, blend: tr?.blend ?? null, mode: 'shot'},
-                    (ccc) => L.tpl.draw.call(this, ccc, n, L.contentShot, accent ?? accentFor(1)));
+                  withLayer(c2, {transform: tr, alpha: tr?.alpha ?? 1, blend: tr?.blend ?? null, mode: 'shot'},
+                    (c3) => L.tpl.draw.call(this, c3, n, L.contentShot, accent ?? accentFor(1)));
                 }
+              };
+              // 父子绑定：把**父链**的变换逐层套在外面（最外层先应用），再画自己。
+              // 组合出来的仍然只是帧号的纯函数（父与自己的变换都只是 n 的函数）。
+              // `seen` 防环：校验已经拦了，这里是**第二道**（运行时不能因为一个漏网配置就死循环）。
+              const paint = (cc) => {
+                const chain = [];
+                const seen = new Set([L.idx]);
+                let cur = L;
+                while (cur.follow !== undefined) {
+                  const p = byIdx.get(cur.follow);
+                  if (!p || seen.has(p.idx)) break;
+                  seen.add(p.idx);
+                  chain.unshift(p);              // 最外层排在最前
+                  cur = p;
+                }
+                let fn = leaf;
+                for (let i = chain.length - 1; i >= 0; i--) {
+                  const p = chain[i];
+                  const ptr = mergeAnimate(p.transform, p.anim, n);
+                  const inner = fn;
+                  fn = (c2) => withLayer(c2, {transform: ptr, alpha: 1, blend: null, mode: 'shot'}, inner);
+                }
+                fn(cc);
               };
               // 层自己的效果链：与镜头级走**同一个助手**（否则两处合成逻辑会漂移）
               if (L.fx && !isNoopEffects(L.fx, n)) {

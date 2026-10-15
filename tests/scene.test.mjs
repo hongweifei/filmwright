@@ -497,6 +497,49 @@ test('mask：图层级也能挂（镜头与图层两处都要校验）', () => {
     '图层上的非法遮罩要报：' + JSON.stringify(e.map((x) => x.path)));
 });
 
+// ─────────────────── 父子绑定 / 空物体（阶段 ④）───────────────────
+
+const layerErrs = (layers) => errs({shots: [{type: 'layers', at: 1, layers}]});
+const LB = {content: {type: 'bullets', items: [{t: '一'}]}};
+
+test('layers.follow：合法下标通过；越界 / 自引用 / 成环都要报 SCENE_LAYER_FOLLOW', () => {
+  assert.deepEqual(layerErrs([LB, {...LB, follow: 0}]), [], 'follow 指向另一个层是合法的');
+  assert.deepEqual(layerErrs([LB, {...LB, follow: 0}, {...LB, follow: 1}]), [],
+    '多级链（A←B←C）合法');
+  for (const bad of [
+    [LB, {...LB, follow: 9}],                  // 越界
+    [{...LB, follow: 0}],                      // 自引用
+    [{...LB, follow: -1}],                     // 负数
+    [{...LB, follow: 0.5}],                    // 非整数
+    [{...LB, follow: 1}, {...LB, follow: 0}],  // 成环 A→B→A
+  ]) {
+    const codes = layerErrs(bad).map((e) => e.code);
+    assert.ok(codes.includes('SCENE_LAYER_FOLLOW'),
+      '必须报 SCENE_LAYER_FOLLOW，实际 ' + JSON.stringify(codes) + ' / 输入 ' + JSON.stringify(bad));
+  }
+  // hint 要给出**实际可用的范围**（错误是给模型读的 prompt，这条是仓库硬要求）
+  const e = layerErrs([LB, {...LB, follow: 9}]).find((x) => x.code === 'SCENE_LAYER_FOLLOW');
+  assert.ok(/0\.\.[01]/.test(e.hint + e.message),
+    '要写出合法范围（本容器 2 层 ⇒ 0..1），实际 hint=' + e.hint);
+});
+
+test('layers.empty：空物体不要求 content，但与 content 互斥', () => {
+  assert.deepEqual(layerErrs([{empty: true}, {...LB, follow: 0}]), [],
+    '空物体只提供变换 ⇒ 不该要求 content');
+  assert.ok(layerErrs([{empty: true, ...LB}]).map((e) => e.code).includes('SCENE_LAYER_CONTENT'),
+    'empty 与 content 同时给要报');
+  assert.ok(layerErrs([{empty: 'yes'}]).map((e) => e.code).includes('SCENE_LAYER_SHAPE'),
+    'empty 必须是布尔');
+});
+
+test('layers 的未知字段检查认得 follow / empty（漏登记会把合法写法拒掉）', () => {
+  // 这条是子代理只读侦察时指出的缺口：加字段时漏了 SHAPE_KEYS.layer
+  const codes = layerErrs([LB, {...LB, follow: 0}]).map((e) => e.code);
+  assert.ok(!codes.includes('SCENE_UNKNOWN_FIELD'), 'follow 不该被当成未知字段：' + JSON.stringify(codes));
+  assert.ok(layerErrs([{...LB, bogus: 1}]).map((e) => e.code).includes('SCENE_UNKNOWN_FIELD'),
+    '真正未知的字段仍要报（否则上面那条就成了恒真）');
+});
+
 // ─────────────────────── 逐字入场（阶段 ④）───────────────────────
 
 test('title.reveal：对象合法，且不写就与以前逐字节相同（opt-in）', () => {

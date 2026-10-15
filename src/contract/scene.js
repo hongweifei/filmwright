@@ -67,6 +67,7 @@ export const SCENE_ERROR_CODES = [
   'SCENE_ANIM_ORDER', 'SCENE_ANIM_CONFLICT', 'SCENE_ANIM_VALUE',
   'SCENE_ANIM_RANGE', 'SCENE_ANIM_NO_BEATS',
   'SCENE_LAYER_SHAPE', 'SCENE_LAYER_CONTENT', 'SCENE_LAYER_RANGE', 'SCENE_LAYER_NEST',
+  'SCENE_LAYER_FOLLOW',
   'SCENE_MASK_SHAPE', 'SCENE_MASK_RANGE', 'SCENE_MASK_POLYGON',
   ...EFFECT_ERROR_CODES,
   ...THREE_ERROR_CODES,
@@ -715,6 +716,42 @@ export function validateLayers(raw, path = 'shots') {
       push('SCENE_LAYER_RANGE', `${lp}.to`, `时间窗是空的：from=${layer.from} > to=${layer.to}`,
         'to 必须 ≥ from');
     }
+    // ── 父子绑定 / 空物体（阶段 ④）──
+    // `follow`：跟着**同一个容器里**的另一层动（声明下标）。
+    // 有效变换 = 父的变换 ∘ 自己的变换 ⇒ 仍是帧号的纯函数（守住核心不变量）。
+    if (layer.follow !== undefined) {
+      const cnt = list.length;
+      if (!Number.isInteger(layer.follow) || layer.follow < 0 || layer.follow >= cnt) {
+        push('SCENE_LAYER_FOLLOW', `${lp}.follow`,
+          `follow 必须是 0..${cnt - 1} 的整数（同容器里图层的**声明下标**），`
+          + `收到 ${JSON.stringify(layer.follow)}`,
+          `本容器有 ${cnt} 层，下标从 0 起（不是 z 值）`);
+      } else if (layer.follow === i) {
+        push('SCENE_LAYER_FOLLOW', `${lp}.follow`, '层不能 follow 自己',
+          '指向本容器里的**另一个**层');
+      }
+    }
+    // 空物体：不画内容、只给别的层提供变换 ⇒ **不要求 content**（写了反而报）
+    if (layer.empty !== undefined && typeof layer.empty !== 'boolean') {
+      push('SCENE_LAYER_SHAPE', `${lp}.empty`,
+        `empty 必须是布尔值，收到 ${JSON.stringify(layer.empty)}`,
+        'empty: true 表示这一层不画内容、只提供变换（配合别的层的 follow 用）');
+    }
+    if (layer.empty === true) {
+      if (layer.content !== undefined) {
+        push('SCENE_LAYER_CONTENT', `${lp}.content`,
+          '空物体（empty: true）不能同时给 content —— 它不画任何东西',
+          '要么去掉 empty，要么去掉 content');
+      }
+      if (layer.transform !== undefined && !isValidTransform(layer.transform)) {
+        push('SCENE_LAYER_SHAPE', `${lp}.transform`, '层的 transform 形状不对',
+          '与镜头 transform 同一套字段：x / y / scale / rotate / alpha / blend / origin');
+      }
+      if (layer.animate !== undefined) {
+        out.push(...validateAnimate(layer.animate, layer.transform, `${lp}.animate`));
+      }
+      return;                                  // 空物体不查 content
+    }
     const c = layer.content;
     if (!c || typeof c !== 'object' || Array.isArray(c)) {
       push('SCENE_LAYER_CONTENT', `${lp}.content`, '层必须给 content（一次模板调用）',
@@ -745,6 +782,25 @@ export function validateLayers(raw, path = 'shots') {
       out.push(...validateEffects(layer.effects, `${lp}.effects`));
     }
     if (layer.mask !== undefined) out.push(...validateMask(layer.mask, `${lp}.mask`));
+  });
+  // 成环检查：`follow` 必须是一条链，绕回自己就没有「最外层」可言了。
+  // 运行时另有一道 `seen` 守卫（不会死循环），但**配置错了要当场报** ——
+  // 否则表现是「绑定莫名其妙只生效一层」，属于最难查的那种静默错。
+  list.forEach((layer, i) => {
+    if (!layer || typeof layer !== 'object' || !Number.isInteger(layer.follow)) return;
+    const seen = new Set([i]);
+    let cur = layer;
+    while (cur && Number.isInteger(cur.follow)) {
+      const nx = cur.follow;
+      if (seen.has(nx)) {
+        push('SCENE_LAYER_FOLLOW', `${path}.layers[${i}].follow`,
+          `follow 成环：${[...seen].join(' → ')} → ${nx}`,
+          '父子关系必须是一条链，不能绕回自己');
+        return;
+      }
+      seen.add(nx);
+      cur = list[nx];
+    }
   });
   return out;
 }
@@ -988,7 +1044,9 @@ function validateArr(v, path, shape, errors, {min = 1, maxName, shot} = {}) {
 const SHAPE_KEYS = {
   // 容器里的一层。**键级**检查走这里（未知字段），**语义**检查在 validateLayers
   // （content 必须是模板调用且不带 at、from/to 范围、z 类型、嵌套容器禁用）。
-  layer: ['content', 'z', 'from', 'to', 'transform', 'animate', 'effects'],
+  // `follow` / `empty` / `mask` 都是层的合法键 —— **漏登记会把合法写法当成未知字段拒掉**
+  // （子代理在只读侦察时指出这一条：我加字段时漏了这张表）。
+  layer: ['content', 'z', 'from', 'to', 'transform', 'animate', 'effects', 'mask', 'follow', 'empty'],
   // 声明式 3D 的一个对象。键级检查走这里，语义检查在 validate3D。
   threeobj: ['shape', 'size', 'color', 'opacity', 'wireframe', 'position', 'rotate', 'animate', 'material'],
   threelight: ['type', 'color', 'intensity', 'position', 'animate'],
