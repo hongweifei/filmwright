@@ -7,7 +7,7 @@
 //     这个能保证正确性的范围（超了会振铃，实测过）。
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateEffects, validateScene} from '../src/contract/scene.js';
+import {validateEffects} from '../src/contract/effects.js';
 import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, GRADE_LOOKS} from '../src/contract/effects.js';
 import {compileEffects, isNoopEffects, evalEffects} from '../src/runtime/fx/compile.js';
 import {bindShots, setShots} from '../src/runtime/stage/shots.js';
@@ -173,37 +173,6 @@ test('radius 上限与实现的保证是绑定的（写死这个数是有理由�
   assert.ok(EFFECT_SPECS.blur.params.radius.max >= 36);
 });
 
-// ─────────────────────── 接进 scene.json ───────────────────────
-
-test('effects 是**通用字段**：任何镜头类型都能写（与 transform/animate 同级）', () => {
-  const tl = {
-    fps: 30, total_frames: 200, chapters: [{n: 1, title: 'c', from: 1}],
-    sentences: [{id: 'S01', chapter: 1, from: 1, to: 200, text: 'x'}], subs: [],
-  };
-  const r = validateScene({shots: [{type: 'stat', at: 1, value: 1, label: 'l',
-    effects: [{type: 'blur', radius: 5}]}]}, {timeline: tl});
-  assert.deepEqual(r.errors, []);
-  // 不写 effects 当然也行
-  const r2 = validateScene({shots: [{type: 'stat', at: 1, value: 1, label: 'l'}]}, {timeline: tl});
-  assert.deepEqual(r2.errors, []);
-});
-
-test('effects 也能挂在容器的**层**上', () => {
-  const tl = {
-    fps: 30, total_frames: 200, chapters: [{n: 1, title: 'c', from: 1}],
-    sentences: [{id: 'S01', chapter: 1, from: 1, to: 200, text: 'x'}], subs: [],
-  };
-  const r = validateScene({shots: [{type: 'layers', at: 1, layers: [
-    {content: {type: 'title', title: 'x'}, effects: [{type: 'blur', radius: 3}]},
-  ]}]}, {timeline: tl});
-  assert.deepEqual(r.errors, []);
-  // 层上的 effects 形状错也要报（同一个校验函数）
-  const r2 = validateScene({shots: [{type: 'layers', at: 1, layers: [
-    {content: {type: 'title', title: 'x'}, effects: [{type: 'nope'}]},
-  ]}]}, {timeline: tl});
-  assert.ok(r2.errors.some((e) => e.code === 'SCENE_FX_TYPE' && /layers\[0\]\.effects/.test(e.path)));
-});
-
 // ─────────────────────── 编译与短路 ───────────────────────
 
 test('compileEffects：没有 effects 返回 **null**（调用方据此走快路径）', () => {
@@ -324,7 +293,7 @@ test('效果参数是**静态数值**时不触发那两条（没有 beat 可查�
 /** 手写镜头的一个最小合法形状（start 必须从 1 起）。 */
 const hand = (extra) => ({start: 1, draw() {}, ...extra});
 
-test('手写镜头的 effects **走与 scene.json 同一套校验**（不再静默失效）', () => {
+test('手写镜头的 effects **与镜头声明走同一份校验**（不再静默失效）', () => {
   // 这两条是实测出来的难查失败：不认识的效果名会被 compileEffects 静默跳过
   // （画面与不写效果一模一样）；越界参数会绕过契约上限真的生效（渲染出振铃）。
   try {
@@ -528,7 +497,7 @@ test('**SIMPLE_PASSES 里的每个 prog 都要在 this.progs 注册表里有对�
   const {readFileSync} = await import('node:fs');
   // ⚠️ 这个不变量**跨两个文件**（`fx/gpu.js` 拆过了）：表在 `shaders.js`，注册表在 `stage.js`。
   // 「判据用正则读源码」是拆分的**隐藏耦合** —— 拆完必须跟着改，否则它只会解析到 0 条
-  // 然后被下面那条下限抓住（同族：`verify-docs` 读 scene.js 的字面量、`verify-reveal` /
+  // 然后被下面那条下限抓住（同族：`verify-docs` 用正则读实现的字面量、`verify-reveal` /
   // `verify-effects` 往具体文件注入缺陷）。
   const shaders = readFileSync(new URL('../src/runtime/fx/shaders.js', import.meta.url), 'utf8');
   const stage = readFileSync(new URL('../src/runtime/fx/stage.js', import.meta.url), 'utf8');

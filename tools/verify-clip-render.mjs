@@ -19,20 +19,18 @@ const ROOT = resolve(process.argv[2] ?? process.cwd()).replace(/\\/g, '/');
 const imp = (rel) => import(pathToFileURL(`${ROOT}/${rel}`).href);
 const {serveProject} = await imp('src/host/project/server.mjs');
 const {openSession} = await imp('src/host/browser/session.mjs');
-const {loadProject} = await imp('src/host/project/load.mjs');
+const {loadProject, shotsRelOrNull} = await imp('src/host/project/load.mjs');
 const {prepareClips} = await imp('src/host/media/clips.mjs');
 
 const PROJ = `${ROOT}/.work/clip-e2e-proj`;
 rmSync(PROJ, {recursive: true, force: true});
 mkdirSync(join(PROJ, 'public', 'assets', 'fonts'), {recursive: true});
 mkdirSync(join(PROJ, 'script'), {recursive: true});
+mkdirSync(join(PROJ, 'shots'), {recursive: true});
 
-// 复用示例的字体（片段渲染也要字体）
-const src = `${ROOT}/examples/scenecast`;
-for (const f of readFileSync(`${src}/film.config.mjs`, 'utf8').match(/fonts\/[^'"]+/g) ?? []) {
-  spawnSync('cmd', ['/c', 'copy', join(src, 'public', f).replace(/\//g, '\\'),
-    join(PROJ, 'public', f).replace(/\//g, '\\')], {stdio: 'ignore'});
-}
+// ⚠️ 字体**不往项目里拷**：项目没声明字体时，`/fonts/…` 会回退到库根那份
+// （`serveProject` 的静态路由：先项目 `public/`、再 `KIT_ROOT`）—— 这也是示例去重之后
+// 「渲染路径一处不用改」的原因。字体缺失会让画面静默变空白，所以下面的判据本身要看内容。
 
 // 造一段「每帧颜色不同」的视频：用 testsrc2（有运动与色块）
 const vid = join(PROJ, 'public', 'assets', 'broll.mp4');
@@ -40,7 +38,7 @@ let r = spawnSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi',
   '-i', 'testsrc2=size=320x180:rate=30:duration=2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', vid], {encoding: 'utf8'});
 if (r.status !== 0) { console.log('造视频失败:', r.stderr.slice(-200)); process.exit(1); }
 
-// 最小项目：配置 + 时间轴 + scene（一个 clip 镜头 + 一个 title 打头）
+// 最小项目：配置 + 时间轴 + **手写镜头**（一个打头的标题镜头 + 一个画片段的镜头）
 // theme 要给全（引擎内建件 backdrop/HUD 等要读每一个键）——只给 accents
 // 会让 backdrop 拿到 undefined 而整帧报错。这里直接抄示例的 theme，
 // 免得夹具自己变成「配置不全」的坑。
@@ -60,12 +58,25 @@ writeFileSync(join(PROJ, 'script', 'timeline.json'), JSON.stringify({
   sentences: [{id: 'S01', chapter: 1, from: 20, to: 100, text: 'x'}],
   subs: [{from: 20, to: 100, text: 'x'}],
 }, null, 1), 'utf8');
-writeFileSync(join(PROJ, 'scene.json'), JSON.stringify({
-  shots: [
-    {type: 'title', at: 1, title: 'clip demo'},
-    {type: 'clip', at: 20, clip: 'broll', heading: '片段素材'},
-  ],
-}, null, 1), 'utf8');
+// 片段镜头的起点：引擎读的是**镜头自己**声明的 start，`clipFrame` 的 from 用它对齐源帧
+// （不写死全局帧号 —— 下面第 3 节的期望值也从同一个起点 + 片段元数据算）。
+const CLIP_FROM = 20;
+writeFileSync(join(PROJ, 'shots', 'index.js'), `import {clipFrame, text, theme as C, applyDesignScale} from 'filmwright';
+const CLIP_FROM = ${CLIP_FROM};
+export const SHOTS = [
+  {start: 1, draw(ctx, n) {
+    ctx.save(); applyDesignScale(ctx);
+    text(ctx, 'clip demo', 640, 360, {size: 64, weight: 900, color: C.text, align: 'center', baseline: 'middle'});
+    ctx.restore();
+  }},
+  {start: CLIP_FROM, draw(ctx, n) {
+    ctx.save(); applyDesignScale(ctx);
+    const im = clipFrame('broll', n, {from: CLIP_FROM, fps: 30});
+    ctx.drawImage(im, 200, 112, 880, 495);
+    ctx.restore();
+  }},
+];
+`, 'utf8');
 
 // 抽帧（host 侧）
 const proj = await loadProject(PROJ);
@@ -74,7 +85,7 @@ const prepped = await prepareClips(PROJ, [{name: 'broll', src: '/assets/broll.mp
 console.log('抽帧:', JSON.stringify(prepped.clips.broll));
 
 const server = await serveProject(PROJ, {
-  raw: proj.raw, timeline: proj.timeline, shotsRel: null, scene: proj.scene, clips: prepped.clips,
+  raw: proj.raw, timeline: proj.timeline, shotsRel: shotsRelOrNull(proj), clips: prepped.clips,
 });
 const base = `http://127.0.0.1:${server.address().port}/`;
 const sess = await openSession(base, {width: 1280, height: 720});

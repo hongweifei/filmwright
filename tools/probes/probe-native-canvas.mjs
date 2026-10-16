@@ -27,7 +27,7 @@ import {fileURLToPath, pathToFileURL} from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
-const P = join(ROOT, 'examples', 'scenecast');
+const P = join(ROOT, 'examples', 'minimal');
 const W = 1280, H = 720;
 const N = 30;
 

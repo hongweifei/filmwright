@@ -7,7 +7,7 @@ import {join} from 'node:path';
 
 const ROOT = process.argv[2].replace(/\\/g, '/');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
-const P = join(ROOT, 'examples', 'scenecast');
+const P = join(ROOT, 'examples', 'minimal');
 const N = 300;
 
 const run = (args) => {
@@ -20,7 +20,7 @@ const run = (args) => {
   return {ok: r.status === 0 && existsSync(out), ms: secs * 1000 / N, secs};
 };
 
-console.log(`基准：scenecast 前 ${N} 帧，1280×720，各跑一次（机器负载会影响绝对值，看相对量）\n`);
+console.log(`基准：minimal 前 ${N} 帧，1280×720，各跑一次（机器负载会影响绝对值，看相对量）\n`);
 console.log('配置                                              ms/帧    相对');
 console.log('─'.repeat(72));
 

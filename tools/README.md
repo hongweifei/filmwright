@@ -38,7 +38,7 @@
 - **临时夹具放 `os.tmpdir()`、跑完即删**（`mkdtempSync` + `try/finally` 里的 `rmSync`），
   真项目与真源码全程只读。
 
-## 全部 44 个顶层文件
+## 顶层文件索引
 
 状态口径如下（**逐条实测得出**，不是按文件名归类 —— 这个仓库的文件名骗过人，见「已知问题」）：
 
@@ -48,7 +48,10 @@
 - **零引用**：全仓检索只有它自己的用法注释提到自己。
 - **由其它工具调用**：本文件新增的第五类，顶层里唯一的「工具调工具」。
 
-### CI 自动跑（26 个）
+### CI 自动跑
+
+> 分类的判据是**文件此刻在哪被调用**，不是数量。所以这里刻意不写「N 个」：
+> 删一个工具或接一个工具进 CI，计数就腐烂，而没有任何守卫会红（见「已知问题」第 5 条）。
 
 | 文件 | 干什么（取自它自己的头部注释） | 状态 |
 |---|---|---|
@@ -56,16 +59,14 @@
 | `quality-negative.mjs` | 负面对照：故意做坏，确认画质自检真的会报 | CI 自动跑（`browser`） |
 | `regression.mjs` | 像素回归守卫：抓一组帧的像素哈希，之后重渲必须画面相同 | CI 自动跑（`browser` 两次）+ npm 脚本 |
 | `verify-assets.mjs` | 素材支持的验证：真开浏览器，确认图片**真的画出来了**，且引错名字会明确报错 | CI 自动跑（`browser`）+ npm 脚本 |
-| `verify-attribution.mjs` | 按段归因的端到端验证：改一个镜头只重渲**覆盖它的那段** | CI 自动跑（`browser-slow`） |
 | `verify-clip-render.mjs` | 片段素材的**浏览器端到端验证**：真抽帧 → 真服务 → 真在页面里取帧画出来 | CI 自动跑（`browser`） |
 | `verify-clips.mjs` | 素材管线的端到端验证（host 侧，真跑 ffmpeg） | CI 自动跑（`browser`） |
-| `verify-composite.mjs` | 图层合成与嵌套合成的端到端验收（真浏览器 + 真像素） | CI 自动跑（`browser`） |
 | `verify-determinism.mjs` | 捕获确定性的**回归验证**：多轮渲染同一区间，全部帧必须逐字节一致 | CI 自动跑（`browser`） |
 | `verify-docs.mjs` | 文档一致性：把「实现里的真实数字」与「文档里的说法」对齐 | CI 自动跑（`static`） |
 | `verify-effects.mjs` | 效果链（最小闭环 blur）真的生效、方向正确、代价可量 | CI 自动跑（`browser`） |
 | `verify-encoding.mjs` | 全仓扫描：有没有文件不是合法 UTF-8（含 BOM、非法字节），或换行风格不统一 | CI 自动跑（`static`）+ npm 脚本 |
 | `verify-h264.mjs` | 页面侧 H.264 编码器（WebCodecs）的验收：真正是一段有效视频、帧数一致、背压生效 | CI 自动跑（`browser`） |
-| `verify-imperative.mjs` | 命令式入口（`shots/index.js`）与声明式（`scene.json`）**同能力** | CI 自动跑（`browser`） |
+| `verify-imperative.mjs` | 命令式入口（手写 `shots/index.js`）的能力验收：效果链 / 变换 / 图层合成 / 动画 / 节拍锚点 | CI 自动跑（`browser`） |
 | `verify-incremental.mjs` | 增量重渲的**安全性验证**：只保留本工具独有的三条判据 | CI 自动跑（`browser`） |
 | `verify-invocation.mjs` | 守卫「同一个根因换个位置又回来」的两类问题 | CI 自动跑（`static`） |
 | `verify-links.mjs` | 文档内部链接守卫：所有 `](相对路径)` 都要指向**存在的文件** | CI 自动跑（`static`） |
@@ -76,10 +77,9 @@
 | `verify-preview.mjs` | 预览页的端到端验证：真开浏览器，验证拖动、播放、热重载都真的生效 | CI 自动跑（`browser`）+ npm 脚本 |
 | `verify-readme.mjs` | 照 README / 入门文档的路径走一遍，确认文档没写错 | CI 自动跑（`browser-doc`）+ npm 脚本 |
 | `verify-reuse.mjs` | 验收「换分辨率」与「换浏览器」两条可复用性主张 | CI 自动跑（`browser`）+ npm 脚本 |
-| `verify-reveal.mjs` | 逐字入场（`title.reveal`）验收 | CI 自动跑（`browser`） |
 | `verify-three.mjs` | 3D 图层（现成的 three）：到底能不能用、对不对、代价多大 | CI 自动跑（`browser`） |
 
-### npm 脚本、但不在 CI（2 个）
+### npm 脚本、但不在 CI
 
 | 文件 | 干什么（取自它自己的头部注释） | 状态 |
 |---|---|---|
@@ -89,7 +89,7 @@
 这两个没进 CI 的原因是**外部条件**：`verify-tts` 要真合成（联网），另一个要 python。
 `run-python-tests.mjs` 在没装 python / numpy 时**优雅跳过并返回 0**，所以它跟着 `npm test` 走不会让 CI 变红。
 
-### 仅文档提及（15 个）
+### 仅文档提及
 
 | 文件 | 干什么（取自它自己的头部注释） | 状态 |
 |---|---|---|
@@ -105,7 +105,6 @@
 | `diff-nature.py` | 判断差异的性质：抗锯齿 / 亚像素位移，还是真的内容不同 | 仅文档提及（`docs/qc.md`） |
 | `diff-probe.py` | 在给定的小矩形上比差异，用来区分「平坦填充区」与「文字区」 | 仅文档提及（`docs/qc.md`） |
 | `diff-regions.py` | 定位差异区域：把画面按功能区切开，算每块的平均绝对差 | 仅文档提及（`docs/qc.md`） |
-| `dogfood-review.mjs` | 用 MCP 的 review 工具迭代 promo（狗粮：制作者就是工具链本身） | 仅文档提及（`docs/dogfood.md`、`CHANGELOG.md`） |
 | `make-sample-asset.py` | 生成示例用的素材图：一条胶片（5 格） | 仅文档提及（`docs/qc.md`） |
 | `verify-voiceover.mjs` | 真实配音的验证：示例的时间轴必须是**真配音**（不是合成夹具），且时间轴 / 音频 / 画面三者一致 | 仅文档提及（`CHANGELOG.md`、`docs/qc.md`） |
 
@@ -117,11 +116,11 @@
 - `check-modules.mjs` 与 `boot-error.mjs` 是**一对页面诊断器**：模块加载失败时页面完全静默，
   一个查「谁 404」，一个取 `window.__bootError`。
 
-### 由其它工具调用（1 个）
+### 由其它工具调用
 
 | 文件 | 干什么（取自它自己的头部注释） | 状态 |
 |---|---|---|
-| `make-timeline-fixture.mjs` | 合成时间轴夹具：读 `script/narration.txt`，按与 tts 相同的解析规则产出 `timeline.json` | 由 `verify-longform.mjs` spawn，随 `browser-slow` 作业间接跑；同时也是三个示例入库夹具的来源 |
+| `make-timeline-fixture.mjs` | 合成时间轴夹具：读 `script/narration.txt`，按与 tts 相同的解析规则产出 `timeline.json` | 由 `verify-longform.mjs` spawn，随 `browser-slow` 作业间接跑；长片夹具的时间轴就是它生成的 |
 
 它是顶层里**唯一**被另一个工具直接调用的文件（`verify-longform.mjs` 里
 `spawnSync('node', [join(ROOT,'tools','make-timeline-fixture.mjs'), …])`），
@@ -197,7 +196,12 @@
 
 **处置**：那条注释已改成**不复述数字**，只指向 `docs/qc.md` 的那张表。
 口径：**在不受守卫管的注释里抄一份数字，必然腐烂** —— 要么让守卫管到它，要么别写。
-本文件同样只在能从 `tools/` 目录与 `ci.yml` 当场数出来的地方写数字。
+本文件同样的处置：收录哪些文件是**结构性事实**（与 `tools/` 目录一一对应，`tests/structure.test.mjs` 会核），
+但**不写「N 个」这种会在增删工具时腐烂的计数**。
+
+> 已删（2026-10-16，随声明式入口一起消失）：`verify-attribution.mjs`（按段归因靠 scene.json 的逐镜头指纹）、
+> `verify-composite.mjs`（`layers` 容器 / 父子绑定 / 空物体）、`verify-reveal.mjs`（模板层的 `reveal` 字段）、
+> `dogfood-review.mjs`（狗粮对象 promo 已删）。
 
 ## 探针
 

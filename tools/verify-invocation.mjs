@@ -54,7 +54,7 @@ const SELFTEST = !argv.includes('--no-selftest');
 /**
  * 检查二的已知项（键 `相对路径 readFileSync(路径表达式)`）。加进来必须写理由。
  *
- * ⚠️ 下面 10 处**读的都是用户项目文件**（`scene.json` / `timeline.json` / 静态自检
+ * ⚠️ 下面 9 处**读的都是用户项目文件**（`shots/index.js` / `timeline.json` / 静态自检
  * 扫的源码）—— 那些文件**不会被别的进程同时写**，所以 EBUSY 实际上不会发生。
  * 真正有风险的是**由子进程写、我们随后读**的文件（如 Chrome 的 `DevToolsActivePort`、
  * 临时 profile），那一类必须容忍 EBUSY（已在 `session.mjs` 里做）。
@@ -70,7 +70,6 @@ const KNOWN = new Map([
   ['src/host/media/incremental.mjs readFileSync(meta)', '本地增量缓存，同进程写'],
   ['src/host/media/srt.mjs readFileSync(path)', '用户项目时间轴，非跨进程写'],
   ['src/host/project/load.mjs readFileSync(p.timeline)', '用户项目文件，非跨进程写'],
-  ['src/host/project/load.mjs readFileSync(p.scene)', '用户项目文件，非跨进程写'],
 ]);
 
 const SAFE = /(\?\?|\|\||startsWith\('--'\)|fileURLToPath\(import\.meta\.url\)|process\.cwd\(\))/;
@@ -314,7 +313,7 @@ function selfTest() {
 
     // ④ 干净夹具同样走一次完整 CLI：**不得误报**。
     //    ⚠️ 它必然非 0（除非 KNOWN 空了）—— 棘轮名单是**本仓库专属**的，
-    //    临时夹具里那 10 条当然全都「已不再是问题」；这里只断言「红的原因是棘轮，不是误报」。
+    //    临时夹具里那几条当然全都「已不再是问题」；这里只断言「红的原因是棘轮，不是误报」。
     const runClean = spawnSync(process.execPath, [SELF, clean, '--no-selftest'], {encoding: 'utf8'});
     const outClean = `${runClean.stdout ?? ''}${runClean.stderr ?? ''}`;
     const wantClean = KNOWN.size ? 1 : 0;

@@ -31,19 +31,21 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 ```json
 {
   "ok": false,
-  "command": "check",
+  "command": "render",
   "errors": [
-    {"code": "SCENE_UNKNOWN_TYPE", "message": "不认识的镜头类型 \"pie\"",
-     "path": "shots[1].type", "hint": "v0 可用：title / bullets / …"}
+    {"code": "SCENE_FX_TYPE", "message": "镜头 effects 形状不对（start=1）：不认识的效果 \"sparkle\"",
+     "hint": "可用：blur / glow / color / vignette / chromatic / grain / pixelate / radialBlur / distort / grade / displace"}
   ],
   "warnings": ["assets：素材「x」声明了但镜头里没人用"],
-  "data": {"failed": 1, "checks": [{"name": "scene", "ok": false, "checked": 8, "problems": ["…"]}]}
+  "data": {"failed": 1, "checks": [{"name": "frames", "ok": false, "checked": 3, "problems": ["…"]}]}
 }
 ```
 
 要点：
 
-- **每条错误带 `code` / `path` / `message` / `hint`**（`scene` 的校验错误在 `path` 里直接给 `shots[i].field` 这样的路径）——错误信息是给模型读的 prompt，读完能直接改；`hint` 通常已经把可用值列出来了；
+- **每条错误带 `code` / `message` / `hint`**（镜头字段的校验错误来自 `src/contract/`，装配期抛出）——错误信息是给模型读的 prompt，读完能直接改；`hint` 通常已经把可用值列出来了；
+- 有的错误还带 **`where`**（`文件:行号`，字段名就是 `where`）——自检各道报的引用错都在这里；
+- 自检各道的错误带 `code: "CHECK_<道名>"`（如 `CHECK_TIMELINE`）；
 - `data` 按命令给产物路径与统计：`render` 给 `{out, frames, seconds, shards}`，`stills` 给 `{files}`，`all` 给 `{video, final, checks}`，`tts` 给 `{audio, timeline, …}`；
 - 没配音时 `all` 返回 `ok: true` 且 `data.muted: true`（跳过合流不是失败，但要让调用方知道）。
 
@@ -51,13 +53,13 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 
 | 命令 | 作用 |
 |---|---|
-| `new` | 新建项目骨架（scene / shots 两种模板） |
-| `schema` | 输出 scene 规格的机器可读 schema（17 类模板、字段、上限、错误码） |
+| `new` | 新建项目骨架（只有 shots 一种模板） |
 | `mcp` | MCP 服务器（stdio），把工具链暴露给 agent |
-| `check` | 十道自检（[质检文档](qc.md)） |
+| `check` | 九道自检（[质检文档](qc.md)） |
 | `preview` | 预览页：拖动 / 播放 / 热重载 |
 | `tts` | 解说词 → 配音 + 时间轴（引擎可换、可回退） |
 | `voices` | 列出 TTS 引擎可用性与音色（做片子前先探路） |
+| `clips` | 片段素材抽帧（视频 → 图片序列，内容寻址缓存） |
 | `stills` | 出指定帧的静帧 |
 | `sheet` | 抽帧联络表（人工 QC 用） |
 | `render` | 逐帧渲染成无声视频 |
@@ -68,10 +70,14 @@ node bin/filmwright.mjs <命令> --project <项目目录> [选项]
 ## `new`
 
 ```bash
-filmwright new <目录> [--template scene|shots]
+filmwright new <目录>
 ```
 
-建一个能直接跑通的最小项目：`film.config.mjs`、`script/narration.txt`、`scene.json`（默认模板）、`.gitignore`、`public/` 占位说明；`--template shots` 改产手写镜头骨架。目标目录**已存在且非空会直接拒绝**（`DIR_NOT_EMPTY`），脚手架从不覆盖已有文件。`slug` 取目录名并净化。
+建一个能直接跑通的最小项目：`film.config.mjs`、`script/narration.txt`、`shots/index.js`（镜头骨架）、`.gitignore`、`public/` 占位说明。目标目录**已存在且非空会直接拒绝**（`DIR_NOT_EMPTY`），脚手架从不覆盖已有文件。`slug` 取目录名并净化。
+
+镜头是**纯命令式**的，所以脚手架只有这一种模板（`--template shots` 是显式写法；别的值报 `BAD_TEMPLATE`）。
+
+下一步它会打印：改 `script/narration.txt` → 写 `shots/index.js` → `tts` → `check --static-only` → `all`。
 
 ## `mcp`
 
@@ -80,16 +86,7 @@ npm install          # 只有 MCP 需要依赖；其余命令零依赖
 filmwright mcp       # stdio 服务器，日志走 stderr，Ctrl+C 结束
 ```
 
-把整条工具链作为 MCP 工具暴露给 agent（new / timeline / scene_validate / tts / check / stills / render / all），返回值与 `--json` 同形状。客户端配置与推荐的 agent 工作回路见 [AI / agent 接入指南](ai.md)。
-
-## `schema`
-
-```bash
-filmwright schema          # 人读：17 类模板的用途、字段、上限、对齐语法、错误码
-filmwright schema --json   # 机读：同一份数据的 JSON（agent 写 scene 前先拿它）
-```
-
-不需要 `--project`——schema 是框架自己的说明书，与具体片子无关。MCP 客户端用 `filmwright_schema` 工具拿同一份数据。
+把整条工具链作为 MCP 工具暴露给 agent（new / timeline / tts / check / stills / review / srt / render / all），返回值与 `--json` 同形状。客户端配置与推荐的 agent 工作回路见 [AI / agent 接入指南](ai.md)。
 
 ## `check`
 
@@ -98,7 +95,7 @@ filmwright check --project <项目目录> [--static-only] [--no-quality]
                  [--static-frames N] [--hold-frames N] [--ink-min N] [--quality-step N]
 ```
 
-- `--static-only`：只跑读文件的前八道，不启浏览器，秒级。CI 与改完镜头的快速验证用。
+- `--static-only`：只跑读文件的前七道，不启浏览器，秒级。CI 与改完镜头的快速验证用。
 - `--no-quality`：跑逐帧自检但跳过画质统计。
 - 四个数值参数覆盖画质阈值（默认按 1280×720 的 32×18 网格校准）。含义见 [LIMITATIONS](../LIMITATIONS.md)。
 
@@ -204,7 +201,7 @@ filmwright render --project <目录> [--out x.mp4] [--shards N|auto] [--from N -
 |---|---|
 | `--shards N` | 分片并行（`auto` 按 CPU 数）；每片一个浏览器实例，崩了自动重试一次 |
 | `--resume` | **同一次渲染**被中断后续跑：已渲好的分片直接复用 |
-| `--incremental` | **跨次**复用：按内容哈希切段，只重渲变化了的段。scene 项目按镜头归因——改一个镜头只重渲覆盖它的那几段 |
+| `--incremental` | **跨次**复用：按内容哈希切段，只重渲变化了的段。镜头是手写代码，**整个镜头文件算全局** —— 改一行就全渲（保守但正确） |
 | `--proxy 0.5` | 代理渲染：半分辨率（或任意 0–1 比例）快速预览。**只改输出尺寸，不改绘制逻辑**，构图与成片一致 |
 | `--seg-frames N` | `--incremental` 的段长（默认 300 帧 ≈ 10 秒） |
 | `--frame-format <fmt>` | 中间帧格式：`jpeg`（默认）/ `jpeg:92` / `png`。**jpeg 快约 2.7×**，代价是产物约大 24%；要逐像素比对时用 `png` |
@@ -225,17 +222,18 @@ filmwright render --project <目录> [--out x.mp4] [--shards N|auto] [--from N -
 两条传输路径（`cdp` 与 `stream`）的成片 **PSNR 为 inf**（逐像素完全相同）。
 详见 [LIMITATIONS 第 6 节](../LIMITATIONS.md)。
 
-`--incremental` 的键分**两层**，这样才能「改一处只重渲一小段」：
+`--incremental` 的键只有**一层：全局**——凡是影响画面的输入都进同一个指纹，改一处就让**所有段**失效：
 
-| 层 | 覆盖什么 | 失效范围 |
-|---|---|---|
-| **全局** | 引擎源码、`film.config.mjs`、时间轴、字体与素材**文件内容**、`clips` 声明、输出参数 | 改了就**所有段**都失效 |
-| **局部** | 与该段区间**重叠的 `scene.json` 镜头**，以及它引用的 `comps`（含嵌套引用） | 只让覆盖它的那几段失效 |
+| 进全局指纹的东西 | 为什么 |
+|---|---|
+| 引擎源码、`film.config.mjs`、时间轴、字体与素材的**文件内容**、`clips` 声明、输出参数 | 它们影响每一段 |
+| **整个 `shots/index.js`** | 镜头是手写代码，`start` 可能是 `cutBefore()` 算出来的，主机侧无法在不求值该模块的情况下按帧归因 ⇒ 整文件算全局，**改一行就全部重渲**（保守但正确，宁可多渲也不复用旧画面） |
 
-所以改一个镜头的文案，只有压住它的那一两段重渲，其余段照旧复用。段缓存落在 `.work/segments/`，完成后会清掉不再匹配的旧段。`--json` 里的 `attribution` 会说明粒度：
+镜头文件是唯一的画面来源，所以 `--json` 里的 `attribution` **恒为 `whole-file`**。段缓存落在
+`.work/segments/`，完成后会清掉不再匹配的旧段。
 
-- `per-shot`（scene 项目）：按镜头归因，如上表；
-- `whole-file`（手写 `shots/index.js` 项目）：镜头文件无法按帧归因，**整个文件算全局** —— 改一行就会全渲（保守但正确）。
+因此它省的是**没改动画那几次重渲**（比如只改了配音、只改了导出参数），而不是「改一个镜头只重渲几段」——
+要那种粒度得让引擎能按帧归因镜头，现在没有（手写镜头本身是一段可执行的代码）。
 
 迭代复杂镜头时的推荐组合：`--incremental --proxy 0.5`（先半分辨率快速看节奏，满意后再全分辨率出片）。
 

@@ -14,8 +14,6 @@ import {readFileSync} from 'node:fs';
 import * as commands from '../cli/commands.mjs';
 import {loadProject} from '../project/load.mjs';
 import {renderStills} from '../media/renderRange.mjs';
-import {sceneSchema, validateScene, resolveAt} from '../../contract/scene.js';
-import {normalizeConfig} from '../../contract/config.js';
 
 const json = (v) => JSON.stringify(v, null, 2);
 const result = (payload) => ({content: [{type: 'text', text: json(payload)}]});
@@ -61,8 +59,8 @@ export function buildServer() {
 
   server.registerTool('filmwright_new', {
     title: '新建项目骨架',
-    description: '建一个能直接跑通的最小项目（scene 或 shots 模板）。目录非空会拒绝，从不覆盖已有文件。',
-    inputSchema: {dir: z.string().describe('目标目录'), template: z.enum(['scene', 'shots']).optional()},
+    description: '建一个能直接跑通的最小项目（手写镜头模板）。目录非空会拒绝，从不覆盖已有文件。',
+    inputSchema: {dir: z.string().describe('目标目录'), template: z.enum(['shots']).optional()},
   }, async ({dir, template}) => {
     try {
       const r = await commands.newProject({dir: resolve(dir), args: {json: true, ...(template ? {template} : {})}});
@@ -72,15 +70,9 @@ export function buildServer() {
     }
   });
 
-  server.registerTool('filmwright_schema', {
-    title: '读场景规格 schema',
-    description: '机器可读的 scene.json 规格：全部类型与用途、每类字段与容量上限、at 对齐语法、错误码表。**写 scene 之前先调这个**。',
-    inputSchema: {},
-  }, async () => result({ok: true, command: 'schema', data: {schema: sceneSchema()}}));
-
   server.registerTool('filmwright_timeline', {
     title: '读时间轴',
-    description: '返回 timeline.json 的句 id、起止帧与字幕块数 —— 写 scene.json 的 at 之前先看这个。',
+    description: '返回 timeline.json 的句 id、起止帧与字幕块数 —— 写镜头之前先看这个。',
     inputSchema: {project: projectArg},
   }, async ({project}) => {
     try {
@@ -103,27 +95,6 @@ export function buildServer() {
     }
   });
 
-  server.registerTool('filmwright_scene_validate', {
-    title: '校验场景规格（不启浏览器）',
-    description: '只查 scene.json：类型、字段、at 对齐、顺序。秒级返回结构化错误（code/where/hint），改规格的快速回路。',
-    inputSchema: {project: projectArg},
-  }, async ({project}) => {
-    try {
-      const dir = resolve(project);
-      const proj = await loadProject(dir);
-      if (!proj.scene) {
-        return fail({ok: false, command: 'scene_validate', errors: [{code: 'NO_SCENE', message: '项目里没有 scene.json', hint: '用 filmwright_new 建 scene 模板，或手写一份'}]});
-      }
-      let assetNames = null;
-      try { assetNames = normalizeConfig(proj.raw).assets.map((a) => a.name); } catch { /* assets 问题由 check 报 */ }
-      const r = validateScene(proj.scene, {timeline: proj.timeline ?? {sentences: []}, assetNames});
-      return r.ok ? result({ok: true, command: 'scene_validate', data: {shots: proj.scene.shots.length}})
-        : fail({ok: false, command: 'scene_validate', errors: r.errors});
-    } catch (e) {
-      return fail({ok: false, command: 'scene_validate', errors: [{code: e.code ?? 'ERROR', message: e.message}]});
-    }
-  });
-
   server.registerTool('filmwright_tts', {
     title: '解说词 → 配音 + 时间轴',
     description: '读 script/narration.txt 生成 audio.wav 与 timeline.json（逐句缓存，改一句只重合成一句）。需要 Python 3 + edge-tts。',
@@ -131,7 +102,7 @@ export function buildServer() {
   }, async ({project}) => run('tts', project));
 
   server.registerTool('filmwright_check', {
-    title: '十道自检',
+    title: '九道自检',
     description: 'static_only=true 时七道不启浏览器（秒级）；完整自检含逐帧绘制与画质。errors 带 code/where。',
     inputSchema: {project: projectArg, static_only: z.boolean().optional()},
   }, async ({project, static_only}) =>
@@ -154,12 +125,12 @@ export function buildServer() {
   });
 
   /**
-   * 一轮完整的「改 → 验 → 看」：scene 校验 + 静态自检 + 各镜头代表帧回图。
-   * agent 每改一轮规格调一次，不用自己拼三步、也不用猜该看哪一帧。
+   * 一轮完整的「改 → 验 → 看」：静态自检 + 回图。
+   * agent 每改一轮镜头调一次，不用自己拼两步、也不用猜该看哪一帧。
    */
   server.registerTool('filmwright_review', {
     title: '一轮自检 + 目视（推荐回路）',
-    description: '一次调用完成：scene 校验 → 七道静态自检 → 每个镜头取一张代表帧（落位后 60% 处）并内联回图。改完 scene.json 就调它。',
+    description: '一次调用完成：静态自检 → 回图（全片均匀采样 4 张代表帧并内联）。改完 shots/index.js 就调它。',
     inputSchema: {
       project: projectArg,
       max_images: z.number().int().min(1).optional().describe('内联图片张数，默认 4，上限 8'),
@@ -170,59 +141,24 @@ export function buildServer() {
       const proj = await loadProject(dir);
       const errors = [];
       const warnings = [];
-      // 1) scene 校验（有 scene.json 才查）。规格有错就到此为止 ——
-      //    渲染一份坏规格没有意义，先把可行动的错交回去。
-      let assetNames = null;
-      try { assetNames = normalizeConfig(proj.raw).assets.map((a) => a.name); } catch { /* check 会报 */ }
-      if (proj.scene) {
-        const v = validateScene(proj.scene, {timeline: proj.timeline ?? {sentences: []}, assetNames});
-        if (!v.ok) {
-          return fail({ok: false, command: 'review', stage: 'scene',
-            errors: v.errors.map((e) => ({...e, stage: 'scene'})), warnings: [],
-            data: {note: '先修 scene.json 再 review：这一步没渲染'}});
-        }
-      }
-      // 2) 静态自检（不启浏览器那七道）
+      // 1) 静态自检（不启浏览器那七道）
       const c = await commands.check({projectDir: dir, proj, args: {json: true, 'static-only': true}, opts: {}});
       for (const e of c.errors ?? []) errors.push({...e, stage: 'check'});
       warnings.push(...(c.warnings ?? []));
       if ((c.code ?? 0) !== 0) {
         return fail({ok: false, command: 'review', errors, warnings, data: {stage: 'check', note: '静态自检没过，这一步没渲染'}});
       }
-      // 3) 代表帧：**取「末拍落位之后」**，不是区间百分比。
+      // 2) 代表帧：**全片均匀采样**。
       //
-      // 为什么不能按百分比取：元素是错峰进场的，区间 60% 处可能最后一拍还没落位
-      // （实测 promo 的 compare：右栏在 228 帧进场，60% 落在 227 帧，图上只有左栏）。
-      // 节拍表是模板自己算出来的，用它取帧才是「内容齐全」的帧。
+      // 为什么不是「按镜头取末拍落位之后」：镜头是手写代码，host 侧不求值
+      // `shots/index.js` 就不知道每个镜头的区间与节拍。所以这里一律均匀采样 ——
+      // 这一步是「渲染前先看几张图」，要精确看某个镜头就用 filmwright_stills
+      // 自己给 frames（那才是按镜头取帧的入口）。
       const total = proj.timeline?.total_frames ?? 0;
-      let marks = [];
-      if (proj.scene?.shots?.length) {
-        const starts = proj.scene.shots.map((s) => resolveAt(s.at, proj.timeline));
-        let beats = null;
-        try {
-          // 模板的 beats 需要时间轴已装载（staggerFrames 查 S/BLK）
-          const {setTimeline} = await import('../../contract/timeline.js');
-          setTimeline(proj.timeline);
-          const {compileScene} = await import('../../runtime/scene/templates.js');
-          beats = compileScene(proj.scene, proj.timeline).map((s) => s.beats ?? null);
-        } catch {
-          beats = null;   // 拿不到节拍就退回区间百分比（下面用 0.75，比 0.6 稳）
-        }
-        marks = proj.scene.shots.map((s, i) => {
-          const a = starts[i];
-          const b = i + 1 < starts.length ? starts[i + 1] : total;
-          const last = beats?.[i]?.length ? Math.max(...beats[i]) : null;
-          const frame = last !== null
-            ? Math.min(b - 1, last + 8)                                  // 末拍后 8 帧：元素全在位
-            : Math.min(b - 1, a + Math.round((b - a) * 0.75));
-          return {label: `${s.type}@${typeof s.at === 'string' ? s.at : s.at ?? ''}`,
-            frame: Math.max(1, Math.min(total, frame))};
-        });
-      } else {
-        const n = 4;
-        marks = Array.from({length: n}, (_, i) => ({label: `sample${i + 1}`, frame: Math.max(1, Math.round(total * (i + 0.6) / n))}));
-        warnings.push('没有 scene.json，代表帧退化为全片均匀采样 4 张（手写镜头项目请自己给 frames）');
-      }
+      const n = 4;
+      const marks = Array.from({length: n}, (_, i) =>
+        ({label: `sample${i + 1}`, frame: Math.max(1, Math.round(total * (i + 0.6) / n))}));
+      warnings.push('代表帧是全片均匀采样 4 张；要精确看某个镜头，用 filmwright_stills 自己给帧号');
       const picked = marks.slice(0, imageCap(max_images));
       const outDir = join(dir, '.work', 'review');
       const files = await renderStills(dir, proj, picked.map((m) => m.frame), outDir, {});

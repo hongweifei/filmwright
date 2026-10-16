@@ -27,7 +27,7 @@ const {serveProject} = await imp('src/host/project/server.mjs');
 const {openSession} = await imp('src/host/browser/session.mjs');
 const {loadProject} = await imp('src/host/project/load.mjs');
 
-const P = `${ROOT}/examples/scenecast`;
+const P = `${ROOT}/examples/minimal`;
 const proj = await loadProject(P);
 const server = await serveProject(P, {raw: proj.raw, timeline: proj.timeline, shotsRel: null, scene: proj.scene});
 const base = `http://127.0.0.1:${server.address().port}/`;

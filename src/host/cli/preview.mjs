@@ -29,14 +29,13 @@ export async function preview(ctx) {
     raw: ctx.proj.raw,
     timeline: ctx.proj.timeline,
     shotsRel,
-    scene: ctx.proj.scene ?? null,
     watch: true,          // 预览才需要热重载；渲染不需要（会拖慢且无意义）
   });
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}/preview`;
 
   console.log(`filmwright 预览：${url}`);
-  const watched = [shotsRel ? shotsRel + '/' : null, ctx.proj.scene ? 'scene.json' : null, 'film.config.mjs']
+  const watched = [shotsRel ? shotsRel + '/' : null, 'film.config.mjs']
     .filter(Boolean).join('、');
   console.log(`  改 ${watched} 后保存，页面会自动重载。`);
   console.log('  按 Ctrl+C 结束。');

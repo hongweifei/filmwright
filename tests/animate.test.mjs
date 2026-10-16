@@ -6,14 +6,12 @@
 //   3. **`kf` 向后兼容** —— 扩展加缓动后，原来只传两元组的调用方行为必须不变
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-// 注意：EASE_NAMES 从 **contract** 取（schema 的归属层），EASES 从 **runtime** 取。
+// 注意：EASE_NAMES 从 **contract** 取（契约的归属层），EASES 从 **runtime** 取。
 // 两份规则因分层规则而分开写，下面的交叉一致性测试负责钉住它们不漂移。
 import {EASES, kf, clamp, step} from '../src/runtime/motion/ease.js';
-import {ANIM_PROPS, compileAnimate, evalAnimate, mergeAnimate} from '../src/runtime/scene/animate.js';
-import {validateAnimate, EASE_NAMES} from '../src/contract/scene.js';
-import {setTimeline} from '../src/contract/timeline.js';
-import {compileScene} from '../src/runtime/scene/templates.js';
-import {setShots, bindShots, shots} from '../src/runtime/stage/shots.js';
+import {ANIM_PROPS, compileAnimate, evalAnimate, mergeAnimate} from '../src/runtime/motion/animate.js';
+import {validateAnimate, EASE_NAMES} from '../src/contract/animate.js';
+import {setShots, bindShots} from '../src/runtime/stage/shots.js';
 
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) <= eps;
 
@@ -64,11 +62,11 @@ test('kf 多段：在段边界处取到正确的那一段', () => {
 // ─────────────────────────── 缓动词汇表 ───────────────────────────
 
 test('缓动词汇表的两份**必须逐项对齐**（名字与顺序都一样）', () => {
-  // 这份名单**必然有两份**，是分层逼出来的：`scene.json` 的 `ease` 字段由 contract 校验
-  // （`contract/scene/tables.js` 的 `EASE_NAMES`），实现放在 `runtime/motion/ease.js` 的 `EASES`
+  // 这份名单**必然有两份**，是分层逼出来的：手写镜头 `animate` 里的 `ease` 字段由 contract 校验
+  // （`contract/animate.js` 的 `EASE_NAMES`），实现放在 `runtime/motion/ease.js` 的 `EASES`
   // —— 而 contract **不能 import runtime**（分层规则，见 `docs/architecture.md`）。
   // ⇒ 收敛不了成一份，那就**把两份钉死**：
-  //   · 实现里多一个缓动、名单里没有 ⇒ `scene.json` 会拒掉一个运行时其实支持的写法（用户莫名其妙）；
+  //   · 实现里多一个缓动、名单里没有 ⇒ 手写镜头会被拒掉一个运行时其实支持的写法（用户莫名其妙）；
   //   · 名单里多一个、实现里没有 ⇒ `EASES[name]` 是 undefined，动画静默不生效。
   // 顺序也要一致：`EASES` 是按名单顺序建的，`Object.keys` 的顺序就是给人看的「有哪些缓动」。
   assert.deepEqual(Object.keys(EASES), EASE_NAMES,
@@ -304,49 +302,3 @@ test('SCENE_ANIM_RANGE：beat 超出实际拍数 ⇒ 报错并说出**实际几�
   }
 });
 
-// ─────────────────────────── §10.4 改解说词后 beat 锚点仍对齐 ───────────────────────────
-
-test('§10.4 改解说词后 **beat 锚点仍对齐**，而 frame 锚点不跟随（这是 beat 时间基的全部意义）', () => {
-  // 两句**起点相同、长度不同**的解说词：节拍表会因此重排（staggerFrames 有压缩路径），
-  // 所以 beat 锚点的绝对帧会变，而 frame 锚点（相对节点起点）不变。
-  const mkTl = (to) => {
-    const from = 1;                                  // 从第 1 帧起，单镜头覆盖全片
-    const step = Math.floor((to - from) / 3);
-    const subs = [0, 1, 2].map((i) => ({
-      from: from + i * step, to: from + i * step + step - 10, text: '块' + (i + 1),
-    }));
-    return {
-      fps: 30, total_frames: 900,
-      chapters: [{n: 1, title: '一章', from}],
-      sentences: [{id: 'S01', chapter: 1, from, to, text: '一句话'}],
-      subs,
-    };
-  };
-  // 5 个要点 > 3 个字幕块 ⇒ 走"补齐 + 压缩"路径，节拍表与句子长度相关
-  const items = ['a', 'b', 'c', 'd', 'e'].map((t) => ({t}));
-  const mkScene = (anim) => ({shots: [{type: 'bullets', at: 'S01', heading: 'h', items, animate: anim}]});
-
-  const run = (tl, anim) => {
-    setTimeline(tl);
-    const declared = compileScene(mkScene(anim), tl);
-    bindShots(declared, tl.total_frames);
-    const s = shots()[0];
-    return {beats: s.beats, anchor: s.anim.y[1][0]};
-  };
-
-  const beatAnim = {y: [{beat: 1, v: 0}, {beat: 2, v: 100}]};
-  const a = run(mkTl(150), beatAnim);      // 短句 ⇒ 节拍被压缩
-  const b = run(mkTl(600), beatAnim);      // 长句 ⇒ 不压缩
-
-  assert.notDeepEqual(a.beats, b.beats, '句子长度变了，节拍表应当重排（前提成立才谈得上"跟随"）');
-  assert.notEqual(a.anchor, b.anchor, 'beat 锚点必须**跟着节拍移动**');
-  assert.equal(a.anchor, a.beats[1], '且它精确落在第 2 拍上');
-  assert.equal(b.anchor, b.beats[1]);
-
-  // 负面对照：frame 锚点是"节点内第几帧"，同一起点下**不随时间轴长度变化**
-  const frameAnim = {y: [{frame: 1, v: 0}, {frame: 31, v: 100}]};
-  const fa = run(mkTl(150), frameAnim);
-  const fb = run(mkTl(600), frameAnim);
-  assert.equal(fa.anchor, fb.anchor, 'frame 锚点不该跟随（起点相同）');
-  assert.equal(fa.anchor, 31, 'frame:31 ⇒ start(1) + 30');
-});

@@ -1,9 +1,8 @@
 // 项目脚手架：filmwright new <目录>。
 //
 // 给 agent 的第一块地：新目录 + 能直接跑通的最小项目。
-// 两种模板：
-//   scene（默认）—— 声明式规格路线，AI 只改 scene.json 与 narration.txt；
-//   shots        —— 手写镜头路线（逃生舱的起点）。
+// 镜头是**纯命令式**的：只有 shots 一种模板，`shots/index.js` 里的 SHOTS 数组
+// 就是画面的唯一来源（没有声明式规格文件）。
 import {existsSync, mkdirSync, writeFileSync, readdirSync} from 'node:fs';
 import {join, basename} from 'node:path';
 
@@ -45,29 +44,14 @@ export default {
 
   tts: {engine: 'edge', voice: 'zh-CN-YunxiNeural', rate: '+0%'},
 
-  // 素材（图片）：文件放 public/ 下，这里声明名字；scene 的 image 镜头引用它。
+  // 素材（图片）：文件放 public/ 下，这里声明名字；手写镜头里用 img('名字') 引用它。
   assets: [],
 
   theme: {accents: ['#3FA7FF', '#35D07F', '#F5B942']},
 };
 `;
 
-const sceneTmpl = (slug) => JSON.stringify({
-  $schema: 'filmwright/scene-v0',
-  shots: [
-    {type: 'title', at: 1, title: slug, sub: '用 scene.json 做片子', en: 'AI writes content, engine keeps determinism'},
-    {
-      type: 'bullets', at: 'S01', heading: '先改这里',
-      items: [
-        {t: '一句话一个要点', d: 'items 跟着字幕块错峰进场'},
-        {t: '节拍用句 id', d: 'at: "S02" 自动对齐时间轴'},
-      ],
-    },
-    {type: 'stat', at: 'S03', value: 3, unit: '步', label: 'tts → check → all'},
-  ],
-}, null, 2) + '\n';
-
-const shotsTmpl = (slug) => `// ${slug} 的手写镜头。规格路线见 scene.json / docs/scene.md。
+const shotsTmpl = (slug) => `// ${slug} 的手写镜头 —— SHOTS 就是这个片子的全部画面。
 // 纪律：只声明 start；区间由引擎串接。draw 必须是普通函数（要读 this.from）。
 import {text, theme as C, fonts as F, cutBefore, inv, easeOut3, hexA, applyDesignScale} from 'filmwright';
 
@@ -106,12 +90,12 @@ export const SHOTS = [TITLE, BODY];
  * 建骨架。目录必须不存在或为空 —— 不覆盖别人的东西。
  * @returns {{dir: string, slug: string, template: string, files: string[]}}
  */
-export function scaffoldProject(targetDir, {template = 'scene'} = {}) {
+export function scaffoldProject(targetDir, {template = 'shots'} = {}) {
   const dir = targetDir;
-  if (!['scene', 'shots'].includes(template)) {
+  if (template !== 'shots') {
     const e = new Error('filmwright: 不认识的模板 ' + template);
     e.code = 'BAD_TEMPLATE';
-    e.hint = '可用：scene / shots';
+    e.hint = '可用：shots（唯一模板）';
     throw e;
   }
   if (existsSync(dir) && readdirSync(dir).length > 0) {
@@ -131,10 +115,9 @@ export function scaffoldProject(targetDir, {template = 'scene'} = {}) {
       '要换字体就把 ttf/otf 放进本目录（同名即覆盖）。\n' +
       '字体没就绪就画，度量全错；加载失败会回退到系统字体（不报错）。\n' +
       '库自带那份的许可是 SIL OFL 1.1，见 `<库根>/fonts/LICENSE.md`。\n',
-    'public/assets/README.md': '# 素材\n\n图片放这里，配置 `assets` 声明名字，scene 的 image 镜头用 `asset` 引用。\n',
+    'public/assets/README.md': '# 素材\n\n图片放这里，配置 `assets` 声明名字，手写镜头里用 `img(\'名字\')` / `picture()` 引用。\n',
   };
-  if (template === 'scene') files['scene.json'] = sceneTmpl(slug);
-  else files['shots/index.js'] = shotsTmpl(slug);
+  files['shots/index.js'] = shotsTmpl(slug);
 
   for (const [rel, body] of Object.entries(files)) {
     const p = join(dir, rel);

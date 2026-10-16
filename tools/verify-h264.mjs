@@ -38,7 +38,7 @@ const argv = process.argv.slice(2);
 const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
 const N = Number(argv.find((a) => /^\d+$/.test(a)) ?? 45);
 const USE_GPU = argv.includes('--gpu');
-const PROJECT = join(ROOT, 'examples', 'scenecast');
+const PROJECT = join(ROOT, 'examples', 'minimal');
 const OUT = join(ROOT, '.work', 'h264-out.h264');
 const FPS = 30;
 

@@ -22,12 +22,15 @@ export {DEFAULT_FONTS, DEFAULT_FONT_FILES, DEFAULT_THEME, DESIGN, accent, accent
 // ---- 契约：时间轴查询 ----
 export {BLK, S, cardFrom, cardRange, chapterAt, cutBefore, isReady, setTimeline, tailFrom, timeline} from './contract/timeline.js';
 
-// ---- 契约：场景规格与校验（scene.json 的规则本身） ----
-export {ANIM_PROPS, CONTAINER_TYPES, MASK_SHAPES, SCENE_ERROR_CODES, SCENE_SCHEMA, SHOT_MAXES, SHOT_TYPES, TEMPLATE_TYPES, TRANSITION_DIRECTIONS, TRANSITION_TYPES, assertNoCyclesPlain, isValidTransition, needsThree, resolveAt, sceneSchema, validate3D, validateAnimate, validateEffects, validateLayers, validateMask, validateScene} from './contract/scene.js';
+// ---- 契约：镜头字段的校验（关键帧 / 效果 / 遮罩 / 变换 / 转场） ----
+// 规则只有这一份：手写镜头在 `setShots` 时调它们，写错当场报（带 code / path / hint）。
+export {ANIM_ERROR_CODES, ANIM_PROPS, validateAnimate, validateKeyTrack} from './contract/animate.js';
+export {MASK_ERROR_CODES, MASK_SHAPES, validateMask} from './contract/mask.js';
+export {TRANSITION_DIRECTIONS, TRANSITION_TYPES} from './contract/transition.js';
+export {ERROR_CODES} from './contract/errorCodes.js';
 
 // ---- 契约：效果链与 3D 的词汇表 ----
-export {EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES, EFFECT_SPECS, EFFECT_TYPES, GRADE_LOOKS} from './contract/effects.js';
-export {ANIM3D_PROPS, LIGHT_ANIM_PROPS, LIGHT_TYPES, MAX_LIGHTS, MAX_OBJECTS, SHAPES, THEME_COLOR_KEYS, THREE_ERROR_CODES} from './contract/three.js';
+export {EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES, EFFECT_SPECS, EFFECT_TYPES, GRADE_LOOKS, validateEffects} from './contract/effects.js';
 
 // ---- 运行时：动效（缓动） ----
 export {EASES, EASE_NAMES, clamp, easeIn3, easeInOut, easeOut3, easeOut4, easeOutBack, enter, exit, inv, kf, lerp, pulse, rnd, step} from './runtime/motion/ease.js';
@@ -49,9 +52,8 @@ export {assertNoCycles, bindLocalShots, compLength, drawCompInstance, localFrame
 // ---- 运行时：版面 ----
 export {DESIGN_SAFE, applyDesignScale, sSize, sX, sY, scale, scaleFactors} from './runtime/layout/design.js';
 
-// ---- 运行时：声明式引擎（scene.json → 镜头） ----
-export {TEMPLATES, compileScene} from './runtime/scene/templates.js';
-export {compileAnimate, evalAnimate, mergeAnimate} from './runtime/scene/animate.js';
+// ---- 运行时：关键帧求值 ----
+export {compileAnimate, evalAnimate, mergeAnimate} from './runtime/motion/animate.js';
 
 // ---- 运行时：效果链（编译与执行） ----
 export {compileEffects, evalEffects, isNoopEffects} from './runtime/fx/compile.js';
@@ -78,5 +80,4 @@ export {INK_THR, contentRect, installAnalysis} from './runtime/qc/analysis.js';
 export {annexBFromChunk, createH264Encoder, h264Available} from './runtime/encode/h264.js';
 
 // ---- 运行时：3D 图层（现成的 three，**可选**依赖） ----
-export {create3D, ensureThree, getRenderer, getThree, loadThree} from './runtime/three/stage.js';
-export {reset3D, threeT} from './runtime/three/scene3d.js';
+export {create3D, loadThree} from './runtime/three/stage.js';

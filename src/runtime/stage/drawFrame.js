@@ -7,7 +7,7 @@ import {config, accentFor, view} from '../../contract/config.js';
 import {isReady, chapterAt, timeline, tailFrom} from '../../contract/timeline.js';
 import {shotAt, shots, normalizeTransition} from './shots.js';
 import {withLayer} from '../composite/layer.js';
-import {mergeAnimate} from '../scene/animate.js';
+import {mergeAnimate} from '../motion/animate.js';
 import {applyEffects, getScratch, paintWithEffects} from '../fx/gpu.js';
 import {isNoopEffects} from '../fx/compile.js';
 import {drawBackdrop} from '../overlay/backdrop.js';

@@ -1,9 +1,12 @@
 // 镜头注册与串接。只声明 start，区间由这里算 —— 手算 from/to 会让区间重叠。
 import {isValidTransform} from '../composite/layer.js';
-import {compileAnimate} from '../scene/animate.js';
-import {validateAnimate, validateEffects, TRANSITION_TYPES, TRANSITION_DIRECTIONS} from '../../contract/scene.js';
+import {TRANSFORM_HINT} from '../../contract/composite.js';
+import {compileAnimate} from '../motion/animate.js';
+import {validateAnimate} from '../../contract/animate.js';
+import {validateEffects, EFFECT_SPECS} from '../../contract/effects.js';
+import {validateMask} from '../../contract/mask.js';
+import {TRANSITION_TYPES, TRANSITION_DIRECTIONS} from '../../contract/transition.js';
 import {compileEffects} from '../fx/compile.js';
-import {EFFECT_SPECS} from '../../contract/effects.js';
 
 let SHOTS = [];
 
@@ -79,14 +82,14 @@ export function setShots(list) {
       throw new Error('filmwright: 镜头缺少 draw 函数（start=' + s.start + '）');
     }
     // 可选的节拍声明（绝对帧号）：画质自检靠它区分「入场/离场」，把末拍稳定期
-    // 从读数升级成硬判据。scene 模板自动带上；手写镜头自愿声明，不声明就维持原样。
+    // 从读数升级成硬判据。声明了就用它判；不声明就维持原样（只报告，不判失败）。
     if (s.beats !== undefined) {
       if (!Array.isArray(s.beats) || s.beats.some((b) => !Number.isInteger(b) || b < 1)) {
         throw new Error('filmwright: 镜头 beats 必须是 ≥1 的整数帧号数组（start=' + s.start + '）');
       }
     }
-    // 关键帧动画：形状校验与 scene.json 走**同一套规则**（手写镜头不走 scene 校验，
-    // 所以在这里补上）。拍数相关的两条要到绑定期才知道，见 compileNodeTracks。
+    // 关键帧动画：形状校验走 contract 里**唯一一份**规则（绑定期在这里调用）。
+    // 拍数相关的两条要到绑定期才知道，见 compileNodeTracks。
     if (s.animate !== undefined) {
       const errs = validateAnimate(s.animate, s.transform);
       if (errs.length) {
@@ -97,7 +100,7 @@ export function setShots(list) {
         throw e;
       }
     }
-    // 效果链：同样与 scene.json 走**同一套规则**。
+    // 效果链：与上一条同样的道理 —— 规则只有 contract 那一份。
     //
     // 为什么这条是必须的（实测过两个难查的失败）：
     //   · **不认识的效果名**会被 compileEffects 静默 `continue` —— 不报错、
@@ -115,6 +118,18 @@ export function setShots(list) {
         throw e;
       }
     }
+    // 遮罩：与 `withLayer` 那条路共用同一份校验。原先手写镜头不校验 mask，
+    // 写错要等画到那一帧才崩 —— 现在也在这里当场报。
+    if (s.mask !== undefined) {
+      const errs = validateMask(s.mask);
+      if (errs.length) {
+        const first = errs[0];
+        const e = new Error(`filmwright: 镜头 mask 形状不对（start=${s.start}）：${first.message}`);
+        e.code = first.code;
+        e.hint = first.hint;
+        throw e;
+      }
+    }
     // 可选的入场转场。**不破坏核心不变量**：两个镜头的 draw 都是只依赖 N 的纯函数，
     // 混合系数也是 N 的纯函数，所以「第 N 帧只是 N 的函数」仍然成立。
     if (s.transition !== undefined) {
@@ -127,7 +142,7 @@ export function setShots(list) {
     // 可选的图层变换 / 混合模式（同样不破坏纯函数不变量：它只是 N 的函数）。
     if (s.transform !== undefined && !isValidTransform(s.transform)) {
       throw new Error('filmwright: 镜头 transform 形状不对（start=' + s.start + '）：' +
-        JSON.stringify(s.transform) + '；可用字段 x/y/scale/rotate/alpha/blend/origin');
+        JSON.stringify(s.transform) + '；' + TRANSFORM_HINT);
     }
   }
   for (let i = 1; i < declared.length; i++) {

@@ -84,7 +84,7 @@ jobs:
       # 「同一个根因换个位置又回来」的两类，各让 CI 红过一次以上：
       #   ① CI 不带参数跑工具，而工具写着 resolve(process.argv[2]) → 抛 ERR_INVALID_ARG_TYPE；
       #   ② existsSync 为真 ≠ 能读（Windows 上别的进程持有句柄 → EBUSY）。
-      # ② 用棘轮：当前的 10 处读的是用户项目文件（非跨进程写），记录在案；
+      # ② 用棘轮：当前在册的那些读的是用户项目文件（非跨进程写），记录在案；
       #    新出现必须审一遍属于哪一类。
       - name: 调用安全（CI 无参调用 / 存在就直读）
         run: node tools/verify-invocation.mjs
@@ -142,7 +142,7 @@ jobs:
   # 墙钟从「最慢那条腿」≈13 分钟降到 max(快组, 慢组) ≈ 8 分钟。
   # 代价是多两个 runner；覆盖率**一点没少**（同一批工具、同一批 OS）。
   browser-slow:
-    name: 渲染·慢（长片 / 按段归因）· ${{ matrix.os }}
+    name: 渲染·慢（长片）· ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -186,9 +186,13 @@ jobs:
 
       # ⚠️ README 路径这一步**已移到 `browser-doc` 作业** —— 它是这个作业里第二费时的一项，
       # 而拆出 `browser-slow` 之后瓶颈正是本作业。别再加回来（加了就是重复跑）。
-      # 增量重渲按段归因：改一个镜头只重渲覆盖它的段
-      - name: 增量重渲的按段归因（改一个镜头只重渲覆盖它的段）
-        run: node tools/verify-attribution.mjs
+      #
+      # ⚠️ 「改一个镜头只重渲覆盖它的段」（`verify-attribution`）**已随声明式一起删掉**：
+      # 那条判据靠的是 scene.json 的**逐镜头**指纹，而镜头现在全在一个 `shots/index.js` 里，
+      # 只能整文件当全局指纹 ⇒ 改任何一个镜头都会让所有段失效（见 docs/qc.md）。
+      # 仍然成立的那部分（复用段与重渲逐帧一致 / 同输入第二跑**一段都不重渲** /
+      # 改文件→画面变→改回→回到基线 / 引擎源码变→全失效）由 `verify-incremental` 守，
+      # 在 `browser` 作业里 —— 「复用真的发生了」这条计数断言也一并搬到了那里。
 
   browser:
     name: 渲染（无头浏览器 + ffmpeg）· ${{ matrix.os }}
@@ -250,13 +254,10 @@ jobs:
 
       # 画质/逐帧是「阈值型 + 浏览器型」检查：读数贴阈值或 runner 资源紧张时
       # 会随机翻面（实测 windows runner 上不同步骤轮流挂，代码未变）。
-      - name: 场景规格示例（纯 scene 项目）
-        run: |
-          node bin/filmwright.mjs check --project examples/scenecast --static-only
-          node bin/filmwright.mjs check --project examples/gallery --static-only
-          node bin/filmwright.mjs check --project examples/three --static-only
-          node bin/filmwright.mjs check --project examples/promo --static-only
-          node bin/filmwright.mjs check --project examples/vertical --static-only
+      # ⚠️ 「五个示例各自 `check --static-only`」这一步**已删**：那五个示例
+      # （scenecast / gallery / three / promo / vertical）都是 scene.json 驱动的，
+      # 已随声明式一起删掉；唯一剩下的 `examples/minimal` 由上面那一步（全量 `check`）
+      # 覆盖，这里再跑一遍 static-only 只是重复。
 
       # 渲染确定性：同一次运行内 capture → verify，证明「两轮渲染逐字节相同」。
       #
@@ -293,13 +294,12 @@ jobs:
       # ERR_INVALID_FILE_URL_PATH。曾经因为加了 `.` 导致 6 个工具在 CI 里失败。
       # 逐个量过耗时，只把快的接进来（最慢 41s，那批合计约 100s）：
       #   mix 1.7s / clips 1.9s / clip-render 2.3s / reuse 5.0s /
-      #   composite 8.9s / incremental 38.8s / determinism 41.3s
-      # 慢的各自拆成专用作业（readme 148s → `browser-doc`；attribution 177s 与
-      # longform → `browser-slow`）；tts / voiceover 要联网或真配音产物，仍在手动跑。
-      # 见 docs/qc.md 里那张"哪些在跑"的表。
+      #   incremental 38.8s / determinism 41.3s
+      # 慢的各自拆成专用作业（readme 148s → `browser-doc`；longform → `browser-slow`）；
+      # tts / voiceover 要联网或真配音产物，仍在手动跑。见 docs/qc.md 里那张"哪些在跑"的表。
       #
-      # ⚠️ 工具数会漂：`verify-comp.mjs` 与 `verify-complex.mjs` 已删（独有判据并入
-      # `verify-composite.mjs`，本作业里对应两步也一并删除）。
+      # ⚠️ 工具数会漂：`verify-comp` / `verify-complex` / `verify-composite` / `verify-reveal` /
+      # `verify-attribution` / `dogfood-review` 都已删（对象随声明式一起消失）。
       #
       # **这里刻意不写具体数字**：`verify-docs` 核的是 `README.md` 与 `docs/qc.md` 里那两个
       # 计数，**ci.yml 不在它的扫描范围里** —— 这行原来写着「24 个验收工具里 22 个自动跑，
@@ -307,10 +307,9 @@ jobs:
       # 是假的）。数字要看去那两个文件；**在不受守卫管的注释里复述数字，必然腐烂**。
       #
       # 接进来之后**立刻**抓到两个一直在失败的守卫（详见 docs/qc.md）：
-      #   · verify-readme 里硬编码 `schema 类型数 !== 13`，而类型已涨到 18
-      #   · verify-attribution 硬编码目标镜头起点 602 与"必须正好 1 段"，
-      #     而该镜头已跨 2 段（重渲 2 段才是正确行为）
-      # 两处都改成**从实现里推导期望**，不再硬编码数字。
+      #   · verify-readme 里硬编码 `schema 类型数 !== 13`，而类型已涨到 18（该判据随
+      #     声明式一起删了 —— `schema` 命令本身已不存在）
+      # 那条改成**从实现里推导期望**，不再硬编码数字。
       - name: 配乐混音（真跑混音，并直接测音乐那一路）
         run: node tools/verify-mix.mjs
 
@@ -325,20 +324,10 @@ jobs:
 
       # D 节是父子绑定（`follow`）与空物体（`empty`）：量**方向 / 单调 / 逐字节等价**，
       # 负面对照是「去掉 `follow`（绑定失效）⇒ 同一个谓词判红」—— 不是「画面变了」那种恒真说法。
-      - name: 图层合成（无变换 / 位移 / 旋转 / 透明度 / 混合 / 父子绑定 / 空物体）
-        run: node tools/verify-composite.mjs
-
       # 遮罩（阶段 ③）：四种形状 + 反选都要**确实改变画面**、五种输出互不相同
       # （不是同一个路径换名字）、同一遮罩两次渲染逐字节一致。
       - name: 遮罩（四种形状 / 反选 / 可复现）
         run: node tools/verify-mask.mjs
-
-      # 逐字入场（阶段 ④ 的动效语言）：逐个进场、不引入不确定性、
-      # 落位帧与整块画法的差异**按量级判**（raw RGB 逐像素比，显著差异像素必须为 0
-      # —— 间距/字宽/光晕错位都会露出来）。⚠️「落位后逐字节相同」的旧说法实测不成立
-      # （残差来自逐字光晕叠加），判据已改成量级口径。
-      - name: 逐字入场（逐个进场 / 可复现 / 落位后不排坏字）
-        run: node tools/verify-reveal.mjs
 
       - name: 增量重渲的安全性（复用段必须与重渲逐帧一致）
         run: node tools/verify-incremental.mjs
@@ -349,13 +338,13 @@ jobs:
       # ⚠️ 两个「慢但守核心契约」的验收**已各自拆到专用作业**（公开仓库的 CI 不花钱、
       # 只花墙上时间，所以它们没有被留在手动跑）：
       #   · `verify-readme`（148s）→ `browser-doc`：走一遍文档承诺的快速开始
-      #   · `verify-attribution`（177s）→ `browser-slow`：改一个镜头只重渲覆盖它的段
       # 3D 图层（three 是 **devDependency**，`npm ci` 已经装好了；运行时它仍是可选依赖）。
       # 这条路径以前完全没有自动守卫 —— 改 src/runtime/three/ 或 importmap / vendor 路由
       # 没人拦。它验的是：3D 内容真的叠进帧里、同一帧两次渲染逐字节一致、
-      # 跳帧与连渲一致、光照真的参与着色（只有环境光时物体应当是"平"的）、
-      # 以及不用 3D 的规格**不会去加载 three**。
-      - name: 3D 图层（内容入帧 / 确定性 / 光照真的生效 / 不用 3D 不加载 three）
+      # 跳帧与连渲一致、光照真的参与着色（只有环境光时物体应当是"平"的）。
+      # （原先还有一条「不用 3D 的规格不会去加载 three」——那条随声明式 3D 的
+      #  `needsThree()` 一起删了：命令式 3D 由镜头模块自己 `await loadThree()`，加载与否由用户决定。）
+      - name: 3D 图层（内容入帧 / 确定性 / 光照真的生效）
         run: node tools/verify-three.mjs
 
       # 页面侧 H.264 编码器（WebCodecs）：性能方向的地基。

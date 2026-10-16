@@ -8,10 +8,9 @@ import {isJson, emitJson, toJsonError} from './output.mjs';
 import * as commands from './commands.mjs';
 
 const COMMANDS = [
-  ['new', '新建项目骨架    <目录> [--template scene|shots]', 'new'],
-  ['schema', '输出 scene 规格的机器可读 schema（类型/字段/上限/错误码）', 'schema'],
+  ['new', '新建项目骨架    <目录> [--template shots]', 'new'],
   ['mcp', 'MCP 服务器（stdio），把工具链暴露给 agent', 'mcp'],
-  ['check', '自检：公开面重名导出、模块路径、时间轴引用、场景规格、全帧绘制、画质', 'check'],
+  ['check', '自检：公开面重名导出、模块路径、时间轴引用、素材、主题键、全帧绘制、画质', 'check'],
   ['preview', '预览页（拖动时间轴 / 播放 / 改文件热重载）[--no-open] [--seconds N]', 'preview'],
   ['tts', '解说词 → 配音 + 时间轴', 'tts'],
   ['voices', '列出 TTS 引擎可用性与音色（做片子前先探路）', 'voices'],
@@ -83,12 +82,7 @@ export async function main(argv) {
       if (!json) console.log(usage());
       return fail(e);
     }
-    // new / schema / mcp 不需要 --project：位置参数或无参命令
-    if (entry[2] === 'schema') {
-      const r = await commands.schema({args});
-      const out = typeof r === 'number' ? {code: r} : (r ?? {code: 0});
-      return finish(out.code ?? 0, out.data ?? {}, out.warnings ?? [], out.errors ?? []);
-    }
+    // new / mcp 不需要 --project：位置参数或无参命令
     if (entry[2] === 'mcp') {
       const r = await commands.mcp({args});
       const out = typeof r === 'number' ? {code: r} : (r ?? {code: 0});
@@ -99,7 +93,7 @@ export async function main(argv) {
       if (!target) {
         const e = new Error('filmwright: new 要一个目标目录：filmwright new <目录>');
         e.code = 'MISSING_DIR';
-        e.hint = '目录必须不存在或为空；模板可选 --template scene（默认）/ shots';
+        e.hint = '目录必须不存在或为空；模板可选 --template shots（现在只有这一种）';
         throw e;
       }
       const r = await commands.newProject({dir: resolve(target), args});

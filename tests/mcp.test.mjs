@@ -118,7 +118,7 @@ function openSession() {
   };
 }
 
-test('MCP：握手 → 11 个工具齐 → 只读工具真能跑', {skip: sdkMissing && '没装 @modelcontextprotocol/sdk（npm install 后启用）'}, async () => {
+test('MCP：握手 → 9 个工具齐 → 只读工具真能跑', {skip: sdkMissing && '没装 @modelcontextprotocol/sdk（npm install 后启用）'}, async () => {
   const s = openSession();
   try {
     const init = await s.call('initialize', {
@@ -129,19 +129,24 @@ test('MCP：握手 → 11 个工具齐 → 只读工具真能跑', {skip: sdkMis
 
     const tools = await s.call('tools/list', {});
     const names = tools.result.tools.map((t) => t.name);
-    for (const want of ['filmwright_new', 'filmwright_schema', 'filmwright_timeline', 'filmwright_scene_validate',
-      'filmwright_tts', 'filmwright_check', 'filmwright_stills', 'filmwright_review', 'filmwright_srt',
+    for (const want of ['filmwright_new', 'filmwright_timeline', 'filmwright_tts',
+      'filmwright_check', 'filmwright_stills', 'filmwright_review', 'filmwright_srt',
       'filmwright_render', 'filmwright_all']) {
       assert.ok(names.includes(want), '缺工具 ' + want);
     }
-    assert.equal(names.length, 11, '工具数应为 11（新增工具时同步这里）：' + names.join(', '));
+    // 声明式入口已从引擎删除 ⇒ 那两个工具不该再注册（防哪天被顺手加回来）
+    for (const gone of ['filmwright_schema', 'filmwright_scene_validate']) {
+      assert.ok(!names.includes(gone), `${gone} 已随声明式入口删除，不该再注册`);
+    }
+    assert.equal(names.length, 9, '工具数应为 9（增删工具时同步这里）：' + names.join(', '));
 
-    const v = await s.text('filmwright_scene_validate', {project: join(ROOT, 'examples', 'scenecast')});
-    assert.equal(v.payload.ok, true, JSON.stringify(v.payload.errors));
-    assert.equal(v.isError, false);
+    // 只读工具真能跑：静态自检（不开浏览器）在旗舰示例上必须过
+    const c = await s.text('filmwright_check', {project: join(ROOT, 'examples', 'minimal'), static_only: true});
+    assert.equal(c.payload.ok, true, JSON.stringify(c.payload.errors));
+    assert.equal(c.isError, false);
 
-    const t = await s.text('filmwright_timeline', {project: join(ROOT, 'examples', 'scenecast')});
-    assert.equal(t.payload.data.sentences.length, 7);
+    const t = await s.text('filmwright_timeline', {project: join(ROOT, 'examples', 'minimal')});
+    assert.equal(t.payload.data.sentences.length, 8);
     assert.equal(t.payload.data.sentences[0].id, 'S01');
 
     // 坏目录：不是异常，是 isError + 结构化 code（NO_PROJECT_DIR）
@@ -181,7 +186,7 @@ test('MCP：stills / review 真的回图（PNG 魔数），量受 max_images 约
 
     // stills：渲 2 帧、要 2 张图（验回图 + 数量约束）
     const r = await s.callTool('filmwright_stills', {
-      project: join(ROOT, 'examples', 'scenecast'), frames: [150, 470],
+      project: join(ROOT, 'examples', 'minimal'), frames: [150, 470],
       dir: join(ROOT, '.work', 'mcp-test-stills'), max_images: 2,
     });
     const imgs = r.content.filter((c) => c.type === 'image');
@@ -197,7 +202,7 @@ test('MCP：stills / review 真的回图（PNG 魔数），量受 max_images 约
     // review：一次调用 = 校验 + 静态自检 + 代表帧回图。
     // 只渲 1 帧：链路正确性不需要更多帧，而慢机器上每帧都要钱。
     const v = await s.callTool('filmwright_review', {
-      project: join(ROOT, 'examples', 'scenecast'), max_images: 1,
+      project: join(ROOT, 'examples', 'minimal'), max_images: 1,
     });
     const payload = JSON.parse(v.content[0].text);
     assert.equal(payload.ok, true, 'review 失败：' + JSON.stringify(payload.errors));
@@ -207,14 +212,17 @@ test('MCP：stills / review 真的回图（PNG 魔数），量受 max_images 约
       ' payload=' + v.content[0].text.slice(0, 600));
     assert.ok(vImgs[0] && isPng(vImgs[0].data), 'review 回的图必须是 PNG');
     assert.ok(payload.data.frames.length === 1 && payload.data.frames[0].frame > 0);
-    assert.ok(payload.data.shots >= 8, 'scenecast 有 8 个镜头，shots 应报全量');
+    // 代表帧口径：**全片均匀采样 4 张**（不再按声明式的镜头区间取）⇒ data.shots 报的是采样数
+    assert.equal(payload.data.shots, 4, 'review 应报「均匀采样 4 张代表帧」，实际 ' + payload.data.shots);
+    assert.ok(payload.warnings.some((w) => /均匀采样/.test(w)),
+      '要提醒调用方这是均匀采样（不是按镜头取末拍）：' + JSON.stringify(payload.warnings));
     // 调用方能从「shots 全量 vs frames 只回 1 条」看出发生了截断；
     // 截断说明（note）只在 stills 那条路径上加，review 不做断言。
     assert.ok(payload.data.frames.length < payload.data.shots,
-      'max_images=1 而镜头更多时，frames 应少于 shots（据此可知有截断）');
+      'max_images=1 而采样 4 张时，frames 应少于 shots（据此可知有截断）');
   } finally {
     await s.close();
     rmSync(join(ROOT, '.work', 'mcp-test-stills'), {recursive: true, force: true});
-    rmSync(join(ROOT, 'examples', 'scenecast', '.work', 'review'), {recursive: true, force: true});
+    rmSync(join(ROOT, 'examples', 'minimal', '.work', 'review'), {recursive: true, force: true});
   }
 });

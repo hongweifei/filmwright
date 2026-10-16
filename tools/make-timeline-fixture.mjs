@@ -4,7 +4,7 @@
 // 跑 check 与渲染验收 —— 时间轴是数据，夹具只需形状与节拍正确。
 // 真实项目请跑 `filmwright tts`（本工具会明确标注自己是合成夹具）。
 //
-//   node tools/make-timeline-fixture.mjs --project examples/gallery [--fps 30]
+//   node tools/make-timeline-fixture.mjs --project examples/minimal [--fps 30]
 //
 // 节拍模型：中文 ~4.5 字/秒；句间 10 帧、段末 20 帧、章前 45 帧、开头 40 帧、
 // 结尾 90 帧；字幕块按 | 切、按字数分摊。与 src/host/tts/build.py 的默认值对齐。

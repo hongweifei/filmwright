@@ -69,7 +69,9 @@ node bin/filmwright.mjs tts --project my-film
 
 ## 4. 写镜头
 
-> **先选路线**：本教程演示手写镜头（完全自由的逃生舱）。如果内容适合套模板——要点列表、大数字、流程、代码块、图片、对比——更推荐直接写声明式的 `scene.json`，AI/批量生成走这条路，节奏由模板保证：见[场景规格](scene.md)。两条路线可以在一个项目里混用。
+> **画面只有一个来源**：`shots/index.js` 里的 `SHOTS` 数组。没有声明式规格文件——
+> 镜头是逐帧的纯函数，用什么版式、什么动效都由你自己的 `draw` 决定；引擎负责字幕、
+> 章节卡、HUD、进度条、片尾、转场与合流（见 [API 参考](api.md)）。
 
 镜头是 `{start, draw}` 对象，import 的全部来自 `'filmwright'`：
 
@@ -146,11 +148,12 @@ node bin/filmwright.mjs check --project my-film
 ## 6. 出片
 
 ```bash
-node bin/filmwright.mjs all --project my-film --shards 3
+node bin/filmwright.mjs render --project my-film --shards 3   # -> my-film/.work/my-film.mp4（无声）
+node bin/filmwright.mjs all    --project my-film --shards 3   # 自检 -> 渲染 -> 合流
 # -> my-film/renders/my-film.mp4
 ```
 
-`all` = 自检 → 分片渲染 → 合流。只想看无声画面用 `render`；想重配合音用 `tts` + `mux`。
+`all` = 自检 → 分片渲染 → 合流；只想看无声画面就用 `render`；想重配合音用 `tts` + `mux`。
 
 ## 7. 加素材图片
 
@@ -172,7 +175,7 @@ picture(ctx, 'filmstrip', 320, 492, 640, 96, {
 ```
 
 **视频素材**走 `clips`：在 `film.config.mjs` 里声明视频，宿主会用 ffmpeg 抽帧（内容寻址缓存），
-再用 `clip` 模板按源帧取图。不直接用 `video` 元素（原因见[已知限制](../LIMITATIONS.md)）。
+镜头里再用 `clipFrame('名字', n)` 取图（内部按全局帧号映射到源帧号）。不直接用 `video` 元素（原因见[已知限制](../LIMITATIONS.md)）。
 图片仍走 `assets`。详见[配置参考的 clips 段](config.md#clips视频--图片序列素材)。
 
 ## 8. 日常迭代节奏

@@ -105,11 +105,20 @@ test('引擎不认识任何片子：`src/` 里不出现示例项目的名字，�
   // 具体片子的名字。」实测（2026-10-15，去掉注释后）**零命中** ⇒ 规则成立，但此前没人守。
   //
   // ⚠️ 名字表**从 `examples/` 目录派生**，不写死；但 `three` 必须排除 —— 它同时是
-  //    three.js 这个**库名**、也是镜头类型名（`{type: 'three'}`），拿它当判据必然假阳性。
+  //    three.js 这个**库名**、也是旧镜头类型名（`{type: 'three'}`，已随声明式入口删除），
+  //    拿它当判据必然假阳性。
+  //
+  // 下限为什么从 `>= 3` 降到 `>= 1`：2026-10-16 声明式入口（scene.json + 17 模板）删除，
+  // 5 个声明式示例随之删掉，`examples/` 只剩 `minimal`。原下限的取证方向是「当时的语料有多少个
+  // 示例」⇒ 语料被合理删减时它变成假红（枚举没坏）。**这条判据现在弱在哪**：
+  // 名字表只剩一个成员，覆盖不到「引擎里写死了别的片子名」；所以补一条包含关系断言，
+  // 证明枚举真的读到了 `examples/` 下的项目、而不是在空集上恒绿。
   const exDir = join(ROOT, 'examples');
   const projNames = readdirSync(exDir, {withFileTypes: true})
     .filter((e) => e.isDirectory()).map((e) => e.name).filter((n) => n !== 'three');
-  assert.ok(projNames.length >= 3, `只从 examples/ 派生出 ${projNames.length} 个名字 —— 枚举坏了`);
+  assert.ok(projNames.length >= 1, `只从 examples/ 派生出 ${projNames.length} 个名字 —— 枚举坏了`);
+  assert.ok(projNames.includes('minimal'),
+    `名字表必须含旗舰示例 minimal（实际 ${JSON.stringify(projNames)}）—— 枚举读错目录了`);
 
   const bad = [];
   for (const f of SRC_FILES) {

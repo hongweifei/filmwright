@@ -1,4 +1,4 @@
-// 项目级命令：自检 / 预览 / MCP / schema / 字幕 / 片段 / 新建项目。
+// 项目级命令：自检 / 预览 / MCP / 字幕 / 片段 / 新建项目。
 import {dirname, join, resolve, basename} from 'node:path';
 import {requireTimeline} from '../../project/load.mjs';
 import {spawnTool, ffmpegPath, checkSpawned} from '../../media/ffmpegBin.mjs';
@@ -8,7 +8,6 @@ import {preview as previewCmd} from '../preview.mjs';
 import {scaffoldProject} from '../../project/scaffold.mjs';
 import {exportSrt, readTranslation} from '../../media/srt.mjs';
 import {prepareClips} from '../../media/clips.mjs';
-import {sceneSchema, resolveAt} from '../../../contract/scene.js';
 import {normalizeConfig} from '../../../contract/config.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../../root.mjs';
 import {num, str} from '../args.mjs';
@@ -21,8 +20,8 @@ const API_FILE = join(RUNTIME_ROOT, 'index.js');
 export async function check(ctx) {
   const json = isJson(ctx.args);
   requireTimeline(ctx.proj);   // 没有时间轴就给出「先跑 tts」，而不是深处读 null 崩掉
-  // --static-only：只跑读文件的那几道（api / imports / timeline / scene），不启浏览器。
-  // 用途：CI 上不想装浏览器时、以及改完镜头想秒级验证引用关系时。
+  // --static-only：只跑读文件的那几道（api / imports / timeline / assets / clips / themeKeys），
+  // 不启浏览器。用途：CI 上不想装浏览器时、以及改完镜头想秒级验证引用关系时。
   const staticOnly = ctx.args['static-only'] === true;
   const res = await runChecks(ctx.projectDir, ctx.proj, ctx.opts, {
     apiFile: API_FILE,
@@ -36,7 +35,7 @@ export async function check(ctx) {
   const errors = [];
   const warnings = [];
   for (const r of res.results) {
-    // 有结构化错误的道（scene）直接带 code/path/hint；其余把文本问题包一层
+    // 有结构化错误的道直接带 code/where/hint；其余把文本问题包一层
     if (r.errors?.length) {
       for (const e of r.errors) errors.push({code: e.code, message: e.message, where: e.path, ...(e.hint ? {hint: e.hint} : {})});
     } else {
@@ -107,40 +106,6 @@ export async function mcp() {
 }
 
 /**
- * 输出机器可读的场景规格 schema：类型、字段、容量上限、对齐语法、错误码。
- * agent 不读文档也能发现规格 —— 框架自描述。
- */
-export async function schema(ctx) {
-  const s = sceneSchema();
-  if (isJson(ctx.args)) return {code: 0, data: {schema: s}};
-  const containers = s.containers ?? [];
-  const tplCount = Object.keys(s.types).length - containers.length;
-  console.log(`scene 规格 ${s.schema} —— ${tplCount} 类模板` +
-    (containers.length ? ` + ${containers.length} 个容器（${containers.join(' / ')}）` : '') + '：\n');
-  for (const [name, t] of Object.entries(s.types)) {
-    const fields = Object.entries(t.fields)
-      .map(([k, f]) => (f.required ? k : k + '?')).join(' / ');
-    const max = Object.keys(t.max).length ? '  上限 ' + JSON.stringify(t.max) : '';
-    console.log(`  ${name.padEnd(9)} ${t.container ? '【容器】' : ''}${t.note}`);
-    console.log(`  ${''.padEnd(9)} 字段：${fields}${max}`);
-  }
-  if (s.effects) {
-    const names = Object.keys(s.effects.types);
-    console.log(`\n效果链 effects —— ${names.length} 个效果（数组顺序即应用顺序，最多 ${s.effects.chainMax} 条）：\n`);
-    for (const [name, e] of Object.entries(s.effects.types)) {
-      const ps = Object.entries(e.params)
-        .map(([k, p]) => `${k}${p.required ? '' : '?'}(${p.min}–${p.max})`).join(' / ');
-      console.log(`  ${name.padEnd(9)} ${e.note}`);
-      console.log(`  ${''.padEnd(9)} 参数：${ps || '（无）'}`);
-    }
-  }
-  console.log('\n对齐 at：' + JSON.stringify(s.at, null, 2).replace(/\n/g, '\n  '));
-  console.log('\n错误码：' + s.errorCodes.join(' / '));
-  console.log('\n机器可读版：filmwright schema --json');
-  return {code: 0};
-}
-
-/**
  * 导出 SRT 字幕。框架不翻译（AI 在框架外的边界不破）——外部产出译文后
  * 用 --translation 合成双语轨。
  */
@@ -193,12 +158,12 @@ export async function clips(ctx) {
 /** 新建项目骨架。不需要 --project：目标目录就是位置参数。 */
 export async function newProject(ctx) {
   const say = makeSay(ctx.args);
-  const r = scaffoldProject(ctx.dir, {template: String(ctx.args.template ?? 'scene')});
+  const r = scaffoldProject(ctx.dir, {template: String(ctx.args.template ?? 'shots')});
   say(`已建 ${r.template} 模板项目：${r.dir}`);
   for (const f of r.files) say('  ' + f);
   const steps = [
     `把 ${r.dir}/script/narration.txt 改成你的解说词`,
-    r.template === 'scene' ? `改 ${r.dir}/scene.json 配画面（docs/scene.md）` : `写 ${r.dir}/shots/index.js 配画面`,
+    `写 ${r.dir}/shots/index.js 配画面（SHOTS 数组就是全部镜头）`,
     'filmwright tts    --project ' + r.dir,
     'filmwright check  --project ' + r.dir + ' --static-only',
     'filmwright all    --project ' + r.dir,

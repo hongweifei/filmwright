@@ -138,11 +138,15 @@ ok(base !== null && base.fp !== null, `基线渲染成功并取到帧数据（${
 
 console.log('\n=== 2) (c) 复用产物 vs 全量重渲：帧数据必须逐位相同 ===');
 // 基线的段缓存是刚清空后重建的，所以这一步「同输入 ⇒ 命中原键」。
-// 注意：这里**不**断言「二跑真的全复用了」—— 那条计数断言在 verify-attribution 的 B 步
-// 与 verify-complex 的 ④ 已守（本文件删掉它就是为了不再重复渲一遍同样的东西）。
 const reused = render();
 ok(sameFp(base?.fp, reused?.fp),
   `复用产物与全量重渲逐位相同（${showFp(reused?.fp)} vs ${showFp(base?.fp)}）`);
+// ⚠️ 上面那条只证明「复用没有改变结果」—— 若复用彻底失效、每段都重渲一遍，它**照样绿**。
+// 原来这条计数断言（第二跑必须一段都不重渲）挂在 `verify-attribution` 的 B 步上，
+// 而那个工具随声明式一起删了 ⇒ 覆盖必须回到这里，否则"复用"就只剩半条判据。
+ok(Boolean(reused?.data) && reused.data.reusedSegments === reused.data.segments && reused.data.renderedSegments === 0,
+  `第二次同输入渲染**全部命中缓存**（reused=${reused?.data?.reusedSegments}/${reused?.data?.segments}, ` +
+  `rendered=${reused?.data?.renderedSegments}）—— 复用真的在发生，不是每段重渲`);
 
 console.log('\n=== 3) (b) 改文件 → 画面变 → 改回原样 → 精确回到基线 ===');
 // 注意：examples/minimal 是**手写镜头**项目，没有 scene.json；

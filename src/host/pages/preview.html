@@ -197,7 +197,6 @@ async function load() {
   const info = await boot({
     config: p.config,
     timeline: p.timeline,
-    scene: p.scene ?? null,
     clips: p.clips ?? null,
     loadShots: p.shotsUrl ? () => import(p.shotsUrl + '?v=' + Date.now()) : undefined,
   }, (w, h) => {

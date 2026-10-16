@@ -13,7 +13,6 @@
 import {readFileSync, existsSync, readdirSync, statSync} from 'node:fs';
 import {join, dirname, resolve, relative, isAbsolute} from 'node:path';
 import {DEFAULT_THEME, normalizeConfig} from '../../../contract/config.js';
-import {validateScene} from '../../../contract/scene.js';
 
 /** 公开面的重名导出。`export *` 与具名导出混用时撞名，静态读 index.js 就能提前抓到。 */
 export function checkPublicApi(apiFile) {
@@ -76,7 +75,7 @@ const isInside = (parent, child) => {
  * 镜头目录**内部**的相对导入（自己旁边的 `./helpers.js`）仍然允许。
  */
 export function checkImports(dir, label = dir, {insideOnly = null} = {}) {
-  // 目录可以不存在：纯 scene 项目没有 shots/，这不是错误
+  // 目录可以不存在：项目可以还没有 shots/（镜头表是手写文件，允许后补），这不是错误
   if (!existsSync(dir)) return {name: 'imports', ok: true, checked: 0, problems: []};
   const files = [];
   (function walk(d) {
@@ -220,7 +219,7 @@ export function checkThemeKeys(runtimeDir) {
  *   - 声明了但 `public/` 下找不到文件 → 报出来（否则要等 boot 才报 404）
  *   - 声明了却没人用 → 只提示，不算失败（可能是留着以后用的）
  */
-export function checkAssets(projectDir, rawConfig, scene = null) {
+export function checkAssets(projectDir, rawConfig) {
   const bad = [];
   const hints = [];
   let checked = 0;
@@ -264,12 +263,7 @@ export function checkAssets(projectDir, rawConfig, scene = null) {
     }
   }
 
-  // 3. 声明了没人用 → 提示。镜头与 scene 两个来源都要算。
-  if (scene && Array.isArray(scene.shots)) {
-    for (const s of scene.shots) {
-      if (s && s.type === 'image' && typeof s.asset === 'string') used.add(s.asset);
-    }
-  }
+  // 3. 声明了没人用 → 提示。只算镜头文件里引用的名字。
   for (const a of cfg.assets) {
     if (!used.has(a.name)) hints.push(`素材「${a.name}」声明了但镜头里没人用`);
   }
@@ -286,10 +280,9 @@ export function checkAssets(projectDir, rawConfig, scene = null) {
 /**
  * 片段素材（clips）的静态校验：
  *   - 源文件在不在（视频或序列路径）
- *   - scene 里引用的 clip 名字声明过没有
  *   - 已抽的帧是否就绪（没抽就提示跑 filmwright clips —— 不是错误，渲染会自动抽）
  */
-export function checkClips(projectDir, rawConfig, scene) {
+export function checkClips(projectDir, rawConfig) {
   let cfg;
   try {
     cfg = normalizeConfig(rawConfig);
@@ -317,18 +310,6 @@ export function checkClips(projectDir, rawConfig, scene) {
     }
   }
 
-  // scene 里引用的片段名
-  const declared = new Set(clips.map((c) => c.name));
-  for (const [i, s] of (scene?.shots ?? []).entries()) {
-    if (s?.type === 'clip' && s.clip) {
-      checked++;
-      if (!declared.has(s.clip)) {
-        bad.push(`shots[${i}].clip 引用了没声明的片段「${s.clip}」` +
-          (declared.size ? `（已声明：${[...declared].join('、')}）` : '（配置里一个片段都没声明）'));
-      }
-    }
-  }
-
   // 已抽帧就绪情况：只提示，不算错（render/preview 会自动抽）
   if (clips.length) {
     const cacheRoot = join(projectDir, '.work', 'clips');
@@ -341,32 +322,6 @@ export function checkClips(projectDir, rawConfig, scene) {
   }
 
   return {name: 'clips', ok: bad.length === 0, checked, problems: bad, notes};
-}
-
-/**
- * 场景规格（scene.json）的静态校验。
- *
- * 没有这个文件就跳过（纯镜头表项目）。有的话，boot 在浏览器里查的是
- * **同一份实现**（contract/scene.js）——这里只是把失败提前到不启浏览器的几秒里，
- * 而且每条错误带 code/path/hint，AI 读完能直接改。
- */
-export function checkScene(projectDir, proj) {
-  if (!proj.scene) {
-    return {name: 'scene', ok: true, checked: 0, problems: [], notes: ['没有 scene.json（纯镜头表项目）']};
-  }
-  let assetNames = null;
-  try {
-    assetNames = normalizeConfig(proj.raw).assets.map((a) => a.name);
-  } catch { /* 配置本身读不了，assets 那道会报 */ }
-  const r = validateScene(proj.scene, {timeline: proj.timeline ?? {sentences: []}, assetNames});
-  return {
-    name: 'scene',
-    ok: r.ok,
-    checked: Array.isArray(proj.scene.shots) ? proj.scene.shots.length : 0,
-    // 人看的字符串 + 机器读的结构化错误（--json / MCP 直接用后者，不必再解析文本）
-    problems: r.errors.map((e) => `[${e.code}] ${e.path}：${e.message}${e.hint ? '（' + e.hint + '）' : ''}`),
-    errors: r.errors,
-  };
 }
 
 // `checkNames` 的实现单独一份：它要一个真词法器（注释/字符串/正则/模板），

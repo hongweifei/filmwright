@@ -5,6 +5,36 @@
 
 ## [未发布]
 
+### 变更（引擎改成纯命令式）
+
+**删掉整条 `scene.json` 声明式链：镜头只剩一个来源 —— `shots/index.js` 里手写的 `SHOTS` 数组。**
+
+- **删了什么**：`scene.json` 这个创作格式的整条链 —— `src/contract/scene.js` 与 `contract/scene/**`、
+  `src/contract/three.js`、`src/runtime/scene/**`（那批声明式模板 + 编译 + 注册表）、
+  `src/runtime/three/scene3d.js`；`check` 的 `scene` 那道、`schema` 命令、
+  MCP 的 `scene_validate` / `schema` 两个工具、`new` 的 scene 模板，
+  以及 5 个声明式示例（gallery / promo / scenecast / vertical / three）。公开面上
+  `SHOT_TYPES` / `TEMPLATES` / `compileScene` / `validateScene` / `sceneSchema` / `needsThree` / `threeT`
+  这些名字随之消失。
+- **留了什么**：绘制原语与组合件、效果链（11 个具名效果，参数可写关键帧）、`animate` 关键帧、
+  图层合成与嵌套合成（`withLayer` / `BLEND_MODES` / `mask`）、片段素材（`clips`）、素材（`assets`）、
+  overlay 内建件、3D（`loadThree()` + `create3D()` + 原始 THREE）、页面侧 h264、画面自检采样器。
+  公开面补上命令式要用的校验入口：`ERROR_CODES` / `ANIM_PROPS` / `validateAnimate` /
+  `validateKeyTrack` / `validateEffects` / `validateMask` / `TRANSITION_TYPES` / `TRANSITION_DIRECTIONS`。
+- **跟着变的数**：自检 10 道 → 9 道（静态 8 → 7，少的是 `scene`）；命令少一个（`schema`）；
+  MCP 工具少两个；示例只剩 `examples/minimal`。
+- **为什么**：限制来自 **JSON 的固定字段集**，不来自绘制能力 —— 想让规格能被静态校验，就必须把「画面」
+  压成有限字段；模型一旦想画词汇表之外的东西，那条路就断了。命令式镜头是**任意 Canvas 2D 代码**，
+  上限只取决于写的人；而「第 N 帧只是 N 的函数」这条不变量**两种写法都得守** ——
+  所以删掉声明式不损失确定性、不损失全量自检、也不损失分片与增量复用。
+- **代价如实记下**：命令式镜头里 `draw` 画了什么**没有静态校验兜底**（`effects` / `mask` / `animate` /
+  `transform` / `transition` 这几个**字段**仍在装配期校验）。质量下限从"引擎保证"变成
+  "自检 + 看图"一起保证（见 [LIMITATIONS](LIMITATIONS.md) 第 13 节）。
+- **本节里更早的那批记载（场景规格 / 模板 / `schema` / 狗粮 / 声明式 3D）都随这一条作废** ——
+  它们记录的是删除之前的成果。文档侧同步：`docs/scene.md` 与 `docs/dogfood.md` 删除，
+  其余文档改成命令式口径（公开面按 `src/index.js` 重列、自检道数、`new` 只产 shots 骨架、
+  `render --incremental` 的归因只剩 `whole-file`）。
+
 ### 新增
 
 **父子绑定（`follow`）与空物体（`empty`）—— 一套变换驱动一组图层**
@@ -171,7 +201,9 @@
 - **两个示例落在所有检查之外**（`promo`、`vertical`），其中 `vertical`
   **从未被任何文档提过**。已全部接进 CI 与 README。
 - **`verify-longform` 并非"只能手动跑"**：它可参数化，CI 里跑的是 `--frames 1200 --no-big`
-  （原先写 2400 帧、约 3.4 分钟；那些判据在 1200 帧上同样成立、耗时减半）—— 已接进 CI（工具接入 23/25）。
+  （原先写 2400 帧、约 3.4 分钟；那些判据在 1200 帧上同样成立、耗时减半）—— 已接进 CI。
+  （这里刻意不写当时的「N 个工具里 M 个自动跑」：那个数字会随工具增减漂，
+  而 `verify-docs` 只核**当前**数字 —— 历史段落里复述它必然腐烂。）
 
 ### 其它
 
@@ -295,7 +327,7 @@
 
 **AI 自动化**
 
-- **场景规格 `scene.json`**：声明式镜头（现含 17 类模板），AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。
+- **场景规格 `scene.json`**（已删，见本节开头的「改成纯命令式」）：声明式镜头（当时那批模板），AI 只填内容与节拍（`at` 支持帧号、句 id、`{s, block, lead, offset}`），入场错峰、停留呼吸、章节配色、设计缩放由模板内建。手写 `shots/index.js` 保留为逃生舱，两者可混用。
 - **`filmwright schema`**：机器可读的规格说明书（模板 / 字段 / 上限 / 对齐语法 / 错误码），agent 写 scene 前先拿它，不必先读文档。
 - **`--json` 机器可读输出**（除 `preview` 外全部命令）：stdout 恰好一个 JSON 文档 `{ok, command, errors[{code,message,where,hint}], warnings, data}`，退出码与 `ok` 一致。
 - **`filmwright mcp`：MCP 服务器（stdio）**，把工具链暴露给 agent，返回值与 `--json` 同形状。唯一需要 npm 依赖的子命令（SDK 惰性加载：没装依赖时其余命令照常跑）。其中 `filmwright_stills` 把 PNG 作为 MCP image content 直接回给多模态模型；`filmwright_review` 一轮完成「改 → 验 → 看」（scene 校验 → 静态自检 → 各镜头代表帧回图）。

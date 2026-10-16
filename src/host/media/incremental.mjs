@@ -9,7 +9,7 @@
 //
 // 这个引擎的绘制是纯函数（第 N 帧只依赖 N），所以「一段帧的画面」完全由
 // **影响绘制的一切输入**决定。把那些输入哈希起来当段的键：
-//   - 项目里所有参与绘制的文件内容（配置、scene、shots、字体清单、素材清单）
+//   - 项目里所有参与绘制的文件内容（配置、shots/index.js、字体清单、素材清单）
 //   - 输出分辨率 / fps / 段的帧区间 / crf
 //   - 引擎自身源码的指纹（升了引擎版本就该重渲）
 // 键相同 ⇒ 输入逐字节相同 ⇒ 在同一个确定性引擎下渲染结果逐字节相同。
@@ -53,7 +53,6 @@ export function projectFingerprint(proj, projectDir) {
     else h.update('(missing)');
   };
   addFile('config', proj.paths.config);
-  addFile('scene', proj.paths.scene);
   addFile('timeline', proj.paths.timeline);
   addFile('shots', proj.paths.shots);
 
@@ -89,8 +88,9 @@ export function projectFingerprint(proj, projectDir) {
 /**
  * **全局**指纹：与「哪一段」无关、影响整片的所有输入。
  *
- * 单独拆出来是按段归因的前提 —— 只有真正全局的东西放这里，
- * 镜头内容留给 segmentKey 的局部部分（见下面 shotFingerprint / segmentKeyFor）。
+ * 这里**不含镜头文件** —— 它由 `manualShotsFingerprint` 单独算，再由 `combineGlobal`
+ * 并进全局键（见 render 的 renderIncremental）。镜头只有手写一种，主机侧无法按帧
+ * 归因 ⇒ 把整份镜头文件算进每个段：改一行就让所有段失效（保守但正确）。
  */
 export function globalFingerprint(proj, projectDir) {
   const h = createHash('sha1');
@@ -127,75 +127,15 @@ export function globalFingerprint(proj, projectDir) {
 }
 
 /**
- * **单个场景镜头**的指纹（局部）。
+ * 段键：全局指纹 + **镜头归因哈希** + 段参数。
  *
- * 只有「与某段重叠的镜头」才该影响那一段 —— 这是增量重渲真正省时间的地方：
- * 改一个镜头只让覆盖它的段失效，其余段照旧复用。
- * 把整份 scene.json 算进每个段的话，改一个镜头会让**所有**段失效，
- * 那就等于每次都全渲（我第一版就是这样，等于白做）。
- */
-export function sceneShotFingerprint(shot, index) {
-  return createHash('sha1')
-    .update(`shot[${index}]:`)
-    .update(JSON.stringify(shot))
-    .digest('hex').slice(0, 12);
-}
-
-/** 子合成（comps）的指纹：只有引用它的段才受影响。 */
-export function compFingerprint(name, def) {
-  return createHash('sha1')
-    .update(`comp:${name}:`)
-    .update(JSON.stringify(def))
-    .digest('hex').slice(0, 12);
-}
-
-/**
- * 收录「一个段覆盖哪些镜头」时要传递的依赖。
- *
- * 规则简单但必须准：
- *   - 段与某个 scene 镜头区间重叠 → 收那个镜头的指纹
- *   - 那个镜头是 `comp` 类型 → 还要收它引用的 comp（以及 comp 内部再引用的 comp）
- *   - 那个镜头是 `clip` 类型 → 该片段已由 clips 配置进全局指纹（源文件变了会全失效，
- *     这是有意的保守：片段可能被多处引用，逐段追引用链收益低、出错代价高）
- *   - 项目是手写镜头（shots/index.js）→ scene 不存在，只能整文件当全局（保守）
- */
-export function collectShotDeps(scene, range) {
-  const deps = [];
-  if (!scene?.shots?.length) return deps;
-  const comps = scene.comps ?? {};
-  const seenComp = new Set();
-  const addComp = (name) => {
-    if (seenComp.has(name) || !comps[name]) return;
-    seenComp.add(name);
-    deps.push(compFingerprint(name, comps[name]));
-    // comp 内部还可能引用别的 comp
-    for (const sh of comps[name].shots ?? []) {
-      if (sh?.type === 'comp' && sh.comp) addComp(sh.comp);
-    }
-  };
-  const starts = scene.shots.map((s) => (typeof s.at === 'number' ? s.at : null));
-  scene.shots.forEach((shot, i) => {
-    const st = starts[i];
-    if (st === null) return;                 // 句 id 形式：调用方会用解析后的区间重算
-    // 该镜头的区间是 [st, next-1]；段 [from, to] 与它重叠的判据必须用 `>=`：
-    // 段起点正好等于 next（即下一镜头的起点）时**不该**算重叠 ——
-    // 用 `>` 会把上一个镜头也算进来（实测把 100 起的段错配到 1–99 的镜头）。
-    const next = starts[i + 1] ?? Infinity;
-    if (range.from >= next) return;          // 段完全在这个镜头之后
-    if (range.to < st) return;               // 段完全在这个镜头之前
-    deps.push(sceneShotFingerprint(shot, i));
-    if (shot.type === 'comp' && shot.comp) addComp(shot.comp);
-  });
-  return deps;
-}
-
-/**
- * 段键：全局指纹 + **该段覆盖的镜头** + 段参数。
+ * 镜头只有手写一种，主机侧无法按段归因 ⇒ 调用方给一个所有段共用的常量
+ * （镜头文件本身的指纹已在全局键里），段之间不会因为「改了哪个镜头」而分化。
  *
  * @param {object} o
  * @param {string} o.engine 引擎指纹
- * @param {string} o.global 全局指纹（配置/时间轴/字体/素材/clips）
- * @param {string} [o.shotsHash] 段覆盖的镜头依赖合并哈希（缺省=所有段共享，退化为全局）
+ * @param {string} o.global 全局指纹（配置/时间轴/字体/素材/clips/镜头文件）
+ * @param {string} [o.shotsHash] 镜头归因哈希（纯命令式项目给常量；缺省=所有段共享）
  * @param {number} o.from @param {number} o.to
  * @param {number} o.width @param {number} o.height @param {number} o.fps @param {string} o.crf
  */
@@ -203,12 +143,6 @@ export function segmentKey(o) {
   return createHash('sha1')
     .update([o.engine, o.global, o.shotsHash ?? '*', o.from, o.to, o.width, o.height, o.fps, o.crf].join('|'))
     .digest('hex').slice(0, 16);
-}
-
-/** 把一组镜头依赖合并成一个哈希（顺序无关：先排序再拼接）。 */
-export function mergeDeps(deps) {
-  if (!deps.length) return 'none';
-  return createHash('sha1').update([...deps].sort().join('|')).digest('hex').slice(0, 16);
 }
 
 /**

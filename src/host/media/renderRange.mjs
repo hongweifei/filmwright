@@ -27,7 +27,6 @@ export async function openProjectSession(projectDir, proj, opts = {}) {
     raw: proj.raw,
     timeline: proj.timeline,
     shotsRel: shotsRelOrNull(proj),
-    scene: proj.scene ?? null,
     clips,
     // 帧直传的接收端（只流式渲染时才有）：页面 POST 二进制帧上来
     frameSink: opts.frameSink ?? null,

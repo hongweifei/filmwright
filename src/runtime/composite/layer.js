@@ -19,16 +19,14 @@
 //     T_device = D ∘ T_design ∘ D⁻¹，使最终结果恰好是 D ∘ T_design ∘ 内容。
 import {view, DESIGN} from '../../contract/viewport.js';
 
-// 混合模式名单**与变换形状校验**的单一来源都在 contract —— `scene.json` 的校验也要用它们，
-// 而 contract 不能 import runtime（分层规则），所以只能是 runtime 反过来 import contract
-// （方向是对的）。这里**原样再导出**，`src/index.js` 的公共面因此一行都不用改。
-// 放 contract 的代价是零：`contract/scene.js` 本来就在渲染页的加载路径上
-// （`runtime/stage/shots.js` 已经 import 它）。
+// 混合模式名单**与变换形状校验**的单一来源都在 contract —— 而 contract 不能 import
+// runtime（分层规则），所以只能是 runtime 反过来 import contract（方向是对的）。
+// 这里**原样再导出**，`src/index.js` 的公共面因此一行都不用改。
 //
 // ⚠️ `isValidTransform` 原先在本文件**另有一份实现**（逻辑逐字相同、只差注释）——
 // 那正是「同一套规则写两遍」，两边可以各自漂，而且只有一条 25 例的差分测试挡着。
 // 2026-10-15 收敛成这一行再导出：**同一个函数对象**，从根上不可能漂。
-export {BLEND_MODES, isValidTransform} from '../../contract/scene.js';
+export {BLEND_MODES, isValidTransform} from '../../contract/composite.js';
 
 /** 是否真的需要离屏缓冲（组透明度或非默认混合模式）。 */
 export function needsBuffer(t) {

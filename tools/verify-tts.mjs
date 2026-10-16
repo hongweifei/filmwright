@@ -14,7 +14,7 @@
 //   7. 负面对照：引擎名写错、缺解说词、--json 契约
 import {spawnSync} from 'node:child_process';
 import {existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync} from 'node:fs';
-import {dirname, join, resolve} from 'node:path';
+import {dirname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -51,16 +51,31 @@ const run = (args, opts = {}) => spawnSync('node', [KIT, ...args], {
 });
 
 // ---------- 造一个精简项目 ----------
+// 基座用唯一的入库示例 `examples/minimal`：合成产物写在 `public/assets/<slug>/` 下，
+// slug 由配置决定，所以下面的断言也从**这个 slug** 推路径（不写死项目名）。
 rmSync(PROJ, {recursive: true, force: true});
 mkdirSync(join(PROJ, 'script'), {recursive: true});
-cpSync(join(ROOT, 'examples', 'scenecast'), PROJ, {recursive: true});
-rmSync(join(PROJ, 'audio'), {recursive: true, force: true});
-rmSync(join(PROJ, 'public', 'assets', 'scenecast'), {recursive: true, force: true});
+const SRC = join(ROOT, 'examples', 'minimal');
+cpSync(SRC, PROJ, {
+  recursive: true,
+  filter: (s) => {
+    const rel = relative(SRC, s).replace(/\\/g, '/');
+    if (!rel) return true;
+    if (['audio', 'renders', '.work'].includes(rel.split('/')[0])) return false;
+    return rel !== 'public/assets/minimal';   // 近 10MB 成品配音 —— 本工具要自己合成一份
+  },
+});
 writeFileSync(join(PROJ, 'script', 'narration.txt'),
   '# CHAPTER 1 第一段\n这是第一句话。|它有两个字幕块。\n这是第二句话。\n\n# CHAPTER 2 第二段\n这是第三句话。\n',
   'utf8');
 const cfgPath = join(PROJ, 'film.config.mjs');
 const cfgOrig = readFileSync(cfgPath, 'utf8');
+// 合成产物落在 `public/assets/<slug>/` 下，slug 由**配置**决定 —— 从夹具配置里读出来用，
+// 别写死项目名：换个示例（或示例改名）时，写死的路径会变成「文件不存在」的假红，
+// 更糟的是读不到 slug 时静默拿空串去拼路径。
+const SLUG = /slug:\s*'([^']+)'/.exec(cfgOrig)?.[1] ?? null;
+if (!SLUG) throw new Error(`读不到 ${cfgPath} 的 slug —— 后面的产物路径判据会落空`);
+const WAV = join(PROJ, 'public', 'assets', SLUG, 'audio.wav');
 // 锚点别写死引擎值：夹具里现在是 auto，写死 'edge' 会让 replace **静默落空**，
 // 于是后面所有「把引擎设成 X」的断言全成空转（HEAD 上就是这么红的）。落空直接抛。
 const setEngine = (v) => {
@@ -103,7 +118,7 @@ console.log('\n=== 2) tts：真跑一遍（engine: auto，edge 不可用时应�
     console.log('  stderr:', String(r.stderr || '').slice(-600));
   }
   ok(r.status === 0, `tts 退出码 0（实际 ${r.status}）`);
-  const wav = join(PROJ, 'public', 'assets', 'scenecast', 'audio.wav');
+  const wav = WAV;
   ok(existsSync(wav), '产出 audio.wav');
   ok(existsSync(join(PROJ, 'script', 'timeline.json')), '产出 timeline.json');
   ok(existsSync(join(PROJ, 'script', 'timeline.md')), '产出 timeline.md');
@@ -127,7 +142,7 @@ let tl = null;
 
 console.log('\n=== 4) 音频与时间轴一致、时间轴自洽 ===');
 {
-  const wav = join(PROJ, 'public', 'assets', 'scenecast', 'audio.wav');
+  const wav = WAV;
   const p = spawnSync('ffprobe', ['-v', 'error', '-show_entries',
     'stream=channels,sample_rate,bits_per_sample,sample_fmt',
     '-show_entries', 'format=duration', '-of', 'json', wav], {encoding: 'utf8'});
@@ -213,7 +228,7 @@ console.log('\n=== 6) 负面对照 ===');
 console.log('\n=== 7) 换引擎必须让缓存失效（不能拿旧引擎的音频）===');
 {
   // 先记录当前 sapi 产出的音频哈希
-  const wav = join(PROJ, 'public', 'assets', 'scenecast', 'audio.wav');
+  const wav = WAV;
   const {createHash} = await import('node:crypto');
   const h1 = createHash('sha256').update(readFileSync(wav)).digest('hex').slice(0, 12);
   // 用 command 引擎（ffmpeg 造静音）跑一遍，产物必须不同

@@ -1,6 +1,6 @@
 # 常见问题
 
-报错类的问题先跑 `filmwright check --project <项目目录> --static-only`，十道自检里有七道不启浏览器、秒级就能定位引用错。这里收「为什么」类问题；明确不做的功能见 [LIMITATIONS](../LIMITATIONS.md)。
+报错类的问题先跑 `filmwright check --project <项目目录> --static-only`，九道自检里有七道不启浏览器、秒级就能定位引用错。这里收「为什么」类问题；明确不做的功能见 [LIMITATIONS](../LIMITATIONS.md)。
 
 ## 报错：时间轴未装载就查询了 S01
 
@@ -66,7 +66,7 @@
 
 ## 能出 SRT 字幕吗
 
-字幕是烧进画面的，本库不提供导出；需要时从 `script/timeline.json` 的 `subs` 自己导出（见 [LIMITATIONS](../LIMITATIONS.md)）。
+能：`filmwright srt --project <目录>`（`--translation <json>` 可合成双语轨）。成片里字幕仍然是**烧进画面**的（刻意的：观众不该能关掉它），这份 SRT 是给 B 站 / YouTube 投稿用的外挂字幕。
 
 ## 只在 Windows 上能用吗
 

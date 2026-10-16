@@ -8,23 +8,23 @@
 | 自检（`filmwright check`） | 整片渲染不崩、引用关系成立、画质在阈值内 | 静态秒级 / 全量要真画 |
 | 像素回归（`tools/regression.mjs`） | 结构改动没有改掉任何一个像素 | 真渲若干帧 |
 
-## 十道自检
+## 九道自检
 
-`filmwright check --project <项目目录>` 依次跑十道，前八道不启浏览器：
+`filmwright check --project <项目目录>` 依次跑九道，前七道不启浏览器：
 
 | 检查 | 抓的问题 | 要浏览器吗 |
 |---|---|---|
 | `api` | `index.js` 重名导出（只在浏览器求值时报 `Duplicate export of 'S'`） | 不要 |
 | `imports`（shots） | 镜头文件相对路径写错（页面**静默**不 ready，只有抓 console 才看得到） | 不要 |
 | `timeline` | 引用不存在的句 id / 字幕块号（只在渲到那一帧时才在画面上报错）。**含 `film.config.mjs` 的 `hud`**——`drawHud` 每帧都查句 id，写错会让整片每一帧都抛错 | 不要 |
-| `scene` | scene.json 规格不合法（未知类型、缺字段、对齐到不存在的句/块、顺序不递增……每条带 code/path/hint） | 不要 |
 | `assets` | 用了没声明的素材名；或声明了但 `public/` 下没有那个文件 | 不要 |
+| `clips` | 片段素材：源文件在不在、声明的序列有没有抽好、镜头引用的片段名声明过没有 | 不要 |
 | `imports`（runtime） | 引擎自身模块的相对路径 | 不要 |
 | `themeKeys` | 运行时代码引用了 `theme` 里不存在的配色键 | 不要 |
 | `frames` | 每帧绘制抛错（抓「只在某一帧才炸」） | **要** |
 | `quality` | 静止过久、空白帧（见下） | **要** |
 
-加 `--static-only` 只跑前八道，不启浏览器——CI 与改完镜头后的快速验证用。
+加 `--static-only` 只跑前七道，不启浏览器——CI 与改完镜头后的快速验证用。
 
 ### 库内部的静态检查（不占 `check` 的名额）
 
@@ -105,17 +105,15 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `verify-reuse.mjs` | 验换分辨率（1080p）与换浏览器（两个浏览器渲同一帧要字节相同） |
 | `verify-mix.mjs` | **验配乐混音**：真跑 ffmpeg，只测音乐那一路，证明「人声在场时被压低、人声停下后恢复、duck 越大压得越深」，并验产物带双流与缺文件报错 |
 | `verify-determinism.mjs` | **验捕获确定性**：多轮渲染同一区间，全部帧必须逐字节一致。钉住「取像素不能有竞态」——曾经用 `Page.captureScreenshot` 时有 3/60 帧偶发取到上一帧 |
-| `verify-incremental.mjs` | **验增量重渲的安全性**（瘦身后只留本工具独有的三条）：引擎源码变更必须让段缓存**全部**失效（全仓只此一处动 `src/runtime/motion/ease.js`）、改一个影响画面的文件 → 帧数据确实变 → 改回原样 → **精确回到基线**、复用产物与全量重渲的**整段逐帧指纹**相同（`ffmpeg framemd5`，不抽样）。⚠️「`--proxy 0.5` → 640×360」那节**已删**（与 `verify-composite` 逐字重复）；「首跑全渲 / 二跑全复用」的计数断言也删了（由 `verify-attribution` / `verify-composite` 守） |
-| `verify-composite.mjs` | **图层合成与嵌套合成的端到端验收**（原 `verify-comp.mjs` / `verify-complex.mjs` **已删**，独有判据并入这里）：`x` / `rotate` / `alpha` / `blend` 各自的改动**互不相同**（逐块亮度差向量两两不等）、alpha 的亮度差**方向**按 `(1-alpha)` 量化、三种能力逐个关掉时**只在它所属镜头的区间**变而另外两镜**逐块不变**、嵌套 comp 实例看到的本地帧与页面内探针**逐像素一致**（不靠整帧像素比对——整帧含随全局时间漂移的背景/HUD）；带一条**负面对照**（把「全默认值」改成 `x:1` 必须被判红）。**D 节（父子绑定 / 空物体）**：只动父 ⇒ 跟随层在**变化覆盖的那块区域**内的重心同向右移且随 Δ **单调**（父是空物体 ⇒ 动的只可能是子层）、父**只旋转 90°**（无平移）⇒ 子的 +x 偏置落到**下方**（相加式/替换式/忽略父都做不到）、父变换全默认时写不写 `follow` **逐字节相同**、空物体变换任取画面**逐字节不变**；负面对照＝去掉 `follow`（绑定失效）⇒ **同一个谓词**必须判红 |
+| `verify-incremental.mjs` | **验增量重渲的安全性**：引擎源码变更必须让段缓存**全部**失效（全仓只此一处动 `src/runtime/motion/ease.js`）、改一个影响画面的文件 → 帧数据确实变 → 改回原样 → **精确回到基线**、复用产物与全量重渲的**整段逐帧指纹**相同（`ffmpeg framemd5`，不抽样）。⚠️「`--proxy 0.5` → 640×360」那节**已删**（曾与 `verify-composite` 逐字重复，而那个工具已随声明式一起删）。**2026-10-16 起**「复用真的发生了」那条计数断言**搬回本工具**（同输入第二跑必须 `reusedSegments==segments && renderedSegments==0`）：它原来由已删的 `verify-attribution` 守，而「复用不改变结果」这条在复用彻底失效时**照样绿** |
 | `verify-clips.mjs` | 验素材管线 host 侧：抽帧帧数、内容寻址缓存命中、改参数重抽、断点安全、源文件缺失与 start 超时长 |
 | `verify-clip-render.mjs` | 验片段在浏览器里真的取到并画出：帧随 n 变化、同一帧两次相同、源帧映射、未声明片段名报错 |
 | `verify-tts.mjs` | 验 TTS 契约：`voices` 报出引擎可用性与回退结果、真跑一遍产出三件套、timeline 如实标注引擎与 `subs_timing`、音频与时间轴一致、逐句缓存命中、换引擎必须让缓存失效 |
 | `verify-encoding.mjs` | 全仓文本必须是合法 UTF-8 且无 BOM —— 抓肉眼看不见的问题（曾把 `.gitignore` 写成 GBK） |
 | `verify-package.mjs` | **发布物守卫**：不问 git、直接问 npm「你到底会打包哪些文件」——**本机的东西**（`__pycache__` 字节码、本地 `docs/design/` 草稿、`.work`、成片、日志）一个都不许进包，该发的源码一个都不许漏。⚠️ 它要抓的两件事**只在本机出现**（CI 是干净检出 ⇒ 命中集是空集），所以**每次运行先拿合成清单自检规则有牙**（含「空清单不算干净」），否则它在 CI 上会永远绿 |
-| `verify-docs.mjs` | 把**文档里的数字**与实现比对（模板数 / 自检道数 / 单元测试数 / 效果数 / **验收工具数及其中自动跑的数量**），并核 `docs/qc.md` 的工具表与 CI 接线一致（接进 CI 却没进表的会红）；跳过 CHANGELOG 已发布区与引号内的**引述**。**它报了就去改文档，别改实现迁就文档**；另有 `--list-negative` 只列出否定式断言（只列不判） |
+| `verify-docs.mjs` | 把**文档里的数字**与实现比对（自检道数 / 单元测试数 / 效果数 / **验收工具数及其中自动跑的数量**），并核 `docs/qc.md` 的工具表与 CI 接线一致（接进 CI 却没进表的会红）；跳过 CHANGELOG 已发布区与引号内的**引述**。**它报了就去改文档，别改实现迁就文档**；另有 `--list-negative` 只列出否定式断言（只列不判）。⚠️ 2026-10-16：「N 类模板」那条随声明式入口一起删了（它原来读 `src/contract/scene/tables.js`，文件已删 ⇒ 守卫直接崩，而**崩不是红**） |
 | `verify-links.mjs` | 文档里的**内部链接**必须指向存在的文件（外链与页内锚点不管），**外加反方向**：`docs/` 下的**非文档文件**必须被某份文档引用（`docs/images` 里攒过两张零引用、共 920 kB 的图，还会跟着 `files` 里的 `docs` 一起发到 npm）。链接腐烂最容易悄悄发生：**文件改名/移动后链接不会报错，只会 404**，而 `verify-docs` 核数字与事实性说法、核不到链接。只扫**入库的** `.md`；行内代码里的「链接写法」不算链接 |
 | `verify-mask.mjs` | 遮罩（阶段 ③）：四种形状 + 反选都要**确实改变画面**、**五种输出互不相同**（不是同一个路径换名字）、同一遮罩两次渲染**逐字节一致**。⚠️ 判据设计上踩过一次：第一版用 `stat`（居中的数字）+ 居中遮罩，**四种形状都覆盖住了内容** ⇒ 输出全相同；改成**跨整幅**的模板 + 只裁左半才显出差差异 —— **是判据选错了量测对象，不是产品问题** |
-| `verify-reveal.mjs` | 逐字入场（阶段 ④）：**同一帧**上拿整块画法当参照 —— 中间帧与整块的差异总差 > 0（下限），且差异按列四分的尾段/首段要**明显偏大**（方向，证明是逐个进场而不是整块淡入）；同一帧两次渲染**逐字节一致**；落位帧与整块帧**没有显著差异像素**（raw RGB 逐像素比，阈值由工具自己定）。⚠️ 旧判据「第 10/30/70 帧互不相同」**与 reveal 无关**（被标题自带的入场动画顶绿）、旧判据「落位后与整块画法**逐字节相同**」既**实测不成立**（残差来自逐字光晕叠加）又是**同一份文件自比自**（每次渲染都重建目录 ⇒ 两个「产物」落到同一路径），两处都已改；另外它带内置负面对照（临时仓库根里注入三份缺陷，各只该红对应那条） |
 | `verify-invocation.mjs` | 守「**同一个根因换个位置又回来**」的两类（各让 CI 红过）：① CI 里很多步骤**不带参数**跑工具，而工具若写 `resolve(process.argv[2])` 会抛 `ERR_INVALID_ARG_TYPE`（本地带参数跑就发现不了）；② `existsSync` 为真**≠能读**（Windows 上别的进程持有句柄 → `EBUSY`）。② 用棘轮：当前的读的都是用户项目文件（非跨进程写），记录在案，**新出现必须审一遍** |
 | `dead-exports.mjs` | 死导出**棘轮**：`src/` 里"导出但没人用"的符号记录在名单里，**新出现**就红；名单里已被清理的也红（防名单腐烂）。"没人用"不等于"该删"（可能是给使用者的公开 API），所以不做一刀切 |
 | `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
@@ -123,11 +121,10 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `tools/probes/profile-current.mjs` | **当前管线的复测**（上面那个量的是 CDP 路径，现在默认是二进制 POST 流，旧数据不准了）：绘制 / JPEG 取像素 / **WebCodecs 编码**三段。实测 720p：绘制 0.19ms、JPEG **16.47ms**（占 99%）、WebCodecs **2.18ms**（快 7.5×） |
 | `tools/probes/check-determinism.mjs` | **快速确定性检查**：同一个效果、同一帧渲染两次比哈希。`verify-effects` 里已有同一判据，但它要跑完前面六节（**CI 实测约 64s**，见 `.github/workflows/ci.yml` 的 `browser` 作业；跨机器/负载不可比），排查着色器问题（如 `displace`）时**迭代太慢**；这个工具只做那一件事，**全部 11 个效果一遍约 35 秒**，判据完全一致，定位到的问题可用 `verify-effects` 复核 |
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |
-| `verify-longform.mjs` | 长片：**判**「单实例长跑是否退化」—— 同一次运行内**等长头段 vs 尾段**的配对比值（交替正反序取中位数）；**只报数不判定**分片加速比与内存（由机器核数/内存决定，不是产品正确性）；增量段缓存那节**已删**（由 `verify-incremental` / `verify-attribution` 守）。**可参数化**（`--frames N --no-big`）：默认 18000 帧（10 分钟量级）跑不完 CI，CI 里跑 `--frames 1200 --no-big`（此时**唯一起作用的判据就是那条配对比较**，`--no-big` 把大规格渲染与内存采样整段跳过） |
-| `verify-attribution.mjs` | 验增量重渲按段归因：改一个镜头只重渲覆盖它的段，改全局输入则全失效 |
+| `verify-longform.mjs` | 长片：**判**「单实例长跑是否退化」—— 同一次运行内**等长头段 vs 尾段**的配对比值（交替正反序取中位数）；**只报数不判定**分片加速比与内存（由机器核数/内存决定，不是产品正确性）；增量段缓存那节**已删**（由 `verify-incremental` 守）。**可参数化**（`--frames N --no-big`）：默认 18000 帧（10 分钟量级）跑不完 CI，CI 里跑 `--frames 1200 --no-big`（此时**唯一起作用的判据就是那条配对比较**，`--no-big` 把大规格渲染与内存采样整段跳过） |
 | `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |
-| `verify-imperative.mjs` | 验**手写镜头与声明式同能力**：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
-| `verify-three.mjs` | 验 3D 图层（three）：3D 内容确实叠进帧里、**同一帧号两次渲染逐字节一致**、**跳帧渲染与连渲一致**、不用 3D 的项目不加载 three；并带一条**有区分力的负面对照**（故意写成有状态的必须被抓出来）与配对的性能实测 |
+| `verify-imperative.mjs` | 验**手写镜头这条路本身**（声明式已删，它现在是主验收）：通用字段都能用、写错当场报（含结构化错误码与出路）、节拍锚点的运行期校验同样生效；**2026-10-16 新增三节**接住已删的 `verify-composite`：`withLayer` 的 blend（覆盖区平均压暗 123 级 / 96%，负面对照 0 级）、组 alpha（半量/全量比例 0.498，对照 1.000 判红）、`transform` 位移（质心 x 随偏移线性，比例 2.000，对照 0.0px 判红）。实测靠它抓到"不认识的效果名**静默失效**"与"越界参数绕过上限真的生效" |
+| `verify-three.mjs` | 验 3D 图层（three）：3D 内容确实叠进帧里、**同一帧号两次渲染逐字节一致**、**跳帧渲染与连渲一致**；并带一条**有区分力的负面对照**（故意写成有状态的必须被抓出来）与配对的性能实测 |
 | `verify-h264.mjs` | 验页面侧 H.264 编码器（WebCodecs）：**用 ffprobe 证明产出的是一段有效视频**、帧数与请求一致、**背压生效**（编码队列不超上限）、并**报出实际用的编码配置**（无头下可能只有软编码，不能让人以为走了硬件）。纯函数部分（AVCC→Annex-B）另有 `tests/frame.test.mjs` 的手工字节夹具 |
 | `quality-negative.mjs` | 负面对照：故意做坏，证明画质检查真的会报 |
 | `make-sample-asset.py` | 生成示例用的素材图（纯几何，不含文字——夹具不能依赖字体） |
@@ -166,29 +163,32 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 
 ### 哪些验收工具会自动跑、哪些要手动跑
 
-**不跑的守卫等于没有守卫**，所以这张表要如实。口径说清楚：**「耗时」是逐项实测的工具串行耗时之和**（不含装依赖与环境确认），跨机器、跨负载**不可比**；本机负载重时个别工具会明显更慢（如 `verify-incremental` / `verify-reveal` / `verify-effects`），别把这里的数字当保证。
+**不跑的守卫等于没有守卫**，所以这张表要如实。口径说清楚：**「耗时」是逐项实测的工具串行耗时之和**（不含装依赖与环境确认），跨机器、跨负载**不可比**；本机负载重时个别工具会明显更慢（如 `verify-incremental` / `verify-effects`），别把这里的数字当保证。
+
+> ⚠️ 这张表在 2026-10-16（命令式迁移）**重列过**：那一轮删了 `verify-attribution` / `verify-reveal` / `verify-composite` / `dogfood-review` 四个工具（前三个的判据分别并入 `verify-incremental` / 无（逐字入场随模板一起删）/ `verify-imperative`），各作业的清单与总数都跟着变了；**逐项耗时仍是迁移前的实测，没有复测**。
 
 | 状态 | 工具 | 耗时 |
 |---|---|---|
-| **CI 自动跑** | `verify-encoding`、`verify-package`、`verify-docs`、`verify-links`、`verify-invocation`、`dead-exports`（static job） | 秒级 |
-| **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 80s，`--frames 1200 --no-big`）**、`verify-attribution`（177s） | 逐项之和约 **4.3 分钟** |
+| **CI 自动跑** | `verify-encoding`、`verify-package`、`verify-docs`、`dead-exports`、`verify-links`、`verify-invocation`（static job） | 秒级 |
+| **CI 自动跑 · `browser-slow` 作业** | **`verify-longform`（约 80s，`--frames 1200 --no-big`）** | 逐项之和约 **1.5 分钟** |
 | **CI 自动跑 · `browser-doc` 作业** | `verify-readme`（148s）—— 按 README 的路径真跑一遍（含全新 clone） | 逐项之和约 **2.5 分钟** |
-| **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-composite`（17.6s；原 `verify-comp` / `verify-complex` 的独有判据已并入它，现含父子绑定 / 空物体那一节）、`verify-mask`（约 12s）、`verify-reveal`（约 15s）、`verify-h264`（约 15s）、`verify-three`（37s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-preview` | 逐项之和约 **4.5 分钟** |
+| **CI 自动跑 · `browser` 作业** | `quality-negative`、`verify-assets`、`verify-effects`（64s）、`verify-imperative`（20s）、`verify-mix`（1.7s）、`verify-clips`（1.9s）、`verify-clip-render`（2.3s）、`verify-reuse`（5.0s）、`verify-mask`（约 12s）、`verify-incremental`（38.8s）、`verify-determinism`（41.3s）、`verify-three`（37s）、`verify-h264`（约 15s）、`verify-preview` | 逐项之和约 **4 分钟** |
 | **手动跑（依赖外部条件）** | `verify-tts`（真合成、**联网**）、`verify-voiceover`（要**真配音产物**） | — |
 
-**25 个验收工具里 23 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
+**22 个验收工具里 20 个自动跑。** 剩下 2 个都要外部条件（联网 TTS / 真配音产物），
 不是"懒得接"，是**在 CI 里跑不可靠或不可行**。
 
 （`verify-longform` 原来在这张表里是"手动跑（10 分钟量级）"—— 那说的是它的**默认规模**
 18000 帧。它其实是**可参数化**的：CI 里跑 `--frames 1200 --no-big`，
 **核实之后把它接进了 CI** —— 之前那个"只能手动跑"的说法一直没核过。
-⚠️ 后来它**瘦身**过：增量段缓存那节被删（与 `verify-incremental` / `verify-attribution` 重复），
+⚠️ 后来它**瘦身**过：增量段缓存那节被删（与 `verify-incremental` 重复），
 全分辨率吞吐的绝对阈值与外推也删了，而 `--no-big` 下内存整段不采样
 ⇒ **CI 里自动跑时它真正判的只有「单实例长跑不退化」那一条**（同一次运行内头段 vs 尾段的配对比较）。）
 
 ### 单元测试覆盖率：57.69%（**低的那部分是设计使然，不是质量问题**）
 
-`npm run coverage` 实测（59 个模块）：
+> ⚠️ 下面这三个百分比是**改成纯命令式之前**的实测（`npm run coverage`，当时 59 个模块）。
+> 删掉声明式那一整条链之后分母变了，**没有复测** —— 别把它当当前读数用。
 
 | 指标 | 数值 |
 |---|---|
@@ -199,14 +199,14 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 **别把这个数字当成"质量差"** —— 覆盖率低的模块**分成两类，都不是缺陷**：
 
 1. **跑在浏览器里的绘制代码**：`primitives` 17%、`widgets` 16%、`hud` 19%、
-   `subtitle` 17%、`scene3d` 28%、`templates` 37%、`gpu` 58%。
+   `subtitle` 17%、`gpu` 58%。
    Node 单元测试**根本测不到它们**（要真画布/WebGL）；
-   它们的覆盖来自 **25 个验收工具**（真的开浏览器跑）与**像素回归**。
+   它们的覆盖来自 `verify-*` 验收工具（真的开浏览器跑）与**像素回归**。
 2. **要外部工具的主机代码**：`renderRange` 17%、`mux` 26%、`commands` 37%、
    `session` 19%。要 ffmpeg 与浏览器，同样由端到端工具覆盖。
 
-契约与纯逻辑那几层是**高覆盖**的：`effects.js` 100%、`three.js` 100%、
-`scene.js` 96%、`ease.js` 100%、`animate.js` 100%、`compile.js` 100%。
+契约与纯逻辑那几层是**高覆盖**的：`effects.js` 100%、`ease.js` 100%、
+`animate.js` 100%、`compile.js` 100%。
 **这正是"纯函数好测、I/O 与绘制靠集成测"的应有样子。**
 
 ⚠️ 所以：**`npm run coverage` 的百分比只能与同类项目比，不能与"整体覆盖率"混谈。**
@@ -220,6 +220,10 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 `verify-readme` / `verify-attribution` 虽然各要两三分钟，但守的是**核心契约**
 （文档承诺的快速开始、增量重渲的按段归因），而且**公开仓库的 CI 不花钱**，
 所以它们也接进来了 —— 慢不是把它们留在手动的充分理由。
+
+> ⚠️ 2026-10-16：这段里的 `verify-attribution` **已随声明式入口删除**（按段归因靠 scene.json 的逐镜头指纹，
+> 而镜头现在全在一个 `shots/index.js` 里）⇒ 上面那句「接进来了」对它不再成立；`verify-readme` 仍在 CI。
+> 下面那张表同理，两条都按**当时**记。
 
 ### 接进 CI 之后**立刻**抓到两个一直在失败的守卫
 

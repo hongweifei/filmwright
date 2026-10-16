@@ -19,7 +19,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const ROOT = resolve(argv[0] && !argv[0].startsWith('--') ? argv[0] : join(HERE, '..', '..'));
 const N = Number(argv.find((a) => /^\d+$/.test(a)) ?? 40);
-const PROJECT = join(ROOT, 'examples', 'scenecast');
+const PROJECT = join(ROOT, 'examples', 'minimal');
 const QS = [0.95, 0.92, 0.85, 0.75, 0.65, 0.5];
 
 const proj = await loadProject(PROJECT);

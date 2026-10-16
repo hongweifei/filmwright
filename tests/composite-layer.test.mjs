@@ -96,7 +96,7 @@ test('`isValidTransform` 只有一份实现（runtime 再导出 contract 的）�
   // 原先 contract 与 runtime **各写了一份逻辑逐字相同**的实现（contract 不能 import runtime），
   // 靠一条 25 例的差分测试挡漂移。2026-10-15 收敛：runtime 改成**再导出 contract 的**，
   // 于是这里可以断言**同一性**（`===`）—— 同一个函数对象，从根上不可能漂。
-  const contract = await import('../src/contract/scene.js');
+  const contract = await import('../src/contract/composite.js');
   assert.equal(layer.isValidTransform, contract.isValidTransform,
     'runtime 的 isValidTransform 必须是 contract 的那个（再导出），不该再有第二份实现');
   assert.equal(layer.BLEND_MODES, contract.BLEND_MODES,
@@ -109,7 +109,7 @@ test('`isValidTransform` 只有一份实现（runtime 再导出 contract 的）�
   const reject = ['x', 42, [], {x: 'a'}, {scale: 0}, {scale: -1}, {rotate: 'r'},
     {alpha: 2}, {alpha: -0.1}, {origin: [1]}, {origin: 'c'}, {origin: [1, 'y']},
     // 混合模式的**取值白名单**：非法值必须被拒。原先只有 runtime 判白名单，contract 只判
-    // 「是字符串」⇒ `scene.json` 里的非法 blend 通过 8 道自检，到 runtime 又被 Canvas
+    // 「是字符串」⇒ 镜头里写的非法 blend 通过静态自检，到 runtime 又被 Canvas
     // **静默忽略**（`globalCompositeOperation` 对非法值不生效）⇒ 按 source-over 画：不报错、不崩。
     {blend: '不存在的模式'}, {blend: 3}, {blend: ''}];
   assert.ok(pass.length + reject.length >= 20, '语料太少 —— 这条判据会变成空转');

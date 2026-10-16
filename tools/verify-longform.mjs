@@ -30,7 +30,7 @@
 //   - 真正的大规模渲染只跑**一次**（默认 18000 帧 @ 代理），证明规模上跑得完
 import {existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, cpSync} from 'node:fs';
 import {spawn, spawnSync} from 'node:child_process';
-import {dirname, join, resolve} from 'node:path';
+import {dirname, join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -52,13 +52,21 @@ const say = (m) => console.log(m);
 const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
 
 // ---------- 造长片项目 ----------
+// 基座用唯一的入库示例 `examples/minimal`：只借它的配置/时间轴骨架/小素材，
+// 镜头与解说词都在下面重写（长片要的是均匀、便宜、确定的内容）。
 rmSync(PROJ, {recursive: true, force: true});
 mkdirSync(PROJ, {recursive: true});
-cpSync(join(ROOT, 'examples', 'scenecast'), PROJ, {recursive: true});
-rmSync(join(PROJ, 'audio'), {recursive: true, force: true});
-rmSync(join(PROJ, 'renders'), {recursive: true, force: true});
-rmSync(join(PROJ, 'public', 'assets', 'scenecast'), {recursive: true, force: true});
-rmSync(join(PROJ, 'scene.json'), {force: true});
+const SRC = join(ROOT, 'examples', 'minimal');
+const SKIP_TOP = new Set(['audio', 'renders', '.work']);       // 配音缓存 / 历史产物，渲染用不上
+cpSync(SRC, PROJ, {
+  recursive: true,
+  filter: (s) => {
+    const rel = relative(SRC, s).replace(/\\/g, '/');
+    if (!rel) return true;
+    if (SKIP_TOP.has(rel.split('/')[0])) return false;
+    return rel !== 'public/assets/minimal';                    // 10MB 成品配音，长片夹具不需要
+  },
+});
 mkdirSync(join(PROJ, 'shots'), {recursive: true});
 // 长片测试用的最简镜头：只画标题与帧号，渲染成本低且确定。
 // 导入名要照公开面写（theme as C、view）—— 写成 C / W 会在浏览器里报
@@ -75,7 +83,7 @@ export const SHOTS = [
 ];
 `, 'utf8');
 
-// 解说词长度按目标帧数反推：夹具每句约 215 帧（实测 scenecast 的密度）
+// 解说词长度按目标帧数反推：每句约 215 帧（≈7 秒）的密度，够撑起目标时长即可。
 const fps = 30;
 const framesPerSent = 215;
 const need = Math.max(4, Math.ceil(BIG_FRAMES / framesPerSent));

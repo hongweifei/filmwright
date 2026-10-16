@@ -22,7 +22,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
 const TIER = (argv[1] || 'A').toUpperCase();
-const P = join(ROOT, 'examples', 'scenecast');
+const P = join(ROOT, 'examples', 'minimal');
 
 const imp = (rel) => import(pathToFileURL(`${ROOT}/${rel}`).href);
 const {openProjectSession} = await imp('src/host/media/renderRange.mjs');

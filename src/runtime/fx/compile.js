@@ -1,6 +1,6 @@
 // 效果链的编译与求值。
 //
-// 与关键帧那一层同构（`runtime/scene/animate.js`）：
+// 与关键帧那一层同构（`runtime/motion/animate.js`）：
 //   · **编译期**做归一化（`beat` → 绝对帧、缓动名 → 函数），求值期只剩算术；
 //   · 与"节点"解耦 —— 只吃 effects 数组 + `{beats, from}`，不认识镜头或图层；
 //   · **纯函数**：效果只依赖 `(编译结果, 帧号)`。
@@ -9,13 +9,13 @@
 // 轨道的编译直接复用 `compileAnimate` —— 规则不复制第二份。
 import {EFFECT_SPECS, GRADE_LOOKS} from '../../contract/effects.js';
 import {kf} from '../motion/ease.js';
-import {compileAnimate} from '../scene/animate.js';
+import {compileAnimate} from '../motion/animate.js';
 
 /** `color` 的恒等值（`grade` 插值的起点）。与 contract 里 color 的 identity 一致。 */
 const COLOR_IDENTITY = {exposure: 0, brightness: 1, contrast: 1, saturation: 1, hue: 0, temperature: 0};
 
 /**
- * @param {Array} effects  scene.json 里的 effects（已过 contract 校验）
+ * @param {Array} effects  镜头声明的 effects（已过 contract 校验）
  * @param {{beats?: number[], from: number}} node 宿主节点的时间信息
  * @returns {{steps: Array<object>}|null}  没有 effects 时返回 **null**（调用方走快路径）
  */

@@ -12,6 +12,11 @@
 // 真配音与夹具的差别是实打实的：实测三个示例的真配音比夹具**长 6–11%**
 // （夹具的时长是按字数编的），逐句差异最大 +1.13s。这直接决定镜头节奏与
 // 字幕切点 —— 用夹具调好的画面，换成真配音就会错位。
+//
+// ⚠️ 现在只剩 `examples/minimal` 一个示例（其余四个随声明式入口一起删了），
+// 而它的时间轴本来就是**真配音**（`engine=sapi`、无 `_fixture` 标记、成品 `audio.wav`
+// 与之时长一致）⇒ 本工具只跑它。这不是把判据放宽：留下的是同样的三条
+// （真配音 / 时间轴自洽 / 句 id 引用存在），只是语料从四个收成一个。
 import {existsSync, readFileSync, statSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {dirname, join, resolve} from 'node:path';
@@ -21,7 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // resolve() 保证 ROOT 是**绝对路径**：下面会用 `pathToFileURL(`${ROOT}/…`)` 或
 // `file:///${ROOT}/…` 拼 URL，相对路径会直接抛 ERR_INVALID_FILE_URL_PATH。
 const ROOT = resolve(process.argv[2] ?? resolve(HERE, '..')).replace(/\\/g, '/');
-const PROJECTS = ['minimal', 'scenecast', 'gallery', 'promo'];
+const PROJECTS = ['minimal'];
 
 let bad = 0;
 const ok = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
@@ -91,23 +96,19 @@ for (const p of PROJECTS) {
     (issues.length ? ' —— ' + issues.slice(0, 3).join('、') : ''));
 }
 
-console.log('\n=== 3) 镜头引用的句 id 都要存在（改解说词最容易漏的地方）===');
+console.log('\n=== 3) 配置（hud 等）引用的句 id 都要存在（改解说词最容易漏的地方）===');
 for (const p of PROJECTS) {
   const dir = join(ROOT, 'examples', p);
   const tlPath = join(dir, 'script', 'timeline.json');
-  const scenePath = join(dir, 'scene.json');
-  if (!existsSync(tlPath) || !existsSync(scenePath)) {
-    console.log(`  ${p}：没有 scene.json（手写镜头项目），跳过`);
+  if (!existsSync(tlPath)) {
+    console.log(`  ${p}：没有时间轴，跳过`);
     continue;
   }
   const r = spawnSync('node', [join(ROOT, 'bin', 'filmwright.mjs'), 'check',
     '--project', dir, '--static-only', '--json'], {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024});
   let j = null;
   try { j = JSON.parse(r.stdout); } catch { /* 下面统一报 */ }
-  const sceneCheck = j?.data?.checks?.find((c) => c.name === 'scene');
   const tlCheck = j?.data?.checks?.find((c) => c.name === 'timeline');
-  ok(sceneCheck?.ok === true, `${p}：scene 里的句引用都存在` +
-    (sceneCheck?.ok ? '' : ' —— ' + JSON.stringify(sceneCheck?.problems?.slice(0, 2))));
   ok(tlCheck?.ok === true, `${p}：配置（hud 等）里的句引用都存在` +
     (tlCheck?.ok ? '' : ' —— ' + JSON.stringify(tlCheck?.problems?.slice(0, 2))));
 }
@@ -125,5 +126,5 @@ for (const p of PROJECTS) {
     `（${diff >= 0 ? '+' : ''}${diff}，${pct}%），语速 ${(r.chars / r.speech_sec).toFixed(2)} 字/秒`);
 }
 
-console.log(bad === 0 ? '\n✓ 四个示例的时间轴都来自真配音且自洽' : `\n✗ ${bad} 项失败`);
+console.log(bad === 0 ? '\n✓ 示例的时间轴来自真配音且自洽' : `\n✗ ${bad} 项失败`);
 process.exit(bad ? 1 : 0);

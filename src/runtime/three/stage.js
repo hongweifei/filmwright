@@ -56,62 +56,6 @@ export async function loadThree() {
 }
 
 /**
- * 模块级持有的 three。
- *
- * 为什么要有这一对：声明式 3D 的模板 `draw(ctx, n, shot)` 是**同步**的，
- * 而 three 的加载是异步的。所以由引擎在 **boot 时**（boot 本身是 async）
- * 先 `ensureThree()`，模板之后就能同步 `getThree()` 拿到。
- * 这样"不用 3D 的项目一个字节都不加载"也成立 —— 只有 `needsThree(scene)` 为真才拉。
- */
-let THREE_MODULE = null;
-let SHARED_RENDERER = null;
-
-/**
- * boot 时预加载（幂等）——**并且把渲染器建好、`init()` 完**。
- *
- * ⚠️ `init()` 必须在这里 await，不能留到模板的同步 `draw` 里。
- * WebGPURenderer 在 `init()` 完成之前调 `render()` 会抛
- * "render() called before the backend is initialized" —— 而这个抛错**是否发生
- * 取决于 init 的竞态**，于是表现为"同一帧两次渲染结果不同"的间歇故障。
- * 实测踩到过：错误信息被引擎画进帧里（红字），验收工具报"跨会话不稳定"。
- */
-export async function ensureThree() {
-  if (!THREE_MODULE) THREE_MODULE = await loadThree();
-  if (!SHARED_RENDERER) {
-    const canvas = document.createElement('canvas');
-    const r = new THREE_MODULE.WebGPURenderer({
-      canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
-    });
-    await r.init();
-    SHARED_RENDERER = r;
-  }
-  return THREE_MODULE;
-}
-
-/** 同步取 three；没预加载就报一条能指路的错。 */
-export function getThree() {
-  if (!THREE_MODULE) {
-    const err = new Error('filmwright: 3D 图层还没初始化（three 未加载）');
-    err.code = 'THREE_NOT_READY';
-    err.hint = '声明式 3D 由引擎在 boot 时预加载；如果你是命令式用法，' +
-      '请在镜头模块顶层 `const T = await loadThree()` 并走 create3D()';
-    throw err;
-  }
-  return THREE_MODULE;
-}
-
-/** 同步取**已 init 的**共享渲染器（声明式 3D 用；一个进程只建一个 WebGL 上下文）。 */
-export function getRenderer() {
-  if (!SHARED_RENDERER) {
-    const err = new Error('filmwright: 3D 渲染器还没就绪');
-    err.code = 'THREE_NOT_READY';
-    err.hint = '声明式 3D 由 boot 调 ensureThree() 预加载并 init；这条路径不该被直接调用';
-    throw err;
-  }
-  return SHARED_RENDERER;
-}
-
-/**
  * 建一个 3D 图层。
  *
  * @param {object} T     `await loadThree()` 的结果

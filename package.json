@@ -1,7 +1,7 @@
 {
   "name": "filmwright",
   "version": "0.1.0",
-  "description": "专为 AI 自动化视频制作设计的逐帧渲染框架：Canvas 2D 上第 N 帧只是 N 的函数；scene.json 声明式镜头 + 模板节奏；Chrome + CDP 逐帧截图 → ffmpeg；十道自检与 MCP 服务器给 agent 用",
+  "description": "专为 AI 自动化视频制作设计的逐帧渲染框架：Canvas 2D 上第 N 帧只是 N 的函数；镜头是 shots/index.js 里手写的 SHOTS（纯命令式）；Chrome + CDP 逐帧截图 → ffmpeg；自检与 MCP 服务器给 agent 用",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -15,7 +15,7 @@
     "ai",
     "mcp",
     "text-to-video",
-    "declarative"
+    "imperative"
   ],
   "repository": {
     "type": "git",

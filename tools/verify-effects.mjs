@@ -37,7 +37,7 @@ const ROOT = resolve(ARGV.filter((a) => !a.startsWith('--'))[0] || process.cwd()
 const USE_GPU = ARGV.includes('--gpu');
 const NEGATIVE = ARGV.includes('--negative');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
-const SRC = join(ROOT, 'examples', 'scenecast');
+const SRC = join(ROOT, 'examples', 'minimal');
 const P = join(ROOT, '.work', 'fx-e2e');
 
 let bad = 0;
@@ -49,24 +49,69 @@ const line = (c = '─') => console.log(c.repeat(76));
 // 提前调用会踩"Cannot access before initialization"（写这版时真踩过）。
 if (NEGATIVE) process.exit(runNegativeControl());
 
+// 夹具：唯一的入库示例 + **手写镜头**（`shots/index.js`）。
+// 声明式那层（`scene.json` / 内置镜头类型）已删，所以效果现在只有一个挂法：
+// 镜头自己的 `effects` 字段。base 帧里约 2/3 曾是引擎背板的那套版面已经不存在了 ——
+// 下面的夹具把内容铺满整帧（判据里"掩码内"的取法对任何版面都成立，但铺得开才比得准）。
 rmSync(P, {recursive: true, force: true});
-cpSync(SRC, P, {recursive: true});
-for (const d of ['audio', 'renders', 'public/assets/scenecast']) {
-  rmSync(join(P, d), {recursive: true, force: true});
+cpSync(SRC, P, {
+  recursive: true,
+  filter: (s) => {
+    const rel = relative(SRC, s).replace(/\\/g, '/');
+    if (!rel) return true;
+    if (['audio', 'renders', '.work'].includes(rel.split('/')[0])) return false;
+    return rel !== 'public/assets/minimal';        // 10MB 成品配音，效果验收用不上
+  },
+});
+mkdirSync(join(P, 'shots'), {recursive: true});
+
+/**
+ * 夹具镜头源码：`effects` 挂在**手写镜头自己**的字段上（声明式 `scene.json` 已删，
+ * 效果现在只有这一个挂法）。每次验收前重写 `shots/index.js`，一帧一镜头、覆盖全片。
+ *
+ * 画面为什么这么画（这几条都由判据倒推出来的，不是随手涂的）：
+ *   · **铺满整帧（留 40px 边）**：效果只作用于镜头层，而掩码/暗角/径向这些判据都要在
+ *     足够多、且**各个方向都有**的像素上量；四角若全是背板，"暗角远处压得更狠"就没得比。
+ *     （留边是故意的：引擎画的背板 + HUD 仍有一部分在帧里，掩码仍然是"必要"的。）
+ *   · **高对比条纹（周期 40/20px）**：模糊半径 2→200 要跨过好几个条纹周期，
+ *     边缘能量才单调下降；色差/马赛克/扭曲也都吃"结构密"。
+ *   · **中心亮块**：glow 的阈值判据要有像素真的过阈值。
+ *   · 内容必须是**帧号的纯函数**：同一帧两次渲染要逐字节一致（第七节遍历全部效果验这条）。
+ */
+function shotSrc(effects) {
+  const X = 40, Y = 40, WW = W - 2 * X, HH = H - 2 * Y;
+  const fx = effects ? `\n    effects: ${JSON.stringify(effects)},` : '';
+  return `const X = ${X}, Y = ${Y}, WW = ${WW}, HH = ${HH};
+export const SHOTS = [
+  {
+    start: 1,${fx}
+    draw(ctx) {
+      ctx.save();
+      ctx.fillStyle = '#0B1020';
+      ctx.fillRect(X, Y, WW, HH);
+      // 竖向高对比条纹：把"边缘"铺到每个方向，也让各档模糊半径都跨过好几个周期
+      for (let i = 0; i * 40 < WW; i++) {
+        ctx.fillStyle = i % 2 ? '#2E6FBF' : '#F5B942';
+        ctx.fillRect(X + i * 40, Y, 20, HH);
+      }
+      // 横向条带：给出竖直方向上的结构（块状/位移类判据别只吃一个方向）
+      for (let j = 0; j * 80 < HH; j++) {
+        ctx.fillStyle = j % 2 ? '#0B1020' : '#3FA7FF';
+        ctx.fillRect(X, Y + j * 80, WW, 20);
+      }
+      // 中心亮块：glow 的"过阈值像素"来源
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(X + WW / 2 - 100, Y + HH / 2 - 60, 200, 120);
+      ctx.restore();
+    },
+  },
+];
+`;
 }
 
-/** 给 scene.json 的第一个非 title 镜头挂上 effects（null = 不写）。 */
+/** 把夹具镜头的 `effects` 写成手写镜头（`effects=null` ⇒ 不写该字段）。 */
 function setEffects(effects) {
-  const sc = JSON.parse(readFileSync(join(SRC, 'scene.json'), 'utf8'));
-  const t = sc.shots.find((s) => s.type !== 'title') || sc.shots[0];
-  // 固定到具体帧：用第 100 帧（第一个镜头区间内）
-  const clone = JSON.parse(JSON.stringify(sc));
-  const c = clone.shots.find((s) => s.type !== 'title') || clone.shots[0];
-  if (effects) c.effects = effects; else delete c.effects;
-  // 只留这一个镜头，避免别的镜头干扰对比（at:1 覆盖全片）
-  writeFileSync(join(P, 'scene.json'),
-    JSON.stringify({shots: [{...c, at: 1}]}, null, 2) + '\n', 'utf8');
-  return t;
+  writeFileSync(join(P, 'shots', 'index.js'), shotSrc(effects), 'utf8');
 }
 
 const run = (args) => spawnSync('node', [KIT, ...args], {encoding: 'utf8', maxBuffer: 64 * 1024 * 1024});
@@ -120,8 +165,9 @@ function edgeEnergy(gray) {
 /**
  * **掩码内**的边缘能量（水平方向）。
  *
- * 为什么需要它：效果只作用于镜头层，而整帧里 2/3 的像素是引擎画的背板 ——
- * 背板自己的边缘不受模糊影响，会把"大半径到底糊了多少"稀释掉。
+ * 为什么需要它：效果只作用于镜头层，而帧边缘的背板与 HUD 是引擎画的、不受影响 ——
+ * 背板自己的边缘会把"大半径到底糊了多少"稀释掉（夹具的镜头内容虽然铺满整帧，
+ * 仍留了 40px 边给背板，正是为了不让判据退化成"整帧都一样"）。
  * 实测：半径 34 时镜头内容已经基本抹平，但整帧边缘能量只降到基线的 62%，
  * 看上去像"大半径没生效"（其实是我的判据在量不该量的地方）。
  */
@@ -224,13 +270,13 @@ const W = 1280, H = 720;
 /**
  * 自动标定**镜头内容**所在的区域。
  *
- * 为什么需要它：**效果只作用于镜头层，而背板（底色/网格/暗角）是引擎画的、不受影响**。
- * 实测这一帧的镜头内容只覆盖中部约 33% 的像素，四角与边缘全是背板 ——
- * 拿整帧统计去判"饱和度为 0 应该变灰""暗角应该压暗四角"，会被未受影响的背板稀释，
- * 甚至给出 0% 变化的假象（第一版就是这么错判的）。
+ * 为什么需要它：**效果只作用于镜头层，而背板（底色/网格/暗角）与 HUD 是引擎画的、
+ * 不受影响**。拿整帧统计去判"饱和度为 0 应该变灰""暗角应该压暗四角"，会被未受影响的
+ * 背板稀释，甚至给出 0% 变化的假象（第一版就是这么错判的，当年的声明式夹具里
+ * 镜头内容只占中部约 33%）。
  *
  * 标定方式：拿"blur 改变了哪些像素"当镜头内容的掩码（模糊一定会改动镜头内容）。
- * 这样不写死任何版面坐标 —— 换项目、换模板都不用改判据。
+ * 这样不写死任何版面坐标 —— 换项目、换夹具都不用改判据。
  */
 function contentMask(baseRgb, refRgb, thresh = 6) {
   const m = new Uint8Array(baseRgb.length / 3);
@@ -285,6 +331,25 @@ function maskedMaxAbsDiff(a, b, mask) {
 }
 
 /**
+ * **裁剪区**内的平均逐像素绝对差。
+ *
+ * 为什么需要它：整帧 PNG hash 会把 HUD/字幕的逐帧差异算进去 —— 于是"两帧画面不同"
+ * 这类判据可能只是字幕在动，被测效果**完全没生效也照样绿**（详见第七节的 phase 轨道）。
+ * 只比中央裁剪区（本夹具那里铺满镜头内容、且没有 HUD），才是在量效果本身。
+ */
+function cropMeanAbsDiff(a, b, x0, y0, cw, ch) {
+  let s = 0, n = 0;
+  for (let y = y0; y < y0 + ch; y++) {
+    for (let x = x0; x < x0 + cw; x++) {
+      const i = (y * W + x) * 3;
+      s += (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2])) / 3;
+      n++;
+    }
+  }
+  return n ? s / n : 0;
+}
+
+/**
  * 暗角的径向剖面：掩码内、按"离中心的归一化距离"分两档，各算平均压暗系数
  * （1 = 没变暗，0 = 完全压黑）。近处应比远处压得少。
  */
@@ -304,7 +369,7 @@ function vignetteProfile(baseGray, effGray, mask, w, h) {
 
 console.log(`效果链验收：blur 最小闭环（${USE_GPU ? '--gpu 放开 GPU' : '默认档（软件 WebGL）'}）\n`);
 // 基准帧与**镜头内容掩码**先算好：后面每一节都只在镜头内容上量。
-// 效果只作用于镜头层，而整帧里约 2/3 是引擎画的背板（不受影响）——
+// 效果只作用于镜头层，而帧边缘的背板与 HUD 不受影响 ——
 // 在整帧上量会把结论稀释掉（这个坑在三个不同的判据上各踩过一次）。
 const base100 = still(null, 100, 'base100');
 const maskRef = still([{type: 'blur', radius: 30}], 100, 'maskref');
@@ -353,9 +418,10 @@ for (const s of samples) {
 ok(samples.every((s) => s.hash !== none.hash), 'radius>0 的画面都与不写 effects **不同**（效果确实上了）');
 ok(samples.every((s) => s.e < eNone), '半径>0 的边缘能量都**低于**不写 effects（确实变模糊了）');
 // **单调性只在"未饱和区间"断言**（2–34）。
-// 为什么：半径 34 之后镜头内容已经基本抹平，掩码内的残差 ≈1.2 是**背板**透过
-// 半透明层露出的边缘 —— 指标饱和了，再比大小就是比噪声（实测 34→80 有 5% 的回升，
-// 那不是振铃，是地板）。当年抓振铃（"半径越大反而越锐"）正是在这个区间。
+// 为什么：半径 34 之后镜头内容已经基本抹平，掩码内剩下的残差是**地板**
+// （掩码边界外溢的那一圈 + 透过半透明边缘露出的背板）—— 指标饱和了，
+// 再比大小就是比噪声（实测 34→80 有 5% 的回升，那不是振铃，是地板）。
+// 当年抓振铃（"半径越大反而越锐"）正是在这个区间。
 const unsat = samples.filter((s) => s.rad <= 34);
 let mono = true;
 for (let i = 1; i < unsat.length; i++) {
@@ -463,7 +529,7 @@ console.log('五、三个新效果（判据只测**镜头内容所在的区域**
 line();
 // 判据只测**镜头内容区域**（第三节已经标定好 base100 / mask），
 // 否则会被"不受效果影响的背板"稀释 —— 效果只作用于镜头层。
-console.log(`  （镜头内容占整帧 ${maskPct}%，四角与边缘是引擎画的背板）\n`);
+console.log(`  （镜头内容占整帧 ${maskPct}%，其余是引擎画的背板与 HUD）\n`);
 
 // ── glow ─────────────────────────────────────────────────────────────────
 {
@@ -682,11 +748,20 @@ line();
   const dD = still([{type: 'distort', amount: 0.8, frequency: 8}], 100, 'dsp-dist');
   ok(dA.hash !== dD.hash,
     `同参数下 displace 与 distort **输出不同**（${dA.hash} ≠ ${dD.hash}）—— 不是同一个效果`);
-  const ph = [{frame: 1, v: 0}, {frame: 40, v: 150, ease: 'linear'}];
+  // ⚠️ 轨道的 frame 是**节点内帧号**（本夹具的镜头起点是 1，所以数值等于全局帧号）。
+  // 这条轨道原来在第 40 帧就结束了，而下面比的是第 100 与第 130 帧 —— 两帧都落在
+  // **轨道终值**上，phase 其实冻住了。当时它绿着，是因为整帧 hash 里混着 HUD/字幕的
+  // 逐帧差异：判据在量别的东西（同一类坑在 tools/probes/check-determinism.mjs 里也踩过）。
+  const PH_LAST = 130;
+  const ph = [{frame: 1, v: 0}, {frame: PH_LAST, v: 150, ease: 'linear'}];
   const p1 = still([{type: 'displace', amount: 0.8, phase: ph}], 100, 'dsp-p1');
   const p2 = still([{type: 'displace', amount: 0.8, phase: ph}], 130, 'dsp-p2');
   const p1b = still([{type: 'displace', amount: 0.8, phase: ph}], 100, 'dsp-p1b');
-  ok(p1.hash !== p2.hash, 'phase 关键帧让不同帧的画面不同（热浪在流动）');
+  // 只比**中央裁剪区**（那里铺满镜头内容、没有 HUD/字幕）：整帧 hash 不等可能只是字幕
+  // 在动，裁剪区差才证明"采样位置真的被 phase 平移了"。
+  const cropD = cropMeanAbsDiff(p1.rgb, p2.rgb, 400, 240, 480, 240);
+  console.log(`  phase 轨道（1→${PH_LAST} 帧）：第 100 与第 130 帧的中央裁剪区逐像素差 ${cropD.toFixed(2)} 级`);
+  ok(cropD > 1, `phase 让第 100 与第 130 帧的**内容**不同（裁剪区差 ${cropD.toFixed(2)} > 1 级）—— 热浪在流动，不是冻结在终值`);
   ok(p1.hash === p1b.hash, '带 phase 轨道时同一帧仍逐字节一致');
 }
 
@@ -803,7 +878,7 @@ function runNegativeControl() {
   console.log('负面对照：故意让 blur 那一趟不再生效，要求本工具**红**（改的是临时副本，真源码不动）');
   line();
   console.log(`  临时仓库根：${tmp}（跑完即删）`);
-  const fixture = join(ROOT, 'examples', 'scenecast');
+  const fixture = join(ROOT, 'examples', 'minimal');
   try {
     // 只带渲染真正用到的那些。audio / renders / .work 与大音频素材都不必带
     // （前两类本工具自己也会从项目副本里删掉，后两类它根本不碰）。
@@ -814,13 +889,13 @@ function runNegativeControl() {
     cpSync(join(ROOT, 'package.json'), join(tmp, 'package.json'));
     // 临时仓库根就是新的「库根」⇒ 库自带的那份字体也要跟过去（见 `/fonts/` 的兜底）。
     cpSync(join(ROOT, 'fonts'), join(tmp, 'fonts'), {recursive: true});
-    cpSync(fixture, join(tmp, 'examples', 'scenecast'), {
+    cpSync(fixture, join(tmp, 'examples', 'minimal'), {
       recursive: true,
       filter: (s) => {
         const rel = relative(fixture, s).replace(/\\/g, '/');
         if (!rel) return true;                                   // 根自己
         if (skipTop.has(rel.split('/')[0])) return false;
-        return rel !== 'public/assets/scenecast';                // 大音频素材，渲染不需要
+        return rel !== 'public/assets/minimal';                  // 大音频素材，渲染不需要
       },
     });
     mkdirSync(join(tmp, '.work'), {recursive: true});

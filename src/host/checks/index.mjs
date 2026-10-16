@@ -2,7 +2,7 @@
 //
 // 分三层看结果：静态（读文件）/ 逐帧（真画）/ 画面质量（真画并看像素）。
 // 汇总行跟着实际道数走 —— 写死数字会在加了检查之后自己骗自己。
-import {checkPublicApi, checkImports, checkTimeline, checkThemeKeys, checkAssets, checkScene, checkClips} from './static/index.mjs';
+import {checkPublicApi, checkImports, checkTimeline, checkThemeKeys, checkAssets, checkClips} from './static/index.mjs';
 import {checkFrames} from './browser/frames.mjs';
 import {checkQuality} from './browser/qualityCheck.mjs';
 
@@ -23,9 +23,8 @@ export async function runChecks(projectDir, proj, opts = {}, cfg = {}) {
   if (apiFile) results.push(checkPublicApi(apiFile));
   results.push(checkImports(projectDir + '/shots', projectDir, {insideOnly: projectDir}));
   results.push(checkTimeline(projectDir, proj));
-  results.push(checkScene(projectDir, proj));
-  results.push(checkAssets(projectDir, proj.raw, proj.scene));
-  results.push(checkClips(projectDir, proj.raw, proj.scene));
+  results.push(checkAssets(projectDir, proj.raw));
+  results.push(checkClips(projectDir, proj.raw));
   if (runtimeDir) {
     results.push(checkImports(runtimeDir, 'runtime'));
     results.push(checkThemeKeys(runtimeDir));

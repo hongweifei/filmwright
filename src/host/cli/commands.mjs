@@ -6,7 +6,7 @@
 // 人模式的进度一律走 say()，json 模式自动静默。
 //
 // ⚠️ 本文件原先 846 行，已按职责拆成 5 个文件（**纯搬运，逻辑一行未改**）：
-//   `commands/project.mjs`  check / preview / mcp / schema / srt / clips / newProject
+//   `commands/project.mjs`  check / preview / mcp / srt / clips / newProject
 //   `commands/tts.mjs`      tts / voices
 //   `commands/media.mjs`    stills / sheet
 //   `sharding.mjs`          分片与格式决策（`resolveShards` / `frameFormatOf` / …）

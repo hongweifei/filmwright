@@ -1,8 +1,14 @@
-// 遮罩校验（叶子：只依赖共用原语）。
+// 遮罩校验：手写镜头的 `mask` 字段与 `withLayer` 的 `mask` 选项共用这一份。
+//
+// 它**不是**某个入口专属：`runtime/composite/layer.js` 收 `mask`，
+// `runtime/stage/drawFrame.js` 把 `shot.mask` 传下去 —— 所以校验留在 contract，
+// 由 `runtime/stage/shots.js` 在 `setShots` 时调用（写错当场报，而不是画到那一帧才崩）。
+import {err} from './errors.js';
 
-
-/** 遮罩支持的四形状（有界词汇表 —— 与 2.1 的立场一致）。 */
+/** 遮罩支持的四形状（有界词汇表 —— 与效果那套同一立场）。 */
 export const MASK_SHAPES = ['rect', 'rounded', 'ellipse', 'polygon'];
+
+export const MASK_ERROR_CODES = ['SCENE_MASK_SHAPE', 'SCENE_MASK_RANGE', 'SCENE_MASK_POLYGON'];
 
 
 /**
@@ -16,7 +22,7 @@ export const MASK_SHAPES = ['rect', 'rounded', 'ellipse', 'polygon'];
  */
 export function validateMask(mask, path = 'mask') {
   const out = [];
-  const push = (code, p, message, hint) => out.push({code, path: p, message, hint});
+  const push = (code, p, message, hint) => out.push(err(code, p, message, hint));
   if (!mask || typeof mask !== 'object' || Array.isArray(mask)) {
     push('SCENE_MASK_SHAPE', path, 'mask 必须是对象',
       '形如 {"shape":"ellipse","x":0.2,"y":0.2,"w":0.6,"h":0.6}');

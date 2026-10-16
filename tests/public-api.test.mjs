@@ -66,11 +66,11 @@ test('宿主页面只从公开面取东西：不深链 /kit/<子路径>，且用
 // 规则一句话：**拆过的地方，API 是它的桶** —— 桶只转出的那些名字就是那一块的能力面，
 // 底下的部件模块只是实现（它们 `export` 是为了让兄弟模块 import，不是给人用的）。
 const IMPL_ONLY = new Set([
-  'src/contract/scene/effects.js', 'src/contract/scene/layers.js', 'src/contract/scene/mask.js',
-  'src/contract/scene/primitives.js', 'src/contract/scene/tables.js', 'src/contract/scene/three.js',
-  'src/contract/scene/timelineQuery.js', 'src/contract/scene/validate.js',   // 桶是 contract/scene.js
-  'src/runtime/scene/templates/core.js', 'src/runtime/scene/templates/ext.js',
-  'src/runtime/scene/templates/registry.js', 'src/runtime/scene/templates/helpers.js',  // 桶是 scene/templates.js
+  // 桶是 runtime/composite/layer.js（公开面从那里转出 BLEND_MODES / isValidTransform）；
+  // contract 侧的 BLENDS（Set）与 TRANSFORM_HINT（报错文案）是内部表，不给镜头用。
+  'src/contract/composite.js',
+  // `err()` 是内部错误构造器；错误码的公开面是 contract/errorCodes.js 的 ERROR_CODES。
+  'src/contract/errors.js',
   'src/runtime/fx/shaders.js',      // 14 段 GLSL 源码：入口是 compileEffects / applyEffects
   'src/runtime/fx/stage.js',        // GpuStage 类：同上
 ]);

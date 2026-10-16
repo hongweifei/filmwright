@@ -1,16 +1,17 @@
 // 照 README / 入门文档的路径走一遍，确认文档没写错。
-// 覆盖：minimal 的快速开始（check + all）、两个纯 scene 示例的静态自检、
+// 覆盖：minimal 的快速开始（check + all + 文档里的 --static-only）、
 // 以及 `filmwright new` 的脚手架冒烟（含「没时间轴时 check 报 NO_TIMELINE」的错误契约）。
+//
+// 2026-10-16：声明式入口（`scene.json` + 17 类模板）已删 ⇒ 原来那两段随之删掉：
+//   · `schema` 命令已不存在（它当时靠 `SHOT_TYPES` 核「类型清单与实现一致」）；
+//   · 另外五个纯 scene 示例（scenecast / gallery / three / promo / vertical）已从仓库删除，
+//     现在只剩 `examples/minimal` —— 它的静态自检下面仍按文档真跑一遍。
 // 用法: node tools/verify-readme.mjs
 import {execFileSync} from 'node:child_process';
-import {existsSync, mkdtempSync, rmSync, statSync} from 'node:fs';
+import {existsSync, mkdtempSync, readdirSync, rmSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-// **从实现里读类型清单**，不在工具里硬编码数字 —— 这里曾经写着 `n !== 13`，
-// 而类型已经涨到 18，于是这个"守卫"一直在失败（它从没进过 CI，所以没人发现）。
-// 数字从实现读，加类型时它才跟得上。
-import {SHOT_TYPES} from '../src/contract/scene.js';
 
 // 本文件在 <root>/tools/，所以根要往上两层
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,24 +43,28 @@ if (!existsSync(out)) {
 }
 console.log(`产出 ${out}  ${(statSync(out).size / 1048576).toFixed(1)} MB`);
 
-// 纯规格示例：文档承诺 clone 后不跑 tts 也能 check（timeline.json 是入库夹具）
-// `three` 也一样满足（它是纯 scene.json 项目，静态自检**不需要** three 这个可选依赖）。
-// `promo` / `vertical` 之前**落在所有检查之外** —— 这一条是盘点 examples/ 时补上的。
-for (const ex of ['scenecast', 'gallery', 'three', 'promo', 'vertical']) {
-  step(`check --static-only（${ex}）`, () => run(['check', '--project', join(ROOT, 'examples', ex), '--static-only']));
+// 文档承诺 clone 后不跑 tts 也能做静态自检（`script/timeline.json` 是入库夹具）。
+// 只剩 `minimal` 一个示例了：另外五个（scenecast / gallery / three / promo / vertical）
+// 都是 scene.json 驱动的，已随声明式一起删掉 —— 这里刻意**不写示例清单**，
+// 而是从 `examples/` 派生，免得下次加减示例又要改这里。
+//
+// ⚠️ 「是示例」的判据是**目录里有 `film.config.mjs`**，不是「是个目录」：
+// 删示例时留下的空目录（`git rm` 只删跟踪的文件，删不掉目录本身）会被算进来，
+// 而 `check` 对它必然报「找不到 film.config.mjs」—— 那是**假红**，不是示例坏了。
+// 实测踩到：本机 `examples/scenecast/` 里还剩一个被占用的 `audio/cache`，
+// 目录删不掉 ⇒ 不加这一条，本机永远红而 CI（干净检出）绿。跳过的目录要**报出来**。
+const exRoot = join(ROOT, 'examples');
+const dirs = readdirSync(exRoot, {withFileTypes: true}).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+const examples = dirs.filter((name) => existsSync(join(exRoot, name, 'film.config.mjs')));
+const skipped = dirs.filter((name) => !examples.includes(name));
+if (skipped.length) console.log(`（跳过不是项目的目录：${skipped.join(' ')} —— 里面没有 film.config.mjs）`);
+if (!examples.includes('minimal')) {
+  console.log(`✗ examples/ 下找不到 minimal（实际 ${JSON.stringify(examples)}）—— 枚举读错目录了`);
+  process.exit(1);
 }
-
-// schema 命令：机器可读规格必须能解析，且**类型清单与实现一致**
-// （这里曾经硬编码 `n !== 13`，类型涨到 18 之后它一直在失败 —— 而它从没进过 CI）
-step('schema', () => {
-  const j = JSON.parse(run(['schema', '--json']).toString());
-  if (!j.ok) throw new Error('schema --json ok=false');
-  const got = Object.keys(j.data.schema.types).sort();
-  const want = [...SHOT_TYPES].sort();
-  if (got.join(',') !== want.join(',')) {
-    throw new Error(`schema 类型清单与实现不一致：\n  实现 ${want.length} 类：${want.join(' ')}\n  输出 ${got.length} 类：${got.join(' ')}`);
-  }
-});
+for (const ex of examples) {
+  step(`check --static-only（${ex}）`, () => run(['check', '--project', join(exRoot, ex), '--static-only']));
+}
 
 // new 冒烟：脚手架 + 错误契约一起验 —— 新项目没时间轴，check 必须报 NO_TIMELINE 而不是崩
 step('new', () => {

@@ -31,17 +31,13 @@ const FIX = process.argv.includes('--fix');
 
 // ---------- 从实现里取事实（唯一真相源）----------
 function facts() {
-  // ⚠️ 数据表在 `scene/tables.js`（`scene.js` 已拆成 8 个文件 + 只转出的桶）。
-  // 读的是**实现**而不是桶：桶只有 `export {…} from`，正则拿不到 `export const X = [...]` 的字面量。
-  const scene = readFileSync(join(ROOT, 'src/contract/scene/tables.js'), 'utf8');
-  const typesBlock = scene.match(/export const SHOT_TYPES = \[([\s\S]*?)\];/)[1];
-  // 「N 类模板」必须只数**模板**，不能数容器。
-  // SHOT_TYPES 里除了模板还有容器（如 layers —— 它没有自己的内容与 TEMPLATES 条目，
-  // 是把别的东西组合起来）。容器在 contract 里用 CONTAINER_TYPES 显式列出。
-  // 早先这里直接数 SHOT_TYPES，加了容器之后会把「16 类模板」误判成过期。
-  const ctrBlock = scene.match(/export const CONTAINER_TYPES = \[([\s\S]*?)\];/);
-  const containerCount = ctrBlock ? (ctrBlock[1].match(/'/g) || []).length / 2 : 0;
-  const templateCount = (typesBlock.match(/'/g) || []).length / 2 - containerCount;
+  // ⚠️ 只读**实现**文件，不读桶：桶只有 `export {…} from`，正则拿不到 `export const X = [...]`。
+  //
+  // 2026-10-16：声明式入口（`scene.json` + 17 类模板 + `contract/scene/tables.js`）已删，
+  // 所以「N 类模板」这条判据连同它的数据源一起删掉了 —— 留着它会让整个守卫崩在
+  // 一个不存在的文件上（实测 `ENOENT src/contract/scene/tables.js`），而崩不是红。
+  const composite = readFileSync(join(ROOT, 'src/contract/composite.js'), 'utf8');
+  const transition = readFileSync(join(ROOT, 'src/contract/transition.js'), 'utf8');
 
   // 自检道数：数 runChecks 里的 results.push。静态那批与浏览器那批分开数，
   // 因为文档里两种说法都有（「N 道自检」指全部，「前 M 道」指静态）。
@@ -60,18 +56,18 @@ function facts() {
   // 混合模式名单的**单一来源在 contract**（`layer.js` 只是再导出），所以从这里数。
   // 找不到就**明确报错**：原来的 `[1]` 会抛 `TypeError: Cannot read properties of null` ——
   // 那种红读不出「名单被搬走了，判据要跟着改」，只会让人以为是工具坏了。
-  const bm = scene.match(/export const BLEND_MODES = \[([\s\S]*?)\]/);
+  const bm = composite.match(/export const BLEND_MODES = \[([\s\S]*?)\]/);
   if (!bm) {
-    throw new Error('verify-docs: src/contract/scene/tables.js 里找不到 `export const BLEND_MODES = [...]`'
+    throw new Error('verify-docs: src/contract/composite.js 里找不到 `export const BLEND_MODES = [...]`'
       + '（名单被改名或搬走了，这条判据要跟着改）');
   }
   const blendModes = (bm[1].match(/'/g) || []).length / 2;
 
-  // 转场类型从**单一来源**读（`contract/scene.js` 的 `TRANSITION_TYPES`，`shots.js` 也 import 它）。
+  // 转场类型从**单一来源**读（`contract/transition.js`，`shots.js` 也 import 它）。
   // 原来是在 shots.js 里 `normalizeTransition` 之后 700 字符的窗口里正则捞：那个窗口只捞得到
   // 3 种（crossfade / slide / wipe，都是函数体里的字面量），而真实名单有 5 种 ⇒ 打印出来的
   // 「事实」本身就是错的。因为没有规则拿它比对，错了很久也没人发现 —— 顺手修掉。
-  const transitions = (scene.match(/export const TRANSITION_TYPES = \[([^\]]*)\]/)?.[1] ?? '')
+  const transitions = (transition.match(/export const TRANSITION_TYPES = \[([^\]]*)\]/)?.[1] ?? '')
     .split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
 
   const hasClips = existsSync(join(ROOT, 'src/host/media/clips.mjs'))
@@ -94,7 +90,7 @@ function facts() {
   const ciSrc = readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
   const wiredToolCount = toolFiles.filter((f) => ciSrc.includes(f)).length;
 
-  return {templateCount, checkCount, staticCheckCount, commands, mcpToolCount, blendModes,
+  return {checkCount, staticCheckCount, commands, mcpToolCount, blendModes,
     transitions, hasClips, testCount, effectCount,
     toolCount: toolFiles.length, wiredToolCount};
 }
@@ -143,8 +139,8 @@ const fixes = [
   // 注意：每条规则要说明「哪一组是数字」。用 idx 显式指出来，别靠 m[1] 猜 ——
   // 「前七道」这条里 m[1] 是「前」，靠 m[1] 取数字会得到 NaN 而静默不改
   // （实测：自动修正跑了却漏掉这三处）。
-  {re: /(\d+)(\s*)类模板/g, numIdx: 1, want: F.templateCount,
-   make: (m) => `${F.templateCount}${m[2]}类模板`, label: '类模板数'},
+  //
+  // 2026-10-16：「N 类模板」那条规则随声明式入口一起删了（模板已不存在，没有可核的数）。
   {re: /([七八九十])(道自检)/g, numIdx: 1, want: F.checkCount,
    make: (m) => `${cnNum(F.checkCount)}${m[2]}`, label: '自检道数'},
   {re: /(\d+)(道自检)/g, numIdx: 1, want: F.checkCount,
@@ -389,22 +385,20 @@ const SELF_PATH = fileURLToPath(import.meta.url);
  * 所以这里等于把「这个工具依赖哪些实现文件」也钉住了 —— 路径一改，负面对照当场红。
  */
 function fixtureFiles() {
-  const types = ['alpha', 'beta', 'gamma'];
-  const containers = ['gamma'];
   const staticChecks = ['compile', 'lint'];
   const browserChecks = ['render'];
   const testNames = ['t1', 't2'];
   const effects = ['blur', 'glow'];
   const tools = ['verify-alpha.mjs', 'verify-beta.mjs'];
   const wired = ['verify-alpha.mjs'];
-  const templates = types.length - containers.length;   // 容器不算模板（与 facts() 同口径）
   const q = (xs) => xs.map((x) => `'${x}'`).join(', ');
 
   const files = {
     // ── facts() 会读的实现文件 ──
-    'src/contract/scene/tables.js': `export const SHOT_TYPES = [${q(types)}];\n`
-      + `export const CONTAINER_TYPES = [${q(containers)}];\n`
-      + `export const BLEND_MODES = ['normal', 'multiply'];\n`,
+    // ⚠️ 这两个路径是**硬编码**在 facts() 里的：名字一改，负面对照当场抛 ⇒
+    // 等于把「这个工具依赖哪些实现文件」也钉住了（2026-10-16 声明式入口删除时正是这样发现的）。
+    'src/contract/composite.js': `export const BLEND_MODES = ['normal', 'multiply'];\n`,
+    'src/contract/transition.js': `export const TRANSITION_TYPES = ['crossfade', 'fade'];\n`,
     'src/host/checks/index.mjs': `export async function runChecks({staticOnly} = {}) {\n`
       + `  const results = [];\n`
       + staticChecks.map((n) => `  results.push('${n}');\n`).join('')
@@ -415,7 +409,7 @@ function fixtureFiles() {
     'src/host/mcp/server.mjs': `server.registerTool('a', {}, () => {});\n`
       + `server.registerTool('b', {}, () => {});\n`,
     // 混合模式的名单在 contract（这里只是再导出）—— 夹具照实镜像这个安排
-    'src/runtime/composite/layer.js': `export {BLEND_MODES} from '../../contract/scene.js';\n`,
+    'src/runtime/composite/layer.js': `export {BLEND_MODES} from '../../contract/composite.js';\n`,
     'src/runtime/stage/shots.js': `export function normalizeTransition(t) {\n`
       + `  if (t === 'fade') return 'crossfade';\n  return t || 'crossfade';\n}\n`,
     'src/host/media/clips.mjs': `export const CLIPS = true;\n`,   // 有了它，② 那句否定才过期
@@ -428,17 +422,17 @@ function fixtureFiles() {
       + wired.map((f) => `      - run: node tools/${f}\n`).join(''),
     // ── 被判的文档 ──
     'README.md': `# 夹具仓库\n\n`
-      + `这是自检夹具：${templates} 类模板、${staticChecks.length + browserChecks.length} 道自检`
+      + `这是自检夹具：${staticChecks.length + browserChecks.length} 道自检`
       + `（前 ${staticChecks.length} 道不启浏览器）。\n`
       + `共 ${testNames.length} 个单元测试、${effects.length} 个效果、${tools.length} 个验收工具，`
       + `其中 ${wired.length} 个在 CI 里自动跑。\n`
       // 引号里的旧值：**引述**，不是当前断言 ⇒ 一条都不许报（豁免坏了这里就会红）
-      + `旧说法：「${templates + 7} 类模板」。\n`,
+      + `旧说法：「${effects.length + 7} 个效果」。\n`,
     'docs/qc.md': `# 夹具\n\n| 守卫 | 说明 |\n| --- | --- |\n`
       + wired.map((f) => `| \`${f}\` | 夹具守卫 |\n`).join('')
       + `\n**${tools.length} 个验收工具里 ${wired.length} 个自动跑。**\n`,
   };
-  return {files, spec: {templates, effects, wired},
+  return {files, spec: {effects, wired},
     docCount: Object.keys(files).filter((p) => p.endsWith('.md')).length};
 }
 
@@ -455,7 +449,7 @@ function writeFixture(dir, trackDocs) {
   }
   try {
     execFileSync('git', ['init', '-q'], {cwd: dir, stdio: 'ignore'});
-    execFileSync('git', ['add', '--', 'src/contract/scene/tables.js'], {cwd: dir, stdio: 'ignore'});
+    execFileSync('git', ['add', '--', 'src/contract/composite.js'], {cwd: dir, stdio: 'ignore'});
     if (trackDocs) execFileSync('git', ['add', '--', 'README.md', 'docs/qc.md'], {cwd: dir, stdio: 'ignore'});
     return true;
   } catch { return false; }   // 没有 git：工具会回退到扫磁盘，只是「空集」那条做不了
@@ -533,7 +527,7 @@ function runNegativeControl() {
 
 // ---------- 报告 ----------
 console.log('实现事实（唯一真相源）：');
-console.log(`  模板 ${F.templateCount} 类 | 自检 ${F.checkCount} 道（静态 ${F.staticCheckCount}） | 命令 ${F.commands.length} 个`);
+console.log(`  自检 ${F.checkCount} 道（静态 ${F.staticCheckCount}） | 命令 ${F.commands.length} 个`);
 console.log(`  MCP 工具 ${F.mcpToolCount} 个 | 混合模式 ${F.blendModes} 种 | 转场 ${JSON.stringify(F.transitions)} | clips=${F.hasClips}`);
 console.log(`\n扫描了 ${DOC_FILES.length} 个文档文件`);
 

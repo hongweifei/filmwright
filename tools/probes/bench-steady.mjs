@@ -51,7 +51,7 @@ const flag = (n, d) => {
   return i >= 0 ? (argv[i + 1] ?? true) : d;
 };
 const SHARDS = Number(flag('--shards', 1));
-const PROJECT = flag('--project', join(ROOT, 'examples', 'scenecast'));
+const PROJECT = flag('--project', join(ROOT, 'examples', 'minimal'));
 const WORK = join(ROOT, '.work', 'bench');
 
 function run(from, to) {

@@ -1,12 +1,14 @@
 # 运行时 API 参考
 
-镜头文件只 import 一个入口：
+**这是命令式逐帧渲染的公开面。** 镜头只有一个来源：`shots/index.js` 导出 `SHOTS` 数组，
+每一项是一个**镜头对象**；引擎按 `start` 串接区间，逐帧调 `draw(ctx, n, shot)`。
 
 ```js
 import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'filmwright';
 ```
 
-`'filmwright'` 由渲染页的 import map 解析到 `src/index.js`。**公开面上只有浏览器里跑的东西**——Node 侧（CLI、渲染、自检）不在公开面上，镜头不该 import 它们。
+`'filmwright'` 由渲染页的 import map 解析到 `src/index.js`。**公开面上只有浏览器里跑的东西**——
+Node 侧（CLI、渲染、自检）不在公开面上，镜头不该 import 它们。
 
 以下按组列全公开导出。签名以源码为准；每个函数的完整选项见对应源文件（都在 `src/runtime/` 与 `src/contract/` 下）。
 
@@ -25,6 +27,22 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 - `draw` 里可以读 **`this.from` / `this.to`**（本镜头的实际区间）。所以 `draw` 必须是**普通函数**，箭头函数会把 `this` 丢掉，每帧都抛错。
 - 镜头模块顶层就调 `cutBefore()` 这类查询（这是它不写硬编码帧号的原因），所以引擎在时间轴装载**之后**才求值镜头模块——`boot()` 收的是加载函数，不是已求值的模块。
 - 模块导出 `SHOTS` 数组：`export const SHOTS = [TITLE, PURE, …]`。
+
+### 镜头对象的可选字段
+
+通用字段对每个镜头都可用，与 `draw` 同级。**写错在装配期当场报**（带 `code` / `hint`）：
+
+| 字段 | 作用 | 校验来源 |
+|---|---|---|
+| `beats` | 节拍表（≥1 的整数帧号数组）。声明了它，画质自检的「末拍稳定期」从读数升级为**硬判据**；也是 `animate` 里 `beat` 锚点可用的前提 | 装配期（`setShots`） |
+| `transform` | 位移 / 缩放 / 旋转 / `alpha` 组透明度 / `blend` 混合模式 / `origin` 变换中心 | `isValidTransform` + `BLEND_MODES` 白名单 |
+| `animate` | 按关键帧驱动 `x` / `y` / `scale` / `rotate` / `alpha`（**属性与 `transform` 一一对应**；同名属性不能两处都写） | `validateAnimate` / `validateKeyTrack` |
+| `effects` | 效果链，数组顺序即应用顺序；参数可以是关键帧轨道 | `validateEffects`（词汇表见[效果链](effects.md)） |
+| `mask` | `rect` / `rounded` / `ellipse` / `polygon` + `invert` 反选，坐标是归一化设计坐标 | `validateMask` |
+| `transition` | 入场转场：`{type, frames, direction}` 或直接给帧数 | `normalizeTransition`（第一个镜头只能用 `fade`） |
+
+⚠️ 这些校验跑在**浏览器装配期**，所以 `check --static-only`（Node 侧、不开浏览器）**抓不到**；
+要跑到渲染或预览才会报。这与「自检越早越好」的方向相反，是有意如实记下的现状。
 
 ## 配置与视口
 
@@ -70,11 +88,11 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `easeOutBack(t)` | 回弹缓出 |
 | `pulse(t, center, w)` | 0→1→0 脉冲，中心 `center`，半宽 `w` |
 | `rnd(seed)` | 确定性哈希随机 `[0,1)`；同一 seed 永远同一串 |
-| `kf(t, keys)` | 分段关键帧；`keys` 为 `[帧, 值]` 数组 |
+| `kf(t, keys)` | 分段关键帧；`keys` 为 `[[t, 值], [t, 值, 缓动函数], …]`（第 3 项是「走到这一键」的缓动，不传即线性）。夹紧不外推 |
 | `enter(n, f0, dur = 14, dy = 26)` | 入场：返回 `{a, dy}`（淡入 + 上移落位，**首帧全透明**） |
 | `exit(n, f1, dur = 12, dy = 22)` | 离场：返回 `{a, dy}`（上移淡出，末帧归零） |
-| `step(t, edge = 0.5)` | 阶梯：`t < edge` 为 0，否则 1（逐字 / 逐项开关用） |
-| `EASE_NAMES` / `EASES` | 有界缓动词汇表的**名单** / 名字 → 函数（`scene.json` 的 `ease` 字段只认这些名字） |
+| `step(t)` | 硬切：`t < 1` 为 0，`t ≥ 1` 为 1（无过渡的状态切换用） |
+| `EASE_NAMES` / `EASES` | 有界缓动词汇表的**名单** / 名字 → 函数（关键帧的 `ease` 字段只认这些名字：`linear` / `out3` / `out4` / `in3` / `inout3` / `back` / `step`） |
 
 惯用法：`const a = easeOut3(inv(n, from, to)); if (a > 0.01) { ctx.globalAlpha = a; … }`。
 
@@ -113,6 +131,10 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `section(ctx, x, y, w, title, p, o)` | 带标题的区块头；`sub` 是等宽小字 |
 | `code(ctx, s, x, y, o)` | 行内代码片（等宽 + 可选底色）；返回宽 |
 
+**逐字入场**（原来是模板的 `reveal` 字段，现在是原语的一个选项）：`title` / `quote` 那类标题文案
+可以把长文本交给 `text` 的 `spacing` / `glow` 自己排，逐字进场则是「每个字自己的进度只依赖 n」
+——按码点切字、每字按自己的 advance 居中，落位后与整块画法残差极小（实测最大差 24 级，来自光晕叠加）。
+
 ## 图片与素材
 
 | 导出 | 说明 |
@@ -140,6 +162,17 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 
 引擎内建件（HUD / 字幕 / 章节卡 / 进度条 / 片尾）自己读 `view` 按比例摆，与分辨率无关；**镜头内容**的缩放要自己调 `applyDesignScale`。
 
+## 关键帧求值
+
+| 导出 | 说明 |
+|---|---|
+| `compileAnimate(animate, node)` | 把 `animate` 声明编译成「帧号 → 值」的求值器（`node` 给 `{beats, from}`） |
+| `evalAnimate(compiled, n)` | 按绝对帧号求值（关键帧的锚点在这一步落地） |
+| `mergeAnimate(transform, compiled, n)` | 把静态 `transform` 与动画结果合并成一份变换 |
+
+镜头对象上的 `animate` 字段由引擎在装配期自动编译，一般不用手调这三个；
+它们公开是因为**手写镜头自己组装子合成 / 自定义节点时**要用到同一套时间基。
+
 ## 阶段（一般不用，自检与调试用）
 
 | 导出 | 说明 |
@@ -148,7 +181,7 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `drawFrame(ctx, n)` | 按帧号画完整一帧（内建件 + 当前镜头 + 片尾） |
 | `shots()` / `shotAt(n)` | 镜头表（带串接好的 `from` / `to`）/ 帧号 → 所在镜头 |
 | `chapterCards()` | 已组装的章节卡 |
-| `bindShots(list)` / `setShots(list)` | 把镜头表串接成带 `from` / `to` 的区间 / 直接装上（装配与测试用） |
+| `bindShots(list, totalFrames)` / `setShots(list)` | 把镜头表串接成带 `from` / `to` 的区间 / 直接装上（装配与测试用） |
 | `normalizeTransition(t)` / `transitionAt(n)` | 转场声明归一化 / 帧号 → 当前转场（内建件用） |
 
 `boot` 与下一节的 `installAnalysis` 之所以在公开面上，是因为**宿主页面也要用**：
@@ -164,17 +197,22 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 
 ## 图层合成与嵌套合成
 
-`layers` 容器与 `comps` 子合成用的就是这一组 —— **顶层镜头走的是同一条路径**（`withLayer` 的 `mode: 'shot'`），所以手写镜头与声明式规格的变换语义完全一致。
+镜头声明 `transform` / `mask` 时走的就是这一组 —— **自己画的多层内容也可以用同一条路径**（`withLayer`），
+所以「镜头级变换」与「手工分层」的语义完全一致。
 
 | 导出 | 说明 |
 |---|---|
-| `withLayer(ctx, …)` | 按层的 `transform` / 透明度 / `blend` 画一次回调；顶层镜头与容器层共用 |
+| `withLayer(ctx, …)` | 按层的 `transform` / 透明度 / `blend` 画一次回调；镜头级变换与手工分层共用 |
 | `applyLayerTransform(ctx, t, n)` / `applyShotTransform(ctx, …)` | 把（可带关键帧的）变换应用到 ctx |
 | `isValidTransform(t)` | 变换字段校验（`blend` 走 `BLEND_MODES` 白名单 —— 非法值不会被 Canvas 静默忽略） |
 | `BLEND_MODES` | 16 个混合模式的**单一来源**（契约与运行时指向同一个对象） |
 | `bufferStats()` / `needsBuffer(…)` | 合成缓冲区统计 / 这层要不要单独缓冲区 |
 | `bindLocalShots(…)` / `compLength(…)` / `localFrame(…)` / `drawCompInstance(…)` / `mapBeats(…)` | 子合成实例的装配、长度、本地帧映射、绘制与节拍映射 |
 | `assertNoCycles(comps)` | 子合成引用成环**当场报错**（成环会无限递归） |
+
+子合成的时间基契约：**子合成内部的 `start` 只能是本地帧号**（从 1 起）；要跟解说词对齐，
+在实例化那一层用 `cutBefore('S05')` 算好再传进去。全局帧 → 本地帧是纯换算，
+所以递归链上「第 N 帧只是 N 的函数」依然成立。
 
 ## 片段（视频 / 图片序列）
 
@@ -186,21 +224,15 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `clipNames()` / `clipsReady()` / `decodedCount(name)` | 已声明的片段名 / 是否全部就绪 / 已解出多少帧 |
 | `sourceIndex(name, n)` / `preloadClipFrames(…)` / `setClips(…)` | 帧号 → 源帧下标 / 预取 / 装配（后两个是宿主与测试用的） |
 
-## 声明式引擎（`scene.json` → 镜头）
-
-| 导出 | 说明 |
-|---|---|
-| `TEMPLATES` | **17 类模板 + 1 个容器**的注册表；键与 `SHOT_TYPES` 一一对应（有测试钉住） |
-| `compileScene(scene, {timeline, sentences, subs})` | 把 `scene.json` 编译成镜头表（两趟：先 `comps` 再顶层） |
-| `compileAnimate(…)` / `evalAnimate(…)` / `mergeAnimate(…)` | 关键帧轨道的编译、求值与合并 —— **模板与手写镜头共用**，所以「第 N 帧只是 N 的函数」这条不变量两边都成立 |
-
-> 想「拿 filmwright 当库编译 `scene.json`」就走这三个；`filmwright render` 走的是同一条路。
-
 ## 效果链（编译与执行）
 
+有界词汇表（见[效果链](effects.md)）：**枚举效果 + 有界参数**，参数可以写成关键帧轨道。
+
 | 导出 | 说明 |
 |---|---|
-| `compileEffects(decl)` | 把 `effects` 声明编译成可执行的步骤序列 |
+| `EFFECT_TYPES` / `EFFECT_SPECS` / `EFFECT_CHAIN_MAX` / `EFFECT_ERROR_CODES` / `GRADE_LOOKS` | 效果类型 / 每个效果的字段与范围 / 链长上限 / 错误码 / 调色预设 |
+| `validateEffects(decl)` | 校验一处 `effects` 声明，返回错误数组（每条带 `code` / `path` / `message` / `hint`） |
+| `compileEffects(decl, node?)` | 把 `effects` 声明编译成可执行的步骤序列 |
 | `evalEffects(compiled, n)` | 按帧求值（关键帧参数在这一步落地） |
 | `isNoopEffects(…)` | 声明是不是等于「什么都不做」（走快路径，不碰 GPU） |
 | `applyEffects(srcCanvas, compiled, n)` | 跑一遍效果链，**返回结果画布**（没效果时返回 `null`，调用方走原路） |
@@ -208,27 +240,18 @@ import {text, panel, S, BLK, cutBefore, inv, easeOut3, applyDesignScale} from 'f
 | `getScratch(w, h)` | 共用暂存画布（避免每帧新建） |
 | `blurPlan(radius)` / `pyramidLevel(radius)` | 模糊的金字塔规划 —— **纯数学、零 GL 依赖** |
 
-## 场景规格与校验（契约层）
+## 契约校验（镜头字段的规则）
 
-`scene.json` 的规则本身。**`filmwright check` 的 `scene` 一道与浏览器 boot 查的是同一份实现。**
-
-| 导出 | 说明 |
-|---|---|
-| `validateScene(raw, {timeline, assetNames, clipNames})` | 总校验，返回 `{errors, warnings}`；每条错误带 `code / path / message / hint` |
-| `sceneSchema()` | 机器可读 schema（类型 / 字段 / 容量上限 / 对齐语法 / 错误码）—— MCP 的 `filmwright_schema` 用的就是它 |
-| `SHOT_TYPES` / `CONTAINER_TYPES` / `TEMPLATE_TYPES` / `SHOT_MAXES` / `SCENE_SCHEMA` / `SCENE_ERROR_CODES` | 类型清单 / 容器 / 模板 / 容量上限 / 规格版本 / 错误码表 |
-| `resolveAt(at, tl)` | `at` 写句 id / 块号时的解析 |
-| `validateEffects` / `validateMask` / `validate3D` / `validateLayers` / `validateAnimate` / `validateTransition` / `isValidTransition` / `needsThree` / `assertNoCyclesPlain` | 各叶子校验器与两个小工具（`needsThree` 判断要不要 3D 运行时） |
-| `ANIM_PROPS` / `MASK_SHAPES` / `TRANSITION_TYPES` / `TRANSITION_DIRECTIONS` | 可动画属性 / 遮罩形状 / 转场类型 / 转场方向 |
-
-## 效果链与 3D 的词汇表（契约层）
-
-有界词汇表（与 `scene.json` 的校验共用同一份，**不是文档抄一份**）。
+镜头对象的可选字段写错**当场报**，规则只有这一份（引擎在装配期调用，手写镜头也可主动调来自检）：
 
 | 导出 | 说明 |
 |---|---|
-| `EFFECT_TYPES` / `EFFECT_SPECS` / `EFFECT_CHAIN_MAX` / `EFFECT_ERROR_CODES` / `GRADE_LOOKS` | 效果类型 / 每个效果的字段与范围 / 链长上限 / 错误码 / 调色预设 |
-| `SHAPES` / `ANIM3D_PROPS` / `LIGHT_TYPES` / `LIGHT_ANIM_PROPS` / `MAX_OBJECTS` / `MAX_LIGHTS` / `THEME_COLOR_KEYS` / `THREE_ERROR_CODES` | 3D 形状 / 可动画属性 / 光源类型 / 光源可动画属性 / 物体上限 / 光源上限 / 取主题色的键 / 错误码 |
+| `validateAnimate(animate, transform, path?)` | 总校验一处 `animate`，返回错误数组 |
+| `validateKeyTrack(keys, where, opts?)` | 校验**一条关键帧轨道**（`animate` 的每个属性、效果参数的关键帧共用同一份规则） |
+| `ANIM_PROPS` / `ANIM_ERROR_CODES` | 可动画属性（`x` / `y` / `scale` / `rotate` / `alpha`）/ 关键帧这一族的错误码 |
+| `validateMask(mask, path?)` / `MASK_SHAPES` / `MASK_ERROR_CODES` | 遮罩校验 / 四种形状（`rect` / `rounded` / `ellipse` / `polygon`）/ 错误码 |
+| `TRANSITION_TYPES` / `TRANSITION_DIRECTIONS` | 转场类型（`crossfade` / `fade` / `slide` / `wipe` / `zoom`）/ 方向（`left` / `right` / `up` / `down`） |
+| `ERROR_CODES` | **全部错误码的登记表**（关键帧 + 遮罩 + 效果三族；有测试扫源码与它双向比对） |
 
 ## overlay（背板 / 章节卡 / HUD / 进度 / 字幕 / 结尾）
 
@@ -255,18 +278,18 @@ WebCodecs 编码在**页面里**跑（Node 侧只收裸流）。
 
 ## 3D 图层（现成的 three，**可选**依赖）
 
-**不在文件顶层 `import 'three'`** —— 那样所有项目都要付 2.2MB 的加载代价；由镜头模块自己 `await loadThree()`。
+**不在文件顶层 `import 'three'`** —— 那样所有项目都要付 2.2MB 的加载代价；由镜头模块自己
+在顶层 `const T = await loadThree()`（细节见 [3D 图层](three.md)）。
 
 | 导出 | 说明 |
 |---|---|
-| `loadThree()` | 动态加载 three（返回 `{THREE, …}`；顶层 await 也是调用方的事，因为 `draw` 是同步的） |
-| `create3D(…)` | 建一个 3D 场景实例（形状 / 相机 / 光照都在有界词汇表内） |
-| `ensureThree()` / `getThree()` / `getRenderer()` | 取（必要时先建）3D 运行时 / three 命名空间 / 渲染器 |
-| `threeT` / `reset3D()` | 内建的 `three` 模板 / 重置 3D 运行时（测试与热重载用） |
+| `loadThree()` | 动态加载 three（返回 three 命名空间；顶层 await 是调用方的事，因为 `draw` 是同步的） |
+| `create3D(T, build, opts)` | 建一个 3D 场景实例，返回带同步 `render(ctx, n)` 的对象 |
+| `ensureThree()` / `getThree()` / `getRenderer()` | 取（必要时先建）3D 运行时 / three 命名空间 / 共享渲染器 —— 引擎内部与热重载、测试用；命令式镜头走 `loadThree()` + `create3D()` |
 
 ## 一个完整的镜头示例
 
-节选自 `examples/minimal/shots/index.js`（可运行的完整版以它为准）：
+节选自 `examples/minimal/shots/index.js`（可运行的完整版以它为准，全片 4 个镜头）：
 
 ```js
 import {text, panel, rule, view, theme as C, fonts as F,

@@ -113,7 +113,7 @@ test('末拍稳定期是「只报告」读数：hold 可以是 null，且不进 
   assert.equal(stats[0].holdSource, 'inferred', '没声明节拍时走像素推断');
 });
 
-// ---------- 声明节拍（scene 模板自动带）：末拍稳定期升级为硬判据 ----------
+// ---------- 声明节拍（手写镜头自己在 beats 里给）：末拍稳定期升级为硬判据 ----------
 
 const shotB = (beats) => [{id: 'SHB', from: 1, to: 600, beats}];
 
