@@ -95,19 +95,61 @@ effects: [{type: 'blur', radius: [{beat: 1, v: 0}, {beat: 2, v: 16, ease: 'out3'
 
 ### 还没做的（都是有意留的，别当成 bug）
 
-- **效果链 11 个都做完了**（`blur` `glow` `color` `vignette` `chromatic` `grain`
-  `pixelate` `radialBlur` `distort` `grade` `displace`）。`displace` 是程序化噪声置换
-  （不是跨层纹理），详见下面「`displace` 怎么做」。
+- **效果链 12 个效果都做完了**：11 个具名效果（`blur` `glow` `color` `vignette` `chromatic` `grain`
+  `pixelate` `radialBlur` `distort` `grade` `displace`）+ 一个受约束的逃生舱 `custom`
+  （见下）。`displace` 是程序化噪声置换（不是跨层纹理），详见下面「`displace` 怎么做」。
   ⚠️ **新增效果要动三处**：契约（`EFFECT_TYPES`/`EFFECT_SPECS`）、`SIMPLE_PASSES`、
   **以及 `GpuStage` 的 `this.progs` 注册表**。**漏掉第三处不会报错** ——
   pass 会拿到 `undefined` 程序，产出**不稳定**画面，看起来完全像"着色器数学有问题"。
   实测在这上面绕过一大圈（排查记录见下），现在有 `tests/effects.test.mjs` 里
   一条不变量测试守着（`SIMPLE_PASSES` 里每个 prog 都要在注册表里有对应项）。
-- **自定义着色器**：**没有逃生舱，也不打算做**（见[已知限制](../LIMITATIONS.md) 第 13 节）。
-  要把一个着色器接进来，正确做法是把它做成一个**具名效果**（枚举 + 有界参数 + 校验），
-  而不是让镜头直接交源码 —— 后者 AI 写不对、校验拦不住、确定性也守不住。
+- **逃生舱 `custom`**：词汇表盖不住的效果，你自己写一段 **GLSL ES 1.0 片段着色器**。
+  它是**受约束的**（单趟、一张输入纹理、uniform 只能是标量数值、源码与 uniform 都有上限），
+  详见下一节。
 - **效果只作用于镜头（或图层）整体**，不能只作用于镜头内部某个元素。
   要那种效果就在镜头里分层画，或者把那部分内容单独画到一个离屏画布上再处理。
+
+### 逃生舱：`customPass(src, uniforms)`
+
+具名效果是**有界词汇表**，盖不住的时候用 `customPass` 交一段自己的片段着色器：
+
+```js
+import {customPass} from 'filmwright';
+
+export const SHOTS = [{
+  start: 1, end: 90,
+  effects: [customPass(`
+    uniform float scan;            // 你自己的 uniform（标量）
+    void main(){
+      vec4 c = texture2D(t, uv);   // t 是输入纹理，uv 是 0–1 坐标
+      float line = step(0.5, fract(uv.y / texelY / 4.0));
+      gl_FragColor = vec4(c.rgb * mix(1.0, line, scan), c.a);
+    }
+  `, {scan: 0.35})],
+  draw(ctx, n, t) { /* … */ },
+}];
+```
+
+- **引擎补在源码前面的那一段**（你不用写）：`precision mediump float;` `varying vec2 uv;`
+  `uniform sampler2D t;` `uniform float texelX, texelY, frame;`。
+  `texelX`/`texelY` 是一个像素的 uv 步长（采样邻域要用它）；
+  **`frame` 是唯一的时间来源** —— GLSL ES 1.0 拿不到时钟，所以"同一帧永远同一张"
+  是**结构上**成立的，不靠你守纪律。
+- **你自己的 uniform**：`{名字: 数值}`，或 `{名字: [{frame: 1, v: 0}, {frame: 60, v: 1}]}`
+  这样的**关键帧轨道**（与别的效果同一套规则）。名字不能撞上面那几个保留名。
+- **边界**（都在 boot 期校验，报 `SCENE_FX_CUSTOM`）：`src` 必须是含 `void main` 的字符串
+  且不超过 4000 字符；`uniforms` 最多 16 个（GLSL ES 1.0 保证的最小 uniform 数量），
+  名字要合法、值必须是有限数。校验不过时 `--json` 的 `errors` 里会给出 `path` 与提示。
+- **它没有直通条件**：引擎读不懂你的着色器在什么取值下"等于没做"，所以用了 `custom`
+  就一定每帧多跑一趟 GPU（别的效果在直通值上会被当帧短路）。
+- **写错了不会被静默吞掉**：编译/链接不过时，那一帧画成**报错帧**（整帧深红底 + 错误
+  与调用栈），错误同时记进 `__lastError` —— `filmwright check` 的逐帧检查会把它报成
+  **失败**，文案里带 GL 的日志。⚠️ `stills` / `render` **不会**因此退出非 0：页面侧的
+  设计是"出错也要出图（画面留证据）"，对所有镜头绘制异常一视同仁。所以写完自定义效果
+  **请跑一遍 `check`**（实测：镜头里 `throw new Error('boom')` 同样是 `stills` 退出 0）。
+- **`custom` 盖不住什么**：多趟后处理、需要额外纹理或上一帧反馈的效果、顶点级变形、
+  遮罩羽化 —— 这几样现在没有口子（见[已知限制](../LIMITATIONS.md) 第 13 节）。
+  一个效果如果反复要用，**做成具名效果**才是正路。
 
 ### `displace` 怎么做（设计决定 + 实施清单）
 

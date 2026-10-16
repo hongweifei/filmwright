@@ -45,6 +45,16 @@ const ROOT = resolve(argv[0] && !argv[0].startsWith('--') ? argv[0] : join(HERE,
 const WHICH = argv.find((a) => !a.startsWith('--') && !a.includes('/') && !a.includes('\\')
   && !/^[A-Za-z]:/.test(a)) ?? 'all';
 
+/** 逃生舱的源码：反色 + 扫线，两个 uniform 都是标量（能真生效，不是直通）。 */
+const CUSTOM_SRC = `
+uniform float amount;
+void main(){
+  vec4 c = texture2D(t, uv);
+  float line = step(0.5, fract(uv.y / texelY / 6.0));
+  vec3 inv = vec3(1.0 - c.r, 1.0 - c.g, 1.0 - c.b);
+  gl_FragColor = vec4(mix(c.rgb, inv, amount) * mix(0.8, 1.0, line), c.a);
+}`;
+
 /** 每个效果一份"能真正生效"的参数（`amount=0` 会直通，测不到东西）。 */
 const PRESETS = {
   blur: {radius: 12}, glow: {intensity: 0.6, threshold: 0.6}, color: {saturation: 0.6},
@@ -52,6 +62,10 @@ const PRESETS = {
   pixelate: {size: 10}, radialBlur: {amount: 0.3}, distort: {amount: 0.5},
   grade: {look: 'noir', amount: 1},
   displace: {amount: 0.8, frequency: 8},
+  // 逃生舱走的是**同一张 GpuStage**，所以"同一帧两次渲染逐字节一致"这条判据
+  // 也必须盖到它 —— 自定义源码里的时间如果来自时钟（而不是 `frame`），
+  // 这一档就会红（`frame` 是引擎唯一给的时间来源）。
+  custom: {src: CUSTOM_SRC, uniforms: {amount: 0.6}},
 };
 
 const SRC = join(ROOT, 'examples', 'minimal');

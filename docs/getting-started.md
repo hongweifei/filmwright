@@ -110,7 +110,7 @@ node bin/filmwright.mjs all   --project my-film
 | 文档 | 内容 |
 |---|---|
 | [教程](tutorial.md) | 从零做一个片子的完整流程 |
-| [效果链](effects.md) | `effects` 的 11 个效果与 GPU 档位取舍 |
+| [效果链](effects.md) | `effects` 的 12 个效果与 GPU 档位取舍 |
 | [3D 图层](three.md) | 命令式 3D：`loadThree()` + `create3D()`、retained-mode 陷阱 |
 | [AI / agent 接入](ai.md) | MCP、`--json` 契约、agent 工作回路 |
 | [配置参考](config.md) | `film.config.mjs` 全部字段 |

@@ -6,6 +6,25 @@ export const VS = `attribute vec2 p; varying vec2 uv;
 void main(){ uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
 
 
+/**
+ * `custom` 效果的**固定前缀**：接口的这一半由引擎负责，作者只写自己的 uniform 声明
+ * 与 `void main(){ … }`（`fx/stage.js` 会把它拼在作者的源码前面）。
+ *
+ * 引擎提供的 uniform：
+ *   · `t`                —— 输入纹理（上一趟的输出 / 镜头画面）。
+ *   · `texelX` / `texelY` —— 一个像素在 uv 上的步长（`1/宽`、`1/高`）；采样邻域要用它。
+ *   · `frame`            —— 帧号。**这是唯一的时间来源**：GLSL ES 1.0 拿不到时钟，
+ *                           所以"同一帧永远同一张"是**结构上**成立的，不靠作者守纪律。
+ *
+ * ⚠️ 名字是保留的（契约里的 `CUSTOM_RESERVED`）—— 作者再声明一次会编译失败。
+ */
+export const CUSTOM_HEAD = `precision mediump float;
+varying vec2 uv;
+uniform sampler2D t;
+uniform float texelX, texelY, frame;
+`;
+
+
 // 亮度权重（Rec.709）
 const LUMA = 'vec3(0.2126, 0.7152, 0.0722)';
 

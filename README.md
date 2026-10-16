@@ -96,8 +96,11 @@ export const SHOTS = [{
 | **增量重渲** | `render --incremental --proxy 0.5` | 输入指纹相同 ⇒ 画面相同，所以可以安全复用（有专门的验收工具证明这一点） |
 | **overlay 内建件** | 背板 / 章节卡 / HUD / 进度条 / 字幕 / 片尾（`drawFrame` 每帧调） | 全部按 `view` 比例与帧号计算，与分辨率无关 |
 
-**效果链与遮罩都是"有界词汇表"**：具名效果 + 有界参数，遮罩四形状，**没有自定义 shader 逃生舱**
-（为什么这样定、以及它带来的代价，见 [LIMITATIONS 第 13 节](LIMITATIONS.md)）。
+**效果链与遮罩以"有界词汇表"为主**：具名效果 + 有界参数，遮罩四形状。
+效果多了一条**受约束的逃生舱** —— `customPass(src, uniforms)` 交一段自己的
+GLSL ES 1.0 片段着色器（单趟、一张输入纹理、uniform 只能是标量数值）；
+遮罩那条路仍然**没有**逃生舱。为什么这样定、以及它带来的代价，
+见 [LIMITATIONS 第 13 节](LIMITATIONS.md)。
 能用词汇表表达的，不要自己重画一遍 —— 自己画的东西引擎不背书。
 
 ## 快速开始
@@ -215,7 +218,7 @@ my-film/
 | [入门](docs/getting-started.md) | 装环境、跑通示例、写第一个镜头 |
 | [教程](docs/tutorial.md) | 从零做一个片子的完整流程 |
 | [API 参考](docs/api.md) | 镜头里能 import 的一切、镜头对象的可选字段 |
-| [效果链](docs/effects.md) | `effects`：11 个效果、`--gpu` 档位的取舍、`displace` 的实施清单 |
+| [效果链](docs/effects.md) | `effects`：11 个具名效果 + `custom` 逃生舱、`--gpu` 档位的取舍、`displace` 的实施清单 |
 | [3D 图层](docs/three.md) | `loadThree()` / `create3D()`、retained-mode 陷阱、性能实测 |
 | [AI / agent 接入](docs/ai.md) | MCP 服务器、`--json` 契约、推荐工作回路、错误码速查 |
 | [配置参考](docs/config.md) | `film.config.mjs` 全部字段与校验规则 |
@@ -230,11 +233,11 @@ my-film/
 
 - 版本 **0.x**：核心管线完整、示例可复现，但**只在 Windows 上实测过**，
   且 CI 的三条 runner 里 windows 那条偶发浏览器启动超时。API 还在 0.x 语义下演进。
-- 能力面：绘制原语与组合件、效果链（11 个）、关键帧、图层合成、遮罩、转场、嵌套合成、
+- 能力面：绘制原语与组合件、效果链（11 个具名 + `custom` 逃生舱）、关键帧、图层合成、遮罩、转场、嵌套合成、
   片段素材、3D（命令式）、overlay 内建件、增量重渲 —— 见上面的「能力面」。
 - **已知边界**：720p30 的 10× realtime **未达成**（瓶颈是 CPU 编码吞吐，
-  分片次线性；本机无硬件编码器）；效果与遮罩是**有界词汇表、没有自定义 shader 逃生舱**。
-  完整实测见 [LIMITATIONS](LIMITATIONS.md)。
+  分片次线性；本机无硬件编码器）；效果以**有界词汇表**为主（另有受约束的 `custom` 逃生舱），
+  遮罩**没有**逃生舱。完整实测见 [LIMITATIONS](LIMITATIONS.md)。
 - 明确不做的（直接用 `video` 元素、富文本排版引擎、主题包机制……）与原因见 [LIMITATIONS](LIMITATIONS.md)。
   注意**外挂字幕不在其中** —— `filmwright srt` 可以导出（成片里字幕仍是烧进画面的，那是刻意的）。
 - 欢迎报告问题与贡献：见 [CONTRIBUTING](CONTRIBUTING.md)（含提交规范与验证纪律）。

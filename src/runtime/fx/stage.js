@@ -1,7 +1,7 @@
 // GL 舞台：程序/纹理/帧缓冲的分配与复用、各 pass 的执行、`apply()` 的效果链主循环。
 // ⚠️ 模块级单例 `STAGE` 与暂存画布**不在这里** —— `applyEffects` 会给 `STAGE` 赋值，
 // 而 ESM 的 import 绑定是只读的（`STAGE = …` 会抛 TypeError）⇒ 状态要跟**改它的地方**放在一起。
-import {VS, FS_BLUR, FS_COPY, FS_BRIGHT, FS_GLOW_ADD, FS_COLOR, FS_VIGNETTE, FS_CHROMATIC, FS_GRAIN, FS_PIXELATE, FS_RADIAL, FS_DISPLACE, FS_DISTORT, SIMPLE_PASSES} from './shaders.js';
+import {VS, FS_BLUR, FS_COPY, FS_BRIGHT, FS_GLOW_ADD, FS_COLOR, FS_VIGNETTE, FS_CHROMATIC, FS_GRAIN, FS_PIXELATE, FS_RADIAL, FS_DISPLACE, FS_DISTORT, CUSTOM_HEAD, SIMPLE_PASSES} from './shaders.js';
 import {blurPlan, pyramidLevel} from './blurPlan.js';
 
 
@@ -41,6 +41,11 @@ export class GpuStage {
     this.targets = [this._target(), this._target(), this._target(), this._target()];
     /** 金字塔各层的缓冲池（按需建，换分辨率时在 _ensure 里作废）。 */
     this.levels = [];
+    /**
+     * `custom` 的程序缓存：**源码字符串 → {prog, err}**。
+     * 按需编译（构造时不编），并且**缓存失败** —— 见 `_customProg`。
+     */
+    this.customProgs = new Map();
   }
 
   _prog(fsSrc) {
@@ -53,6 +58,37 @@ export class GpuStage {
     const p = gl.createProgram();
     gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
     return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null;
+  }
+
+  /**
+   * 编译（并缓存）一段 `custom` 片段着色器，返回 `{prog, err}`。
+   *
+   * 三点是刻意的：
+   *   · **按源码缓存**：同一段着色器每帧都要跑，每帧重编译会慢到不可用；
+   *   · **失败也缓存**（`prog: null` + GL 的 info log）：失败要每帧照样抛，而不是每帧重编译；
+   *   · **不静默跳过**：编译/链接失败一律抛错带 GL 的日志。静默跳过会让人以为效果生效了
+   *     （这与"没有 WebGL 就报错"是同一条理由）。
+   */
+  _customProg(src) {
+    const hit = this.customProgs.get(src);
+    if (hit) return hit;
+    const gl = this.gl;
+    const vs = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vs, VS); gl.compileShader(vs);
+    const fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fs, CUSTOM_HEAD + src); gl.compileShader(fs);
+    let entry;
+    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+      entry = {prog: null, err: `自定义效果编译失败：${(gl.getShaderInfoLog(fs) || '').trim()}`};
+    } else {
+      const p = gl.createProgram();
+      gl.attachShader(p, vs); gl.attachShader(p, fs); gl.linkProgram(p);
+      entry = gl.getProgramParameter(p, gl.LINK_STATUS)
+        ? {prog: p, err: null}
+        : {prog: null, err: `自定义效果链接失败：${(gl.getProgramInfoLog(p) || '').trim()}`};
+    }
+    this.customProgs.set(src, entry);
+    return entry;
   }
 
   _target(w = 0, h = 0) {
@@ -224,6 +260,24 @@ export class GpuStage {
         const blurT = this.blurTex(ak.tex, step.radius, [...protect0, ak.tex]);
         const [out] = this._free([...protect0, blurT.tex], 1);
         this._pass(this.progs.glowAdd, curTex, out, u1('intensity', step.intensity), blurT.tex);
+        curTarget = out; curTex = out.tex;
+        touched = true;
+      } else if (step.type === 'custom') {
+        // 逃生舱：作者的着色器。程序按源码缓存（见 _customProg），失败在这里抛。
+        const {prog, err} = this._customProg(step.src);
+        if (!prog) throw new Error(`filmwright: ${err}`);
+        const [out] = this._free([curTex], 1);
+        this._pass(prog, curTex, out, (p) => {
+          // 作者的 uniform：`evalEffects` 已经把这一帧的值算好了（静态值或关键帧轨道）
+          for (const k of Object.keys(step)) {
+            if (k === 'type' || k === 'src') continue;
+            gl.uniform1f(gl.getUniformLocation(p, k), step[k]);
+          }
+          // 引擎自己的三个（着色器没用到的会被编译器优化掉，location 为 null ⇒ 调用被忽略）
+          gl.uniform1f(gl.getUniformLocation(p, 'texelX'), 1 / w);
+          gl.uniform1f(gl.getUniformLocation(p, 'texelY'), 1 / h);
+          gl.uniform1f(gl.getUniformLocation(p, 'frame'), n ?? 0);
+        });
         curTarget = out; curTex = out.tex;
         touched = true;
       } else {

@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {findBrowser} from './find.mjs';
 import {frameFormatExpr} from './frameFormat.mjs';
 import {devtoolsJson} from './devtoolsList.mjs';
+import {openSocket} from './openSocket.mjs';
 
 
 
@@ -61,9 +62,15 @@ export async function openSession(url, size, opts = {}) {
   chrome.stderr.on('data', (d) => (chromeErr += d.toString().slice(0, 4000)));
   chrome.on('error', (e) => (chromeErr += ' spawn error: ' + e.message));
 
+  // 两处等待共用同一个预算旋钮：等 `DevToolsActivePort`（Chrome 起进程）与等页面就绪
+  // （页面 boot）。机器忙时 Chrome **写这个端口文件**也会慢 —— 三个验收工具跑负面对照时
+  // 都把 `FILMWRIGHT_BOOT_TRIES` 放宽到 3600 来吸收负载，但**只有**"等页面就绪"读过它，
+  // 端口文件那段写死 300×100ms＝30s，于是"放宽预算"在最靠前、最容易受负载影响的那段上
+  // 根本不起作用（实测：连跑七个浏览器重活的串行验收里，偶发红在"渲染环境没起来"）。
+  const tries = Number(process.env.FILMWRIGHT_BOOT_TRIES) || 1200;
   const portFile = join(profile, 'DevToolsActivePort');
   let devPort = null;
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < tries; i++) {
     if (existsSync(portFile)) {
       try {
         const txt = readFileSync(portFile, 'utf8').split('\n')[0].trim();
@@ -78,7 +85,7 @@ export async function openSession(url, size, opts = {}) {
         if (e.code !== 'EBUSY' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
       }
     }
-    if (chrome.exitCode !== null) throw new Error('filmwright: 浏览器提前退出：' + chromeErr);
+    if (chrome.exitCode !== null) throw new Error(`filmwright: 浏览器提前退出（exit=${chrome.exitCode}）：` + chromeErr);
     await sleep(100);
   }
   if (!devPort) throw new Error('filmwright: 等不到 DevToolsActivePort；stderr=' + chromeErr);
@@ -96,8 +103,14 @@ export async function openSession(url, size, opts = {}) {
   const target = list.find((t) => t.type === 'page');
   if (!target) throw new Error('filmwright: 没有 page target');
 
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  // 连 CDP 的 WebSocket。失败时**必须报出原因** —— 细节与教训见 `openSocket.mjs`：
+  // 原来写 `ws.onerror = rej`，抛出去的是 ErrorEvent，顶层 `String(e)` 只剩一行
+  // `[object ErrorEvent]`。这里带有限重试，Chrome 死了就立刻失败。
+  const ws = await openSocket(target.webSocketDebuggerUrl, {
+    port: devPort,
+    shouldStop: () => chrome.exitCode !== null,
+    stopReason: () => chromeErr,
+  });
 
   let id = 0;
   const pending = new Map();
@@ -167,11 +180,10 @@ export async function openSession(url, size, opts = {}) {
   let bootCode = null;
   let bootHint = null;
   let ready = false;
-  // 就绪预算：默认 120s。为什么这么长 —— 分片渲染时多个浏览器**同时冷启**，
-  // 在内存吃紧的机器上（实测 16 核但只剩 5GB）单个实例的 boot 可以慢到几十秒。
-  // 40s 的旧预算会把「慢」误报成「坏」，而错误信息还指向字体与 import ——
+  // 就绪预算与上面等端口文件共用 `tries`（默认 120s）。为什么这么长 —— 分片渲染时多个
+  // 浏览器**同时冷启**，在内存吃紧的机器上（实测 16 核但只剩 5GB）单个实例的 boot 可以
+  // 慢到几十秒。40s 的旧预算会把「慢」误报成「坏」，而错误信息还指向字体与 import ——
   // 使用者会去查一个根本没问题的地方。
-  const tries = Number(process.env.FILMWRIGHT_BOOT_TRIES) || 1200;
   const t0 = Date.now();
   let lastSeen = null;
   for (let i = 0; i < tries; i++) {
@@ -211,7 +223,7 @@ export async function openSession(url, size, opts = {}) {
       '约需 500MB），或等负载降下来\n' +
       '    2) 项目本身有问题：字体路径、模块 import、镜头代码抛错 —— ' +
       '用 filmwright preview 打开页面能直接看到 boot 错误\n' +
-      `  要放宽预算：FILMWRIGHT_BOOT_TRIES=${tries * 2}（每轮 100ms）`);
+      `  要放宽预算：FILMWRIGHT_BOOT_TRIES=${tries * 2}（每轮 100ms；等端口文件与等页面就绪共用）`);
   }
 
   let lastErr = null;

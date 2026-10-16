@@ -1,7 +1,8 @@
 // 效果链的契约测试：形状、词汇表边界、以及每个错误码的负面对照。
 //
 // 要点：
-//   · 效果是**有界词汇表**（枚举类型 + 有界参数），不是任意 shader；
+//   · 效果是**有界词汇表**（枚举类型 + 有界参数）——**唯一的例外**是逃生舱 `custom`
+//     （作者写一段 GLSL ES 1.0 片段着色器），它的上限与保留名也在这份契约里；
 //   · 每条错误提示都要带**实际可用值/范围**，让 AI 拿到报错能自己改对；
 //   · 参数范围不是随手定的 —— radius 上限 36 对应"小核多趟让抽头间距 ≤2px"
 //     这个能保证正确性的范围（超了会振铃，实测过）。
@@ -9,7 +10,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validateEffects} from '../src/contract/effects.js';
 import {EFFECT_TYPES, EFFECT_SPECS, EFFECT_CHAIN_MAX, GRADE_LOOKS} from '../src/contract/effects.js';
+import {CUSTOM_RESERVED, CUSTOM_SRC_MAX, CUSTOM_UNIFORM_MAX} from '../src/contract/effects.js';
 import {compileEffects, isNoopEffects, evalEffects} from '../src/runtime/fx/compile.js';
+import {customPass} from '../src/runtime/fx/custom.js';
 import {bindShots, setShots} from '../src/runtime/stage/shots.js';
 
 const codes = (fx) => validateEffects(fx).map((e) => e.code);
@@ -409,12 +412,18 @@ test('新效果的参数也能用关键帧，且取值逐个查范围', () => {
 });
 
 test('效果登记表完整（加效果时这条会提醒补齐直通条件与说明）', () => {
-  assert.equal(EFFECT_TYPES.length, 11);
+  // ⚠️ 数量是**下限**而不是等号：加效果不该让这条红（那正是它鼓励的事），
+  // 但少一个要红。真正的完整性判据是下面那条双向比对。
+  assert.ok(EFFECT_TYPES.length >= 12, `效果至少 12 个，收到 ${EFFECT_TYPES.length}`);
   assert.deepEqual(Object.keys(EFFECT_SPECS).sort(), [...EFFECT_TYPES].sort());
   for (const t of EFFECT_TYPES) {
-    assert.ok(EFFECT_SPECS[t].noopWhen?.length, `${t} 缺直通条件（逐帧短路要用它）`);
     assert.ok(EFFECT_SPECS[t].note?.length > 4, `${t} 缺说明`);
   }
+  // `custom` 是**唯一**允许没有直通条件的效果：引擎不知道作者的着色器在什么取值下
+  // "等于没做"（那要读懂他的 GLSL）⇒ 它一律当作有效果，每帧真跑一趟。
+  // 下面这条把"例外只能有一个"钉住：悄悄再加一个没有直通条件的会红。
+  const noNoop = EFFECT_TYPES.filter((t) => !EFFECT_SPECS[t].noopWhen?.length);
+  assert.deepEqual(noNoop, ['custom'], '没有直通条件的效果只允许 custom（逃生舱）');
 });
 
 // ─────────────────────── 调色预设 grade ───────────────────────
@@ -507,4 +516,119 @@ test('**SIMPLE_PASSES 里的每个 prog 都要在 this.progs 注册表里有对�
     .map((p) => `${p.type} 的 prog「${p.prog}」没有 this.progs 注册表项`);
   assert.deepEqual(missing, [],
     `漏了注册表项不会报错、只会静默产出不稳定画面。缺：${JSON.stringify(missing)}`);
+});
+
+// ─────────────────────── 逃生舱：自定义片段着色器 custom ───────────────────────
+//
+// 词汇表盖不住的效果由作者自己写一段 GLSL ES 1.0 片段着色器。它是**唯一的例外**，
+// 所以这里钉的重点是：它的边界（上限/保留名）与别的效果**共用同一份规则**，
+// 而不是"另起一套更宽松的校验"。
+
+const MIN_SRC = 'void main(){ gl_FragColor = texture2D(t, uv); }';
+
+test('customPass 是零逻辑的糖：只把两个参数打包成 custom 节点', () => {
+  assert.deepEqual(customPass(MIN_SRC, {u: 0.5}), {type: 'custom', src: MIN_SRC, uniforms: {u: 0.5}});
+  assert.deepEqual(customPass(MIN_SRC).uniforms, {}, 'uniforms 可省，缺省空对象');
+  // 校验**不在这里**（不做第二套规则）：形状错也照样返回，由 validateEffects 报
+  assert.equal(customPass(null).type, 'custom');
+  assert.equal(customPass(null).src, null);
+});
+
+test('custom：最短的合法形态；静态值、关键帧值都收', () => {
+  assert.deepEqual(codes([customPass(MIN_SRC)]), []);
+  assert.deepEqual(codes([customPass(MIN_SRC, {u: 0.5, k: 3})]), []);
+  assert.deepEqual(codes([customPass(MIN_SRC,
+    {phase: [{frame: 1, v: 0}, {frame: 40, v: 6.28, ease: 'linear'}]})]), []);
+  // 前面挂别的效果、后面接别的效果都行（它就是链条里的一环）
+  assert.deepEqual(codes([{type: 'blur', radius: 4}, customPass(MIN_SRC), {type: 'grain', amount: 0.2}]), []);
+});
+
+test('custom：src 必须是**含 void main 的字符串**，且有长度上限', () => {
+  assert.ok(codes([{type: 'custom'}]).includes('SCENE_FX_CUSTOM'), '缺 src');
+  assert.ok(codes([customPass(123)]).includes('SCENE_FX_CUSTOM'), 'src 不是字符串');
+  assert.ok(codes([customPass('   ')]).includes('SCENE_FX_CUSTOM'), 'src 只有空白');
+  assert.ok(codes([customPass('float a = 1.0;')]).includes('SCENE_FX_CUSTOM'), '没有 void main');
+  assert.ok(codes([customPass('void main(){' + ' '.repeat(CUSTOM_SRC_MAX) + '}')])
+    .includes('SCENE_FX_CUSTOM'), '超长要报');
+  // 上限附近要**放行** —— 判据不能是"总是报"
+  assert.deepEqual(codes([customPass('void main(){' + ' '.repeat(CUSTOM_SRC_MAX - 20) + '}')]), []);
+});
+
+test('custom：uniform 名合法、不许撞保留名、条数有上限、值必须是有限数', () => {
+  const bad = (u) => codes([customPass(MIN_SRC, u)]);
+  assert.ok(bad({'1u': 1}).includes('SCENE_FX_CUSTOM'), '名字不能以数字开头');
+  assert.ok(bad({'a-b': 1}).includes('SCENE_FX_CUSTOM'), '名字不能带连字符');
+  assert.ok(bad({['u'.repeat(33)]: 1}).includes('SCENE_FX_CUSTOM'), '名字最长 32');
+  for (const r of CUSTOM_RESERVED) {
+    assert.ok(bad({[r]: 1}).includes('SCENE_FX_CUSTOM'), `${r} 是引擎保留的名字`);
+  }
+  assert.ok(bad({u: NaN}).includes('SCENE_FX_CUSTOM'), 'NaN 要报');
+  assert.ok(bad({u: Infinity}).includes('SCENE_FX_CUSTOM'), 'Infinity 要报');
+  assert.ok(bad({u: '0.5'}).includes('SCENE_FX_CUSTOM'), '字符串不是数值');
+  assert.ok(bad({u: [1, 2]}).includes('SCENE_ANIM_KEY'), '数组要当关键帧轨道校验');
+  const many = {};
+  for (let i = 0; i <= CUSTOM_UNIFORM_MAX; i++) many[`u${i}`] = 1;
+  assert.ok(bad(many).includes('SCENE_FX_CUSTOM'), '条数超上限');
+  const justEnough = {};
+  for (let i = 0; i < CUSTOM_UNIFORM_MAX; i++) justEnough[`u${i}`] = 1;
+  assert.deepEqual(bad(justEnough), [], '恰好到上限要放行');
+});
+
+test('custom：未知字段报 SCENE_FX_PARAM（作者常见的错字）', () => {
+  const e = validateEffects([{type: 'custom', src: MIN_SRC, uniform: {u: 1}}]);
+  assert.ok(e.map((x) => x.code).includes('SCENE_FX_PARAM'), '写错成 uniform（少个 s）要报字段名');
+  assert.ok(e[0].message.includes('"uniform"'), '提示里要有那个字段名，作者才知道错在哪');
+});
+
+test('custom 的 uniform 走**同一份**关键帧规则（不另起一套）', () => {
+  const kf = (track) => codes([customPass(MIN_SRC, {u: track})]);
+  assert.deepEqual(kf([]), ['SCENE_ANIM_SHAPE'], '空轨道');
+  assert.deepEqual(kf([{frame: 1}, {frame: 2, v: 1}]), ['SCENE_ANIM_KEY'], '缺 v');
+  assert.deepEqual(kf([{frame: 2, v: 1}, {frame: 1, v: 2}]), ['SCENE_ANIM_ORDER'], '时间不递增');
+  assert.deepEqual(kf([{frame: 1, v: 0, ease: 'nope'}]), ['SCENE_ANIM_EASE'], '不认识的缓动');
+});
+
+test('引擎补在 src 前面的 uniform 全部登记在 CUSTOM_RESERVED 里', async () => {
+  // 判据跨两个文件（契约 ↔ shaders.js）：引擎的头里多一个 uniform 而保留名表没跟上，
+  // 作者就能用一个同名 uniform 把它盖掉 —— 这类漏不会报错，只会静默画错。
+  const {readFileSync} = await import('node:fs');
+  const src = readFileSync(new URL('../src/runtime/fx/shaders.js', import.meta.url), 'utf8');
+  const head = src.match(/export const CUSTOM_HEAD = `([\s\S]*?)`;/);
+  assert.ok(head, 'CUSTOM_HEAD 没解析到 —— 解析写错了（不变量跨文件，改结构要跟着改）');
+  const declared = [...head[1].matchAll(/uniform\s+(?:sampler2D|float)\s+([^;]+);/g)]
+    .flatMap((m) => m[1].split(',').map((s) => s.trim()));
+  assert.ok(declared.length >= 4, `只解析到 ${declared.length} 个引擎 uniform —— 解析写错了`);
+  const missing = declared.filter((d) => !CUSTOM_RESERVED.includes(d));
+  assert.deepEqual(missing, [],
+    `引擎传了、但没登记为保留名的 uniform：${JSON.stringify(missing)}（作者可以把它盖掉）`);
+});
+
+test('custom 的编译：src 带进编译结果，uniform 逐帧求值', () => {
+  const c = compileEffects([customPass(MIN_SRC, {u: 0.5, k: 2})], {from: 1});
+  assert.equal(c.steps.length, 1);
+  assert.equal(c.steps[0].type, 'custom');
+  assert.equal(c.steps[0].src, MIN_SRC, 'src 要原样带进编译结果（GPU 那趟要用它建程序）');
+  assert.equal(c.steps[0].static.u, 0.5);
+  assert.equal(c.steps[0].tracks.u, null, '静态值没有轨道');
+  // 求值出来的形状与别的效果一致：参数**摊在 step 上**（GL 舞台按名字取），src 也在
+  const at = (n) => evalEffects(c, n)[0];
+  assert.deepEqual(at(1), {type: 'custom', src: MIN_SRC, u: 0.5, k: 2});
+  assert.deepEqual(at(999), at(1), '静态 uniform 在任何帧都是同一个值');
+  // 关键帧 uniform 逐帧求值（复用同一份 compileAnimate）
+  const ck = compileEffects([customPass(MIN_SRC,
+    {p: [{frame: 1, v: 0}, {frame: 41, v: 40, ease: 'linear'}]})], {from: 1});
+  assert.equal(evalEffects(ck, 1)[0].p, 0, '起点');
+  assert.equal(evalEffects(ck, 21)[0].p, 20, '两点之间线性');
+  assert.equal(evalEffects(ck, 41)[0].p, 40, '终点');
+  assert.equal(evalEffects(ck, 41)[0].src, MIN_SRC, '逐帧求值也要带着 src');
+});
+
+test('custom **永远不算直通**（引擎读不懂作者的着色器，不猜）', () => {
+  // 别的效果在"参数等于恒等值"时会被判直通、整趟不进 GPU；custom 不行：
+  // 引擎不知道作者的 GLSL 在什么取值下等于没做 ⇒ 一律当有效果。
+  const c = compileEffects([customPass(MIN_SRC, {u: 0})], {from: 1});
+  for (const n of [1, 30, 500]) {
+    assert.equal(isNoopEffects(c, n), false, `第 ${n} 帧：custom 不该被判直通`);
+  }
+  assert.equal(EFFECT_SPECS.custom.noopWhen, undefined, '登记表里也不该有直通条件');
 });

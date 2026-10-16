@@ -119,7 +119,7 @@ node tools/regression.mjs verify  --project examples/minimal   # 改之后，必
 | `tools/probes/profile-frame.mjs` | **逐帧剖析**：把单帧时间拆成绘制 / 编码 / 传输 / 落地四段，并对比 PNG / JPEG / WebP 的编码耗时与载荷 —— 性能优化前先用它定位瓶颈（结论：绘制只占 0.6ms，瓶颈在编码与搬运） |
 | `tools/probes/sweep-jpeg.mjs` | **JPEG 质量 → 编码耗时/载荷**的曲线。逐帧剖析显示绘制只占 0.19ms、瓶颈全在 `toBlob`，而降质量能**直接**省编码时间。实测：0.92→0.85 省 24% 编码时间、载荷 −30%，PSNR 只花 1.3 dB；**低于 0.75 到地板**（再降不再省时间）。⚠️ 端到端只有 **4.3%**（流水线重叠），别把微基准当端到端 |
 | `tools/probes/profile-current.mjs` | **当前管线的复测**（上面那个量的是 CDP 路径，现在默认是二进制 POST 流，旧数据不准了）：绘制 / JPEG 取像素 / **WebCodecs 编码**三段。实测 720p：绘制 0.19ms、JPEG **16.47ms**（占 99%）、WebCodecs **2.18ms**（快 7.5×） |
-| `tools/probes/check-determinism.mjs` | **快速确定性检查**：同一个效果、同一帧渲染两次比哈希。`verify-effects` 里已有同一判据，但它要跑完前面六节（**CI 实测约 64s**，见 `.github/workflows/ci.yml` 的 `browser` 作业；跨机器/负载不可比），排查着色器问题（如 `displace`）时**迭代太慢**；这个工具只做那一件事，**全部 11 个效果一遍约 35 秒**，判据完全一致，定位到的问题可用 `verify-effects` 复核 |
+| `tools/probes/check-determinism.mjs` | **快速确定性检查**：同一个效果、同一帧渲染两次比哈希。`verify-effects` 里已有同一判据，但它要跑完前面六节（**CI 实测约 64s**，见 `.github/workflows/ci.yml` 的 `browser` 作业；跨机器/负载不可比），排查着色器问题（如 `displace`）时**迭代太慢**；这个工具只做那一件事，**全部 12 个效果一遍约 35 秒**，判据完全一致，定位到的问题可用 `verify-effects` 复核 |
 | `verify-voiceover.mjs` | 验示例的时间轴来自**真配音**（不是合成夹具）、音频与时间轴一致、`subs_timing` 与引擎能力一致 |
 | `verify-longform.mjs` | 长片：**判**「单实例长跑是否退化」—— 同一次运行内**等长头段 vs 尾段**的配对比值（交替正反序取中位数）；**只报数不判定**分片加速比与内存（由机器核数/内存决定，不是产品正确性）；增量段缓存那节**已删**（由 `verify-incremental` 守）。**可参数化**（`--frames N --no-big`）：默认 18000 帧（10 分钟量级）跑不完 CI，CI 里跑 `--frames 1200 --no-big`（此时**唯一起作用的判据就是那条配对比较**，`--no-big` 把大规格渲染与内存采样整段跳过） |
 | `verify-effects.mjs` | 验效果链：**GPU 往返保真**（含"整帧上下翻转"这类**只有看图才发现**的 bug —— 它绕过了模糊单调、端点一致等全部判据）、每个效果的量化判据（模糊单调、辉光变亮、调色去色、暗角径向）、直通帧与不写效果逐位相同 |

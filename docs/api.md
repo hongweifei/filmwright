@@ -227,10 +227,14 @@ Node 侧（CLI、渲染、自检）不在公开面上，镜头不该 import 它�
 ## 效果链（编译与执行）
 
 有界词汇表（见[效果链](effects.md)）：**枚举效果 + 有界参数**，参数可以写成关键帧轨道。
+**唯一的例外**是逃生舱 `custom`：作者交一段自己的 GLSL ES 1.0 片段着色器（单趟、
+一张输入纹理、uniform 只能是标量数值，上限见下面三个常量）。
 
 | 导出 | 说明 |
 |---|---|
 | `EFFECT_TYPES` / `EFFECT_SPECS` / `EFFECT_CHAIN_MAX` / `EFFECT_ERROR_CODES` / `GRADE_LOOKS` | 效果类型 / 每个效果的字段与范围 / 链长上限 / 错误码 / 调色预设 |
+| `customPass(src, uniforms?)` | 逃生舱的作者入口：打包成 `{type: 'custom', src, uniforms}`。校验**不在这里**（唯一一份规则在 `validateEffects`） |
+| `CUSTOM_SRC_MAX` / `CUSTOM_UNIFORM_MAX` / `CUSTOM_RESERVED` | 源码长度上限 / uniform 条数上限 / 引擎保留的 uniform 名（`t` / `texelX` / `texelY` / `frame` / `type` / `src`） |
 | `validateEffects(decl)` | 校验一处 `effects` 声明，返回错误数组（每条带 `code` / `path` / `message` / `hint`） |
 | `compileEffects(decl, node?)` | 把 `effects` 声明编译成可执行的步骤序列 |
 | `evalEffects(compiled, n)` | 按帧求值（关键帧参数在这一步落地） |

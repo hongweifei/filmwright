@@ -31,6 +31,8 @@ export {ERROR_CODES} from './contract/errorCodes.js';
 
 // ---- 契约：效果链与 3D 的词汇表 ----
 export {EFFECT_CHAIN_MAX, EFFECT_ERROR_CODES, EFFECT_SPECS, EFFECT_TYPES, GRADE_LOOKS, validateEffects} from './contract/effects.js';
+// 自定义效果（`custom`）的三条上限与保留名 —— 与 `EFFECT_CHAIN_MAX` 同类，是**契约事实**
+export {CUSTOM_RESERVED, CUSTOM_SRC_MAX, CUSTOM_UNIFORM_MAX} from './contract/effects.js';
 
 // ---- 运行时：动效（缓动） ----
 export {EASES, EASE_NAMES, clamp, easeIn3, easeInOut, easeOut3, easeOut4, easeOutBack, enter, exit, inv, kf, lerp, pulse, rnd, step} from './runtime/motion/ease.js';
@@ -59,6 +61,8 @@ export {compileAnimate, evalAnimate, mergeAnimate} from './runtime/motion/animat
 export {compileEffects, evalEffects, isNoopEffects} from './runtime/fx/compile.js';
 export {applyEffects, getScratch, paintWithEffects} from './runtime/fx/gpu.js';
 export {blurPlan, pyramidLevel} from './runtime/fx/blurPlan.js';
+// 逃生舱的作者入口：词汇表盖不住的效果自己写一段 GLSL ES 1.0 片段着色器
+export {customPass} from './runtime/fx/custom.js';
 
 // ---- 运行时：阶段（镜头装配与逐帧绘制） ----
 export {boot, chapterCards, drawFrame, shotAt, shots} from './runtime/stage/index.js';

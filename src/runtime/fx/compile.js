@@ -40,6 +40,25 @@ export function compileEffects(effects, node) {
       steps.push({type: 'color', static: st, tracks: {}});
       continue;
     }
+    // `custom`：参数形状与别的效果不同（`src` 是字符串、`uniforms` 是嵌套对象），
+    // 通用的"遍历 spec.params"表达不了它 ⇒ 单独一条分支。
+    // `src` **原样**带进编译结果（编译与缓存由 GL 舞台按源码字符串做，见 fx/stage.js）。
+    if (fx.type === 'custom') {
+      const statics = {};
+      const tracks = {};
+      for (const [k, v] of Object.entries(fx.uniforms ?? {})) {
+        if (Array.isArray(v)) {
+          const compiled = compileAnimate({[k]: v}, node ?? {from: 1});
+          tracks[k] = compiled ? compiled[k] : null;
+          statics[k] = null;
+        } else {
+          statics[k] = v;
+          tracks[k] = null;
+        }
+      }
+      steps.push({type: 'custom', src: fx.src, static: statics, tracks});
+      continue;
+    }
     const step = {type: fx.type, static: {}, tracks: {}};
     for (const [k, ps] of Object.entries(spec.params)) {
       const v = fx[k];
@@ -68,6 +87,8 @@ export function evalEffects(compiled, n) {
   if (!compiled) return [];
   return compiled.steps.map((s) => {
     const out = {type: s.type};
+    // `custom` 的源码不是"参数"，但它要跟着这一帧一起交给 GL 舞台（缓存键就是它）
+    if (s.src !== undefined) out.src = s.src;
     for (const k of Object.keys(s.static)) {
       const track = s.tracks[k];
       out[k] = track ? kf(n, track) : s.static[k];

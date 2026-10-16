@@ -16,8 +16,9 @@
 // ## 它自己的负面对照（`--negative`）
 //
 // 上面那些判据自己也要能被证伪，否则就是"永远绿的检查"。`--negative` 把**效果链**
-// 故意弄坏（让 blur 那一趟不再生效），在**临时副本仓库根**上重跑本工具，要求它**红**
-// 且红在**预期的那组判据**上、且真的跑完了全程。真源码一个字节都不动。
+// 故意弄坏（两个注入：让 blur 那一趟不再生效 ／ 让 `custom` 的作者 uniform 不传给着色器），
+// 在**临时副本仓库根**上重跑本工具，要求它**红**、红在**预期的那两组判据**上、且真的
+// 跑完了全程。真源码一个字节都不动。
 // ⚠️ CI 是**无参**调用 ⇒ 这一段不进 CI 的墙钟（它要跑一整遍，只适合手动/改判据时跑）。
 import {spawnSync} from 'node:child_process';
 import {cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
@@ -26,6 +27,7 @@ import {tmpdir} from 'node:os';
 import {join, relative, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {EFFECT_TYPES} from '../src/contract/effects.js';
+import {customPass} from '../src/runtime/fx/custom.js';
 
 // resolve() 保证 ROOT 是**绝对路径**：下面要用它拼 file:// URL 或 pathToFileURL，
 // 相对路径会抛 ERR_INVALID_FILE_URL_PATH（CI 步骤里传 `.` 时踩到过）。
@@ -723,6 +725,9 @@ line();
     pixelate: {size: 10}, radialBlur: {amount: 0.3}, distort: {amount: 0.5},
     grade: {look: 'noir', amount: 1},
     displace: {amount: 0.8, frequency: 8},
+    // 逃生舱：作者自己写的片段着色器。这里的参数就是"一段源码 + 一个 uniform"。
+    custom: {src: 'uniform float u;\nvoid main(){ vec4 c = texture2D(t, uv); gl_FragColor = vec4(c.r * u, c.g, c.b, c.a); }',
+      uniforms: {u: 0.6}},
   };
   let inconsistent = 0;
   for (const t of EFFECT_TYPES) {
@@ -847,6 +852,77 @@ if (msNo && msBlur) {
   ok(false, '性能测量渲染成功');
 }
 
+line('═');
+console.log('十、逃生舱 `custom`：作者自己写的片段着色器真的跑在 GPU 上');
+line();
+{
+  // 词汇表盖不住的效果由作者写 GLSL。这条判据要证明三件事，缺一件这条路就是空话：
+  //   ① 作者的 `void main` 真的跑了，且他的 uniform 真的传到了；
+  //   ② 引擎补在源码前面的那一段真的接上了（`texelX`/`texelY`/`frame` 能用）；
+  //   ③ 写坏的着色器要让渲染**明确失败**，不是静默出黑帧。
+  // （"第 N 帧只是 N 的函数"由第七节遍历全部效果覆盖，这里不重复。）
+  //
+  // ⚠️ 凡是比"两个输出不同"，都是**同一帧**渲两遍、只改着色器里的常量：
+  // 否则画面本来就在动，判据会因为内容变化而假绿 —— 本工具踩过这个坑
+  // （`displace` 的 phase 轨道终值冻住了，绿的其实是字幕的逐帧差异）。
+  const TINT = `uniform float u;
+void main(){ vec4 c = texture2D(t, uv); gl_FragColor = vec4(c.r * u, c.g, c.b, c.a); }`;
+  const c0 = still([customPass(TINT, {u: 0})], 100, 'cus-0');
+  const c1 = still([customPass(TINT, {u: 1})], 100, 'cus-1');
+  const cH = still([customPass(TINT, {u: 0.5})], 100, 'cus-h');
+  ok(c0.hash !== base100.hash, '作者的着色器真的跑了（u=0 清掉红通道 ⇒ 与不写 effects 不同）');
+  ok(c0.hash !== c1.hash && cH.hash !== c0.hash && cH.hash !== c1.hash,
+    `作者的 uniform 真的传到了着色器（u=0/0.5/1 三种输出互不相同：${c0.hash} / ${cH.hash} / ${c1.hash}）`);
+  // 关键帧 uniform（允许内容也在动：这条只是"参数真的在逐帧变"的旁证，主判据是上面那条同帧对照）
+  const track = [customPass(TINT, {u: [{frame: 1, v: 0}, {frame: 100, v: 1, ease: 'linear'}]})];
+  ok(still(track, 40, 'cus-t40').hash !== still(track, 99, 'cus-t99').hash,
+    'uniform 走关键帧时逐帧求值（第 40 帧与第 99 帧不同）');
+
+  // ② 引擎补的三个 uniform。同帧对照：两个着色器只差一个常量。
+  const SHIFT = (k) => `void main(){ gl_FragColor = texture2D(t, uv + vec2(texelX * ${k}, texelY * ${k})); }`;
+  const sh0 = still([customPass(SHIFT('0.0'))], 100, 'cus-sh0');
+  const sh60 = still([customPass(SHIFT('60.0'))], 100, 'cus-sh60');
+  ok(sh0.hash === base100.hash, '位移 0 像素时与不写 effects **逐位相同**（前缀没有改变基线）');
+  ok(sh60.hash !== sh0.hash, `texelX/texelY 可用（位移 60 像素真的改了画面：${sh60.hash} ≠ ${sh0.hash}）`);
+  const STEP = (t) => `void main(){ vec4 c = texture2D(t, uv); float k = step(${t}, frame); gl_FragColor = vec4(c.r, c.g * (1.0 - k), c.b, c.a); }`;
+  const fHi = still([customPass(STEP('115.0'))], 130, 'cus-f-hi');
+  const fLo = still([customPass(STEP('215.0'))], 130, 'cus-f-lo');
+  ok(fHi.hash !== fLo.hash,
+    `frame 可用（同一帧、阈值 115 与 215 输出不同：${fHi.hash} ≠ ${fLo.hash}）`);
+  // 对照：同一段着色器同一帧两次渲染必须逐位相同 —— 上面那条不是噪声
+  ok(fLo.hash === still([customPass(STEP('215.0'))], 130, 'cus-f-lo2').hash,
+    '同一段着色器同一帧两次渲染**逐字节一致**（上面那条的对照）');
+
+  // ③ 写坏的着色器：**不许静默**。
+  //
+  // ⚠️ 这里**不能**指望 `stills` 退出码非 0：页面侧对绘制异常的处理是"出错也要出图
+  // （画面留证据 + 记进 `__lastError`）"（见 `src/host/pages/render.html`）⇒
+  // `stills`/`render` 一律退出 0、出的是**报错帧**；把错误报出来的是 `check` 的逐帧
+  // 绘制检查（`drawOnly` 读 `__lastError`）。实测：镜头里 `throw new Error('boom')`
+  // 同样是 `stills` 退出 0、`check` 报「FRAME n: boom」。
+  // 判据因此分两层：**画面确实是报错帧**（不是静默出正常画面）+ **自检报得出来且点名 custom**。
+  const BAD_SRC = 'void main(){ gl_FragColor = nope(t, uv); }';
+  const badStill = still([customPass(BAD_SRC)], 100, 'cus-bad');
+  const bg = badStill.rgb;
+  let hitBg = 0;
+  for (let i = 0; i < bg.length; i += 3) {
+    if (Math.abs(bg[i] - 0x20) <= 8 && Math.abs(bg[i + 1] - 0x06) <= 8 && Math.abs(bg[i + 2] - 0x0a) <= 8) hitBg++;
+  }
+  const bgRatio = hitBg / (bg.length / 3);
+  ok(bgRatio > 0.9, `编译不过的着色器**不静默**：出的是引擎的报错帧（整帧深红底占 ${(bgRatio * 100).toFixed(1)}%）`);
+  ok(badStill.hash !== base100.hash, '报错帧与"不写 effects"的正常帧不同（不是效果没生效）');
+  // 归因：`check` 的逐帧绘制检查要报出「自定义效果编译失败」，而不是一行看不出所以然的错。
+  // 步长给 200：这条只要求"报得出来"，不必把 1400 多帧全画一遍（夹具那一镜覆盖全片）。
+  const {runChecks} = await import('../src/host/checks/index.mjs');
+  const {loadProject} = await import('../src/host/project/load.mjs');
+  const badProj = await loadProject(P);
+  const chk = await runChecks(P, badProj, USE_GPU ? {gpu: true} : {}, {step: 200, quiet: true});
+  const frames = chk.results.find((r) => r.name === 'frames');
+  ok(!!frames && frames.ok === false, '自检的逐帧检查把它报成失败（不是静默出正常帧）');
+  ok(!!frames && frames.problems.some((p) => /自定义效果编译失败/.test(p)),
+    `报错**点名**是自定义效果的问题（实际：${frames ? String(frames.problems[0] ?? '').split('\n')[0] : '没跑到'}）`);
+}
+
 rmSync(P, {recursive: true, force: true});
 line('═');
 console.log(bad === 0 ? '✓ 效果链最小闭环验收通过' : `✗ ${bad} 项失败`);
@@ -875,7 +951,7 @@ function runNegativeControl() {
   const say = (c, m) => { console.log(`${c ? '✓' : '✗'} ${m}`); if (!c) bad++; };
 
   line('═');
-  console.log('负面对照：故意让 blur 那一趟不再生效，要求本工具**红**（改的是临时副本，真源码不动）');
+  console.log('负面对照：故意注入三个缺陷（模糊那一趟不生效 ／ custom 的作者 uniform 不传给着色器 ／ 编译不过的 custom 被静默跳过），要求本工具**红**（改的是临时副本，真源码不动）');
   line();
   console.log(`  临时仓库根：${tmp}（跑完即删）`);
   const fixture = join(ROOT, 'examples', 'minimal');
@@ -902,23 +978,38 @@ function runNegativeControl() {
     mkdirSync(join(tmp, 'tools'), {recursive: true});
     cpSync(fileURLToPath(import.meta.url), join(tmp, 'tools', 'verify-effects.mjs'));
 
-    // ── 注入缺陷：`apply()` 里 blur 的分支条件恒假 ──
-    // 这**不是**崩溃式的缺陷：画面照常出，只是 `touched` 一直是 false ⇒
-    // `applyEffects` 返回 null ⇒ 调用方走原路 ⇒ 输出与"不写 effects"逐位相同。
-    // "效果没接上"正是第二节要抓的那类缺陷；反过来，把语法改坏、把命令拔掉这种
-    // 注入连渲染都过不去，红了也证明不了判据有牙。
+    // ── 注入缺陷：`apply()` 里 blur 的分支条件恒假 + custom 的作者 uniform 不传给着色器 ──
+    // 这**不是**崩溃式的缺陷：画面照常出，只是
+    //   A. blur 那趟没跑 ⇒ `touched` 一直是 false ⇒ 输出与"不写 effects"逐位相同；
+    //   B. custom 那趟跑了、但作者声明的 uniform 全被跳过 ⇒ 着色器里 `u` 恒为默认 0
+    //      ⇒ "u=0/0.5/1 输出互不相同"那条判据红。
+    // "效果没接上"/"参数没进去"正是本工具要抓的那类缺陷；反过来，把语法改坏、把命令拔掉
+    // 这种注入连渲染都过不去，红了也证明不了判据有牙。
+    //
+    // ⚠️ 两个注入**一次跑完**：本工具整套跑一遍约 90 次浏览器启动（`--negative` 本来就要
+    // 跑两遍工具），再拆成两次注入会翻倍。两者互不干扰，且各由自己那组判据负责抓（见下）。
     // ⚠️ 注入目标是**实现所在文件**：`apply()` 随 `fx/gpu.js` 的拆分搬到了 `fx/stage.js`
     // （`fx/gpu.js` 现在只是门面）。锚点漂了会判失败（见下），不会假绿。
     const gpu = join(tmp, 'src', 'runtime', 'fx', 'stage.js');
-    const ANCHOR = "if (step.type === 'blur' && step.radius > 0) {";
-    const before = readFileSync(gpu, 'utf8');
-    if (!before.includes(ANCHOR)) {
-      // 锚点漂移时**判失败**，不是判通过 —— 否则这条对照会在没人发现的情况下空转，
-      // 变成"永远绿"（仓库里踩过这个坑：字符串替换没命中，四条断言全在空气上绿着）。
-      say(false, `注入点没找到（${ANCHOR}）⇒ **对照失效**（不是通过）：gpu.js 改过就得修这条对照`);
-      return 1;
+    const INJECT = [
+      ["if (step.type === 'blur' && step.radius > 0) {", "if (step.type === 'blur' && false) {",
+        '模糊那一趟不再生效'],
+      ["if (k === 'type' || k === 'src') continue;", 'if (true) continue;',
+        'custom 的作者 uniform 不传给着色器'],
+      ['        if (!prog) throw new Error(`filmwright: ${err}`);', '        if (!prog) continue;',
+        '编译不过的自定义效果被静默跳过（既不出报错帧，自检也报不出来）'],
+    ];
+    let patched = readFileSync(gpu, 'utf8');
+    for (const [anchor, repl, label] of INJECT) {
+      if (!patched.includes(anchor)) {
+        // 锚点漂移时**判失败**，不是判通过 —— 否则这条对照会在没人发现的情况下空转，
+        // 变成"永远绿"（仓库里踩过这个坑：字符串替换没命中，四条断言全在空气上绿着）。
+        say(false, `注入点没找到（${anchor}）⇒ **对照失效**（不是通过）：${label}；stage.js 改过就得修这条对照`);
+        return 1;
+      }
+      patched = patched.replace(anchor, repl);
     }
-    writeFileSync(gpu, before.replace(ANCHOR, "if (step.type === 'blur' && false) {"), 'utf8');
+    writeFileSync(gpu, patched, 'utf8');
 
     // ── 在缺陷版上重跑本工具：同一个工具、仓库根指向副本 ──
     // ⚠️ 只给子进程放宽 **boot 预算**（`session.mjs` 的 `FILMWRIGHT_BOOT_TRIES`，默认 1200×100ms）：
@@ -937,16 +1028,26 @@ function runNegativeControl() {
 
     // 三条一起成立才算对照成立 —— 缺任何一条，"红了"都可能红得没有意义。
     say(r.status !== 0, `带缺陷的引擎让本工具**退出码非 0**（实测 ${r.status}）`);
-    // "效果没接上"由这两条判据之一负责抓：blur 不生效 ⇒ 掩码标定出来的内容区是**空集**
-    // （下限断言先响），而第二节的"radius>0 必须与不写 effects 不同"是同一条性质的正面判据。
-    // 只要求**至少命中一条**：两条都要求会把对照绑死在实现细节上；一条都不要求则是空话。
+    // 每个注入由**自己那一组**判据负责抓。组内**任一**命中即可（把对照绑死在单条判据上
+    // 太脆：实现一改就得跟着改），但**每组都必须有命中** —— 少一组就说明那个注入
+    // 没被任何判据抓住，那这个缺陷下次真的发生时也会溜过去。
     const EXPECTS = [
-      '✗ 标定出的内容掩码与腐蚀后的掩码都**非空**',
-      '✗ radius>0 的画面都与不写 effects',
+      {what: '效果没接上（blur）', any: [
+        '✗ 标定出的内容掩码与腐蚀后的掩码都**非空**',
+        '✗ radius>0 的画面都与不写 effects',
+      ]},
+      {what: '作者 uniform 没传到着色器（custom）', any: [
+        '✗ 作者的 uniform 真的传到了着色器',
+      ]},
+      {what: '编译不过的着色器被静默跳过（custom）', any: [
+        '✗ 编译不过的着色器**不静默**',
+        '✗ 自检的逐帧检查把它报成失败',
+      ]},
     ];
-    const hits = EXPECTS.filter((e) => out.includes(e));
-    say(hits.length > 0, `红在**预期的那组判据**上（命中 ${hits.length}/${EXPECTS.length} 条：` +
-      `${hits.map((h) => h.replace(/^✗ /, '')).join(' ／ ') || '一条都没有'}）`);
+    const missed = EXPECTS.filter((g) => !g.any.some((e) => out.includes(e)));
+    say(missed.length === 0,
+      `红在**预期的那两组判据**上（命中 ${EXPECTS.length - missed.length}/${EXPECTS.length} 组：` +
+      `${EXPECTS.filter((g) => !missed.includes(g)).map((g) => g.what).join(' ／ ') || '一组都没有'}）`);
     const finished = /✗ \d+ 项失败/.test(out);
     say(finished, '跑完了**全程**（结尾有"✗ N 项失败"）—— 不是启动/渲染崩掉所以红');
     if (!finished) {

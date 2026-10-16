@@ -4,12 +4,20 @@
 //
 // 这是 contract 层的一部分，所以放在 contract 下 —— runtime 依赖它。
 //
-// ## 为什么是"有界词汇表"而不是"一段 shader"
+// ## 有界词汇表 + 一个**受约束的**逃生舱
 //
-// AI 要能写对、校验要能拦住。所以：
+// AI 要能写对、校验要能拦住。所以默认是：
 //   · 效果是**枚举类型 + 有界参数**，不是任意着色器源码；
 //   · 参数有类型与范围，越界在**校验期**报错（带实际范围，便于 AI 自己改对）；
-//   · 不提供"自定义 shader"逃生舱 —— 真要就把它做成一个具名效果。
+//   · 词汇表盖不住的，走 `custom`（`customPass(src, uniforms)`）：自己写一段
+//     GLSL ES 1.0 片段着色器。
+//
+// `custom` 是**受约束的**逃生舱，不是"随便塞一段 GLSL"：单趟、只有一张输入纹理
+// （`t`）、拿不到时钟（只有帧号 `frame`，所以同一帧永远同一张）、源码与 uniform
+// 都有上限（见 `CUSTOM_SRC_MAX` / `CUSTOM_UNIFORM_MAX`）。
+//
+// 早先不提供它的理由是"分层不能被打穿"—— 自定义 shader 只能出现在命令式里、
+// 不能进 `scene.json`。**那条理由现在不成立了**：创作格式只剩命令式。
 //
 // ## 每个参数三个字段各自的用途
 //
@@ -27,7 +35,8 @@
 import {err} from './errors.js';
 import {validateKeyTrack} from './animate.js';
 
-export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate', 'radialBlur', 'distort', 'grade', 'displace'];
+export const EFFECT_TYPES = ['blur', 'glow', 'color', 'vignette', 'chromatic', 'grain', 'pixelate',
+  'radialBlur', 'distort', 'grade', 'displace', 'custom'];
 
 /**
  * 调色预设（`grade`）。
@@ -162,14 +171,129 @@ export const EFFECT_SPECS = {
       phase: {kind: 'num', min: -180, max: 180, def: 0, note: '相位（度）：噪声场的平移，可写关键帧让热浪流动'},
     },
   },
+
+  custom: {
+    note: '自定义片段着色器（逃生舱）：src 是一段 GLSL ES 1.0 片段着色器，uniforms 是「名字 → 数值」',
+    // ⚠️ 参数形状**与别的效果不同**（`src` 是字符串、`uniforms` 是嵌套对象），
+    // 通用的「每个参数一个 min/max」模型表达不了它 —— 所以 `validateEffects`
+    // 对它走单独一条分支（`validateCustomPass`），编译也单独一条（见 fx/compile.js）。
+    // 这里留一个空 `params`：它存在的意义是让「效果名 → 有这个词」这一步成立。
+    //
+    // 没有 `noopWhen`：引擎不知道作者的着色器在什么取值下"等于没做"，
+    // 所以 `custom` **一律当作有效果**（每帧都真跑一趟）。要短路就自己写 uniform 控制。
+    params: {},
+  },
 };
 
 /** 一条效果链的长度上限：链越长越慢，且多半是写错了。 */
 export const EFFECT_CHAIN_MAX = 12;
 
+/**
+ * `custom.src` 的长度上限（字符）。
+ *
+ * **不是性能边界**（编译期一次而已），是"写错了"的边界：一段手写片段着色器几百字符
+ * 就够；上万字符几乎必然是把整个文件/别的 shader 粘进来了。
+ */
+export const CUSTOM_SRC_MAX = 4000;
+
+/**
+ * `custom.uniforms` 的条数上限。
+ *
+ * 16 不是随手取的：GLSL ES 1.0 规范**保证**的 `MAX_FRAGMENT_UNIFORM_VECTORS` 下限
+ * 就是 16 —— 超过它，某些设备上会链接失败。引擎自己还要占 3 个（`texelX`/`texelY`/`frame`），
+ * 所以这 16 是**作者的** uniform 条数上限，已经贴着设备下限了。
+ */
+export const CUSTOM_UNIFORM_MAX = 16;
+
+/**
+ * 引擎自己会传进着色器的名字，作者**不许占用**。
+ *
+ * `t` 是输入纹理（sampler），`texelX`/`texelY` 是一个像素在 uv 上的步长，`frame` 是帧号。
+ * `type`/`src` 不是 GLSL 名字，但它们是效果对象自己的字段 —— uniform 与它们重名会被覆盖。
+ *
+ * 占用它们会**静默取到引擎的值**（或直接编译失败），所以校验期就拦住。
+ */
+export const CUSTOM_RESERVED = ['t', 'texelX', 'texelY', 'frame', 'type', 'src'];
+
 export const EFFECT_ERROR_CODES = [
   'SCENE_FX_SHAPE', 'SCENE_FX_TYPE', 'SCENE_FX_PARAM', 'SCENE_FX_RANGE', 'SCENE_FX_CHAIN',
+  'SCENE_FX_CUSTOM',
 ];
+
+/**
+ * `custom` 的**单独一条**校验分支（参数形状与别的效果不同，见 `EFFECT_SPECS.custom`）。
+ *
+ * 校验的是"这段源码能不能当一段片段着色器用"，**不是**"这段 GLSL 对不对" ——
+ * 后者只有 GL 编译器知道，报错发生在**渲染期**（带 GL 的 info log，不静默跳过）。
+ * 所以这里只拦得住形状类错误：不是字符串、空、没有 `void main`、太长、
+ * uniform 名字非法/占用引擎保留名/条数超限/取值不是有限数。
+ */
+function validateCustomPass(fx, fp) {
+  const out = [];
+  const push = (code, where, message, hint) => out.push(err(code, where, message, hint));
+
+  for (const k of Object.keys(fx)) {
+    if (k !== 'type' && k !== 'src' && k !== 'uniforms') {
+      push('SCENE_FX_PARAM', `${fp}.${k}`, `custom 没有字段 ${JSON.stringify(k)}`,
+        '可用：src（着色器源码）/ uniforms（名字 → 数值）');
+    }
+  }
+
+  const src = fx.src;
+  if (typeof src !== 'string' || !src.trim()) {
+    push('SCENE_FX_CUSTOM', `${fp}.src`,
+      'custom 需要 src：一段 GLSL ES 1.0 片段着色器的**函数体**（字符串）',
+      '形如 customPass(`uniform float u; void main(){ gl_FragColor = texture2D(t, uv) * u; }`, {u: 0.5})');
+  } else if (src.length > CUSTOM_SRC_MAX) {
+    push('SCENE_FX_CUSTOM', `${fp}.src`,
+      `src 太长：${src.length} 字符（上限 ${CUSTOM_SRC_MAX}）`,
+      '一段手写片段着色器几百字符就够；是不是把整个文件粘进来了');
+  } else if (!/void\s+main\s*\(/.test(src)) {
+    push('SCENE_FX_CUSTOM', `${fp}.src`, 'src 里没有 void main()，那不是一段能跑的片段着色器',
+      '引擎会在你的源码前面补 precision / varying uv / uniform sampler2D t / texelX / texelY / frame，'
+      + '你只需要写自己的 uniform 声明与 void main(){ … }');
+  }
+
+  const u = fx.uniforms;
+  if (u === undefined) return out;
+  if (!u || typeof u !== 'object' || Array.isArray(u)) {
+    push('SCENE_FX_CUSTOM', `${fp}.uniforms`,
+      `uniforms 必须是「名字 → 数值或关键帧轨道」的对象，收到 ${JSON.stringify(u)}`,
+      '形如 {u: 0.5, k: [{"frame":1,"v":0},{"frame":60,"v":1}]}');
+    return out;
+  }
+
+  const names = Object.keys(u);
+  if (names.length > CUSTOM_UNIFORM_MAX) {
+    push('SCENE_FX_CUSTOM', `${fp}.uniforms`,
+      `uniform 最多 ${CUSTOM_UNIFORM_MAX} 个，收到 ${names.length} 个`,
+      `${CUSTOM_UNIFORM_MAX} 是 GLSL ES 1.0 保证的最小 uniform 数量，超过它可能在某些设备上链接失败`);
+  }
+  for (const [k, v] of Object.entries(u)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(k)) {
+      push('SCENE_FX_CUSTOM', `${fp}.uniforms.${JSON.stringify(k)}`,
+        `uniform 名字不合法：${JSON.stringify(k)}`,
+        'GLSL 标识符：字母或下划线开头，之后是字母/数字/下划线，最长 32');
+    } else if (CUSTOM_RESERVED.includes(k)) {
+      push('SCENE_FX_CUSTOM', `${fp}.uniforms.${k}`, `${k} 是引擎保留的名字`,
+        `引擎已经会传这些：${CUSTOM_RESERVED.join(' / ')} —— 换一个名字`);
+    }
+    if (Array.isArray(v)) {
+      // 与别的效果**同一份**关键帧规则（不另写一套）。取值只要求是有限数：
+      // 引擎按 `uniform1f` 传，语义由作者的着色器决定，这里无从判断合理范围。
+      out.push(...validateKeyTrack(v, `${fp}.uniforms.${k}`, {
+        valueNote: `${k} 是引擎按 uniform1f 传的数值（着色器自己决定它的含义）`,
+      }));
+      continue;
+    }
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      push('SCENE_FX_CUSTOM', `${fp}.uniforms.${k}`,
+        `${k} 必须是有限数值或关键帧数组，收到 ${JSON.stringify(v)}`,
+        '引擎只按 uniform1f 传数值；要传向量就拆成 u0/u1/u2 三个 uniform');
+    }
+  }
+  return out;
+}
 
 /**
  * 校验一处 `effects`（效果链）。
@@ -203,6 +327,12 @@ export function validateEffects(effects, path = 'effects') {
     if (!spec) {
       push('SCENE_FX_TYPE', `${fp}.type`, `不认识的效果 ${JSON.stringify(fx.type)}`,
         `可用：${EFFECT_TYPES.join(' / ')}`);
+      return;
+    }
+    // `custom` 的参数形状与别的效果不同（`src` 是字符串、`uniforms` 是嵌套对象），
+    // 通用的"每个参数一个 min/max"模型表达不了它 ⇒ 单独一条分支。
+    if (fx.type === 'custom') {
+      out.push(...validateCustomPass(fx, fp));
       return;
     }
     for (const k of Object.keys(fx)) {

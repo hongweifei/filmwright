@@ -277,6 +277,12 @@ jobs:
       - name: 素材（加载就绪 / 真画出来 / 引错名字要报）
         run: node tools/verify-assets.mjs
 
+      # 负面对照**必须自动跑**：只在手动跑的对照会腐烂（写坏了自己都不知道）。
+      # 它把「去掉 `im.decode()`」注入到临时仓库根，要求**只有**那条确定性判据变红
+      # 且整程跑完（实测约 2s）。
+      - name: 素材·负面对照（去掉解码 ⇒ 那条判据必须红）
+        run: node tools/verify-assets.mjs --negative
+
       # 效果链与命令式入口：这两个能力**最新**，也最容易悄悄退化，
       # 所以必须自动跑。实测耗时（无 GPU、软件 WebGL）：effects 约 64s、imperative 约 20s。
       #
@@ -284,6 +290,11 @@ jobs:
       # 正是要守住"确定性"的那一档 —— 效果在这档下也必须正确。
       - name: 效果链（往返保真 / 各效果的量化判据 / 直通帧逐位相同）
         run: node tools/verify-effects.mjs
+
+      # 逃生舱的负面对照：把「引擎读不懂就静默跳过」「编译失败不报」两种缺陷注入临时仓库根，
+      # 各要求命中自己那一组判据。它是**整程重跑**，所以耗时约等于上一步（实测约 70s）。
+      - name: 效果链·负面对照（缺陷必须被抓到）
+        run: node tools/verify-effects.mjs --negative
 
       - name: 命令式入口（与声明式同能力 / 写错当场报）
         run: node tools/verify-imperative.mjs
@@ -328,6 +339,12 @@ jobs:
       # （不是同一个路径换名字）、同一遮罩两次渲染逐字节一致。
       - name: 遮罩（四种形状 / 反选 / 可复现）
         run: node tools/verify-mask.mjs
+
+      # 遮罩的负面对照：注入①「遮罩完全不生效」②「反选不生效」。②是**窄对照** ——
+      # 它要求**只**红「反选与同规格不反选不同」那一条，证明那条判据不是被别的判据顺带守住的。
+      # 整程重跑，实测约 37s。
+      - name: 遮罩·负面对照（两种缺陷各命中自己那组判据）
+        run: node tools/verify-mask.mjs --negative
 
       - name: 增量重渲的安全性（复用段必须与重渲逐帧一致）
         run: node tools/verify-incremental.mjs

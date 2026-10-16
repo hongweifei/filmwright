@@ -67,7 +67,55 @@
 - 跟着加的守卫：`tests/devtools-list.test.mjs`。夹具**自带负面对照**（先用 `fetch` 证明那个端口
   真的被拒绝，否则判据什么都没证明）；负面对照实测有牙：把实现换回 `fetch` ⇒ 4 条全红。
 
+**`verify-effects` 时不时红在 `[object ErrorEvent]` —— CDP 的 WebSocket 连不上时，报错只剩这九个字**
+
+- 症状：`verify-effects` 偶发红在某一节，报 `渲染失败(px8): [object ErrorEvent]`（位置随机、
+  重跑就好）；同族还有一次 `boot 超时`、一次某一节等了 262 秒。
+- 原因：两件事叠在一起 —— ① `session.mjs` 里
+  `await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; })`，WebSocket 失败时
+  `rej` 收到的是浏览器的 `ErrorEvent`，顶层 `String(e)` 只剩 `[object ErrorEvent]`；
+  ② 它**不重试**，Chrome 刚起来那一下抖动就直接失败。
+- 修法：新增 `src/host/browser/openSocket.mjs` —— 在预算内重试、浏览器进程退出时**立刻**失败、
+  报错里带端口与原因（不再是 ErrorEvent）；`session.mjs` 改用它。
+- 实测：同一夹具连跑 30 次 **30/30 成功**（中位数 1729ms），改前同条件下会偶发红。
+- 跟着加的守卫：`tests/open-socket.test.mjs`（5 条，含"浏览器已退出要立刻失败，而不是等满预算"）。
+  负面对照实测有牙：把两处 `throw` 换成抛普通对象（模拟 `ErrorEvent`）⇒ 3 条真红。
+
+**「等浏览器起来」的预算只盖住了后半段：等端口文件那段写死 30 秒**
+
+- 症状：连跑七个浏览器重活的串行验收里偶发红在"渲染环境没起来"（`verify-effects --negative`
+  的第一次静帧就 `渲染失败(maskref)`，`tools/probes/probe-gpu-pixels.mjs` 也红过一次），
+  而单独重跑同一个工具又是绿的。两次都发生在内存吃紧的机器上（16GB 只剩 2.3GB）。
+- 原因：`session.mjs` 里等 `DevToolsActivePort` 的循环写死 `300 × 100ms = 30s`，而"等页面
+  就绪"那段读 `FILMWRIGHT_BOOT_TRIES`（默认 `1200 × 100ms = 120s`）。三个验收工具跑负面对照时
+  都把 `FILMWRIGHT_BOOT_TRIES` 放宽到 `3600` 来吸收负载 —— 但**只有后半段**读它，
+  最靠前、最容易受负载影响的那一段根本不听。
+- 修法：两处等待共用同一个 `tries`；`浏览器提前退出` 的报错补上 exit 码（把"崩了"与"等超时"
+  分开 —— 这次偶发失败留下的线索里，这两者当时分不出来）。
+
 ### 新增
+
+**效果链的逃生舱：`customPass(src, uniforms)`**
+
+「有界词汇表」是引擎的立身之本（AI 能写对、校验能在绘制前拦住、确定性守得住），但
+[LIMITATIONS](LIMITATIONS.md) 第 13 节把它记成现在最大的局限：想要一个词表里没有的效果，
+只能拆成已有效果的组合。现在补上一条**受约束的**逃生舱：作者交一段 GLSL ES 1.0 片段着色器，
+引擎在源码前面补上 `precision mediump float; varying vec2 uv; uniform sampler2D t;` 与
+`uniform float texelX, texelY, frame;`。
+
+- **约束**（`src/contract/effects.js`，校验仍在唯一的 `validateEffects` 里）：单趟、只有一张输入
+  纹理；uniform 只能是标量数值、最多 16 个（`CUSTOM_UNIFORM_MAX`）、名字不能撞引擎保留名
+  （`CUSTOM_RESERVED`：`t` / `texelX` / `texelY` / `frame` / `type` / `src`）；源码上限 4000 字符
+  （`CUSTOM_SRC_MAX`）且必须含 `void main`；越界在校验期报 `SCENE_FX_CUSTOM`。
+- **`frame` 是唯一的时间来源** —— GLSL 拿不到时钟，所以「第 N 帧只是 N 的函数」在结构上仍然成立。
+- **没有 `noopWhen`**：引擎读不懂作者的着色器何时等于没做 ⇒ 一律当有效果，用了就一定每帧多跑一趟
+  GPU。`tests/effects.test.mjs` 把「没有直通条件的效果只允许 `custom`」钉住。
+- 编译/链接失败**不静默**：那一帧画成报错帧（`__lastError` + GL 日志），`check` 的逐帧检查报成失败。
+  ⚠️ `stills` / `render` **不会**因此退出非 0 —— 页面侧对所有绘制异常都是"出错也要出图，画面留证据"。
+- 公开面 +4：`customPass` / `CUSTOM_SRC_MAX` / `CUSTOM_UNIFORM_MAX` / `CUSTOM_RESERVED`。
+- 验收：`tools/verify-effects.mjs` 新增第十节（作者的着色器真在 GPU 上跑 / uniform 真传进去 /
+  `texelX`、`texelY`、`frame` 可用 / 同一帧两次渲染逐字节一致 / 坏着色器必须被**点名**）；
+  它的负面对照从一注入变三注入。`tools/probes/check-determinism.mjs` 的 `PRESETS` 也加了 `custom`。
 
 **父子绑定（`follow`）与空物体（`empty`）—— 一套变换驱动一组图层**
 
@@ -138,13 +186,15 @@
 想回原来的高保真：`--frame-format jpeg:92`（甚至 `png`）。
 新增 `tools/probes/sweep-jpeg.mjs` 可复现上面这条曲线。
 
-**效果链（11 个效果，词汇表有界）**
+**效果链（12 个效果，词汇表有界 + 一个受约束的逃生舱）**
 
 镜头与图层都能声明 `effects`（数组顺序即应用顺序，最多 12 条）：
 
 `blur`（金字塔模糊，radius 上限 400）、`glow`、`color`、`vignette`、`chromatic`、
 `grain`、`pixelate`、`radialBlur`、`distort`（正弦）、`grade`（调色预设：青橙/电影感/
-黑白/暖/冷，`amount` 在"原样"与预设之间**连续插值**）、`displace`（程序化值噪声，热浪）。
+黑白/暖/冷，`amount` 在"原样"与预设之间**连续插值**）、`displace`（程序化值噪声，热浪），
+以及 `custom`（逃生舱：交一段自己的 GLSL ES 1.0 片段着色器；单趟、一张输入纹理、
+uniform 只能是标量数值，源码与 uniform 条数都有上限 —— 见 [效果链](docs/effects.md)）。
 
 - **参数本身也能写关键帧**（与 `animate` 同一套规则），所以模糊能渐入、辉光能脉冲。
 - **直通值当帧短路**（`noopWhen`）：`amount=0` 之类根本不进 GPU ⇒ 没用到效果的项目
