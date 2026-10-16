@@ -6,6 +6,14 @@ import {renderRange, renderStills, renderSequence} from '../media/renderRange.mj
 import {muxVideo} from '../media/mux.mjs';
 import {muxWithMusic} from '../media/mix.mjs';
 import {spawnTool, ffmpegPath, checkSpawned} from '../media/ffmpegBin.mjs';
+// ⚠️ 这一行是**跨行** import：拆 `commands.mjs` 时「按行过滤 import」把它整条丢了，
+// 于是 `--incremental` 一跑到 `segmentDir(workDir)` 就 `segmentDir is not defined`。
+// 现在由 `checkNames`（checks/static）钉住 —— 见那里的说明。
+import {
+  segmentDir, segmentKey, planSegments, findCached, recordSegment, pruneSegments,
+  engineFingerprint, globalFingerprint, collectShotDeps, mergeDeps,
+  manualShotsFingerprint, combineGlobal,
+} from '../media/incremental.mjs';
 import {sceneSchema, resolveAt} from '../../contract/scene.js';
 import {normalizeConfig} from '../../contract/config.js';
 import {KIT_ROOT, RUNTIME_ROOT} from '../root.mjs';

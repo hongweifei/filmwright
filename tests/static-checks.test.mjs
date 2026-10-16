@@ -7,7 +7,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join, dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {checkThemeKeys, checkPublicApi, checkImports} from '../src/host/checks/static/index.mjs';
+import {checkThemeKeys, checkPublicApi, checkImports, checkNames} from '../src/host/checks/static/index.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -165,4 +165,86 @@ test('imports：**注释里**的 import 例子不算（守卫别把自己的说�
     const r = checkImports(join(proj, 'shots'), proj, {insideOnly: proj});
     assert.equal(r.ok, true, '注释里的例子不该被当成真 import：' + r.problems.join('\n'));
   });
+});
+
+// ---- checkNames：`X is not defined` 这一族（漏 import / 漏声明）----
+
+test('names：只在调用位置出现的名字 → 报出文件与行号', () => {
+  // 真凶原型：拆文件时一条 import 整条丢掉 ⇒ `segmentDir(workDir)` 到真跑才抛
+  withRuntime({'a.js': 'export function f() {\n  return segmentDir(1);\n}\n'}, (dir) => {
+    const r = checkNames(dir);
+    assert.equal(r.ok, false, '应当报错');
+    assert.ok(r.problems.some((p) => p.includes('segmentDir')), '要指出是哪个名字：' + r.problems.join('\n'));
+    assert.ok(r.problems.some((p) => p.includes(':2')), '要给出行号（第 2 行）：' + r.problems.join('\n'));
+  });
+});
+
+test('names：同一个名字只要有绑定就不报（反向保险）', () => {
+  // 没有这一条，「一律报错」也能让上面那条恒绿
+  withRuntime({
+    'a.js': "import {segmentDir} from './b.js';\nexport const d = segmentDir(1);\n",
+    'b.js': 'export const segmentDir = (x) => x;\n',
+  }, (dir) => {
+    const r = checkNames(dir);
+    assert.equal(r.ok, true, '有 import 就该绿：' + r.problems.join('\n'));
+    assert.ok(r.checked >= 1, `扫到的名字太少（${r.checked}）`);
+  });
+});
+
+test('names：函数参数 / 解构 / 声明也算绑定（别把参数当漏绑定）', () => {
+  // 这三个名字都**只在调用位置**被用，但都在别处以绑定形式出现过一次
+  withRuntime({
+    'a.js': 'export const f = ({say}) => say("x");\n'
+      + 'export const g = (cb) => cb(1);\n'
+      + 'export function h() { return local(1); }\n'
+      + 'const local = (x) => x;\n',
+  }, (dir) => {
+    const r = checkNames(dir);
+    assert.equal(r.ok, true, '参数与声明都是绑定：' + r.problems.join('\n'));
+  });
+});
+
+test('names：注释 / 字符串 / 正则里的 `名字(` 不算调用', () => {
+  // 守卫的说明书不是被守卫的东西：注释里举例写一次 `foo(` 不该让仓库变红
+  withRuntime({
+    'a.js': '// 举例：以前写 foo(1)\nconst s = "bar(2)";\nconst re = /baz\\(/;\n'
+      + 'export const t = [s, re];\n'
+      // 另加一个**真调用**：夹具里一个被调用的名字都没有时，检查会按「空集上的干净不算干净」报出来
+      + 'const helper = (x) => x;\nexport const u = helper(1);\n',
+  }, (dir) => {
+    const r = checkNames(dir);
+    assert.equal(r.ok, true, '都不是真调用：' + r.problems.join('\n'));
+    assert.ok(r.checked >= 1, `扫到的名字太少（${r.checked}）`);
+  });
+});
+
+test('names：模板正文里的不算、`${}` 里的算（这一对才是词法器的判据）', () => {
+  withRuntime({'a.js': 'export const s = `foo(1) ${missing(2)}`;\n'}, (dir) => {
+    const r = checkNames(dir);
+    assert.equal(r.ok, false, '`${missing(2)}` 是真调用，必须报');
+    assert.ok(r.problems.some((p) => p.includes('missing')), r.problems.join('\n'));
+    assert.ok(!r.problems.some((p) => p.includes('foo')), '模板正文里的 foo(1) 不算调用');
+  });
+});
+
+test('names：对象字面量 / 类里的方法定义不算调用', () => {
+  // `{foo() {}}` 与 `class A { bar() {} }` 里，名字后面也跟 `(` —— 但那是定义
+  withRuntime({
+    'a.js': 'export const o = {\n  foo() { return 1; },\n  async bar() { return 2; },\n};\n'
+      + 'export class A {\n  baz() { return 3; }\n}\n'
+      // 另加一个**真调用**：夹具里一个被调用的名字都没有时，检查会按「空集上的干净不算干净」报出来
+      + 'export const use = () => helper(1);\nconst helper = (x) => x;\n',
+  }, (dir) => {
+    const r = checkNames(dir);
+    assert.equal(r.ok, true, '方法定义不是漏绑定：' + r.problems.join('\n'));
+    assert.ok(r.checked >= 1, `扫到的名字太少（${r.checked}）`);
+  });
+});
+
+test('names：真库当前没有漏绑定的名字（整仓扫）', () => {
+  // 扫的是**整仓**（src / bin / tools / tests / examples），比 `check` 里的 src 更宽 ——
+  // 丢 import 这一族在 tools/ 里同样发生过（守卫自己也会漏绑定，而它们只在 CI 里跑）。
+  const r = checkNames(ROOT, '.');
+  assert.equal(r.ok, true, '仓库自己必须过这道检查：\n' + r.problems.join('\n'));
+  assert.ok(r.checked > 1200, `扫到的被调用名字太少（${r.checked}），检查可能没扫到文件`);
 });

@@ -8,6 +8,8 @@
 //   themeKeys—— 运行时代码引用了 theme 里不存在的配色键（默认值变 undefined，
 //               绘制时才崩，而崩的地方离原因很远）
 //   assets   —— 镜头引用了没在配置里声明的素材名（boot 时才会抛错，且要等到开浏览器）
+//   names    —— 用了没绑定的名字（`X is not defined`，只在真跑到那一行时才抛）。
+//               实现单独在 names.mjs：它要一个真词法器，见那里的说明。
 import {readFileSync, existsSync, readdirSync, statSync} from 'node:fs';
 import {join, dirname, resolve, relative, isAbsolute} from 'node:path';
 import {DEFAULT_THEME, normalizeConfig} from '../../../contract/config.js';
@@ -366,3 +368,7 @@ export function checkScene(projectDir, proj) {
     errors: r.errors,
   };
 }
+
+// `checkNames` 的实现单独一份：它要一个真词法器（注释/字符串/正则/模板），
+// 与上面这些「按行正则」的检查不同族。这里只转出，好让调用方只有一个入口。
+export {checkNames} from './names.mjs';

@@ -26,6 +26,18 @@
 
 加 `--static-only` 只跑前八道，不启浏览器——CI 与改完镜头后的快速验证用。
 
+### 库内部的静态检查（不占 `check` 的名额）
+
+有一条静态检查扫的是**库自己的 `src/`**，不是某部片子，所以它不在这张表里：
+`names`（`src/host/checks/static/names.mjs`）——**用了没绑定的名字**（`X is not defined`）。
+它常驻在 `npm test` 里，与 `tests/structure.test.mjs` 那几条结构不变量同族。
+
+为什么需要它：拆 `commands.mjs` 时，一条**跨行** import（12 个名字）被「按行过滤 import」整条丢掉，
+`render --incremental` 一进门就 `segmentDir is not defined` —— 而 `npm test` 全绿（没有单测走这条路）、
+`verify-readme` 全绿（`all` 不走这条路），**只有 CI 上两个慢守卫会红，而那两个作业红了十几个提交没人看见**。
+判据不是「哪些名字允许」，而是「**一次绑定都没见到**」：名字只要被绑定过（import / 声明 / 参数 / 解构），
+就必然在某处以非调用形式出现一次；所以「全文件只以 `名字(` 出现、又不是成员调用与方法定义」就是漏了绑定。
+
 ### `themeKeys` 这道为什么值钱
 
 库内部大量把 `theme` 的键当**默认参数值**用（`{color = C.blue}` 这种）。键名写错或漏定义时**不报错**，默认值变成 `undefined`，一直传到绘制才崩——崩的地方离原因很远。
