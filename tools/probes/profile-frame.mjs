@@ -11,15 +11,13 @@
 // 为什么要拆：不拆就只能猜。之前「分片更慢」的猜测方向是内存，但真正的大头
 // 很可能是**每帧近 1MB 的 PNG base64 在单线程上来回搬**（实测 1280×720 的
 // PNG 约 940KB → base64 约 1.25MB/帧）。拆开量才知道该先动哪一段。
-import {mkdirSync, rmSync, writeFileSync} from 'node:fs';
-import {spawnSync} from 'node:child_process';
-import {pathToFileURL} from 'node:url';
+import {mkdirSync, rmSync} from 'node:fs';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import {dirname, join, resolve} from 'node:path';
-import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
-const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..')).replace(/\\/g, '/');
+const ROOT = (argv[0] && !argv[0].startsWith('--') ? argv[0] : resolve(HERE, '..', '..')).replace(/\\/g, '/');
 const N = Number(argv[1] ?? 40);
 
 const imp = (rel) => import(pathToFileURL(`${ROOT}/${rel}`).href);
@@ -29,7 +27,7 @@ const {loadProject} = await imp('src/host/project/load.mjs');
 
 const P = `${ROOT}/examples/minimal`;
 const proj = await loadProject(P);
-const server = await serveProject(P, {raw: proj.raw, timeline: proj.timeline, shotsRel: null, scene: proj.scene});
+const server = await serveProject(P, {raw: proj.raw, timeline: proj.timeline, shotsRel: 'shots/index.js', watch: false});
 const base = `http://127.0.0.1:${server.address().port}/`;
 const sess = await openSession(base, {width: 1280, height: 720});
 
@@ -114,7 +112,14 @@ console.log('\n=== 落地（node 侧解码 base64 并写 ffmpeg）===');
   const ff = spawnTool(ffmpegPath(), ['-y', '-v', 'error', '-f', 'image2pipe', '-framerate', '30',
     '-i', '-', '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-crf', '16', out],
     {stdio: ['pipe', 'ignore', 'inherit']});
-  const big = Buffer.alloc(Math.round(results['PNG（当前渲染路径）'].bytes * 0.75), 200);
+  // 载荷必须是**真的 PNG**。这里原来写的是 `Buffer.alloc(..., 200)` 随机字节，
+  // ffmpeg 从 `-f image2pipe` 里认不出任何流，报「Output file does not contain any stream」
+  // 直接退出；node 这边继续往已关闭的管道写，又抛一个未处理的 EPIPE —— 探针崩在最后一节。
+  // （本轮把 16 个探针真跑一遍才暴露：它前面那一节早就因为夹具过期崩了，这一节根本没跑到。）
+  const b64 = await sess.evaluate("document.querySelector('canvas').toDataURL('image/png').split(',')[1]");
+  const big = Buffer.from(b64, 'base64');
+  // ffmpeg 若提前退出，写管道会 EPIPE；那不该把探针崩掉（下面 close 里能看到退出）。
+  ff.stdin.on('error', () => {});
   const t0 = Date.now();
   for (let i = 0; i < frames.length; i++) {
     if (!ff.stdin.write(big)) await new Promise((r) => ff.stdin.once('drain', r));
@@ -122,7 +127,7 @@ console.log('\n=== 落地（node 侧解码 base64 并写 ffmpeg）===');
   const writeMs = (Date.now() - t0) / frames.length;
   ff.stdin.end();
   await new Promise((r) => ff.on('close', r));
-  console.log(`  写入 ${fmt(writeMs)} ms/帧（${(big.length / 1024).toFixed(0)} KB/帧 未压缩缓冲）`);
+  console.log(`  写入 ${fmt(writeMs)} ms/帧（${(big.length / 1024).toFixed(0)} KB/帧 真 PNG，同一帧重复喂）`);
   console.log('  （ffmpeg 的 h264 编码是并行流水，这里量的是 node 把数据喂进去的成本）');
 }
 

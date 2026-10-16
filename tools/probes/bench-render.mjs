@@ -3,9 +3,13 @@
 // 逐项分离是为了给文档提供可信数字，而不是把总收益归给某一个改动。
 import {spawnSync} from 'node:child_process';
 import {existsSync, rmSync} from 'node:fs';
-import {join} from 'node:path';
+import {dirname, join, resolve} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
-const ROOT = process.argv[2].replace(/\\/g, '/');
+// 仓库根可省（和其它探针一致）：原先直接取 `process.argv[2]`，**不带参数跑必崩**
+// （`Cannot read properties of undefined`）—— 和那 9 个兜底写错的探针是同一类问题，
+// 只是这个连兜底都没有。
+const ROOT = (process.argv[2] ?? resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')).replace(/\\/g, '/');
 const KIT = join(ROOT, 'bin', 'filmwright.mjs');
 const P = join(ROOT, 'examples', 'minimal');
 const N = 300;

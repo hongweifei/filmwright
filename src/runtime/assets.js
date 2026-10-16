@@ -52,13 +52,18 @@ export async function loadAssets(list) {
   return results.map((r) => r.name);
 }
 
-function loadOne(src) {
-  return new Promise((resolve, reject) => {
-    const im = new Image();
+async function loadOne(src) {
+  const im = new Image();
+  await new Promise((resolve, reject) => {
     im.onload = () => resolve(im);
     im.onerror = () => reject(new Error('取不到这张图（404 或格式不对）'));
     im.src = src;
   });
+  // 必须等解码完，不能只等 onload：onload 只保证数据到齐，位图可能还没解码。
+  // 少了这一句，同一帧在会话里**第一次**被画时（尤其带 shadowBlur）会走「边解码边缩放」，
+  // 与之后走缓存位图的重采样差一点点 —— 那就违反「第 N 帧只是 N 的函数」了。
+  await im.decode();
+  return im;
 }
 
 const naturalW = (el) => el.naturalWidth || el.width || 0;

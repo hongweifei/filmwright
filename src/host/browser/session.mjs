@@ -6,6 +6,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {findBrowser} from './find.mjs';
 import {frameFormatExpr} from './frameFormat.mjs';
+import {devtoolsJson} from './devtoolsList.mjs';
 
 
 
@@ -82,7 +83,16 @@ export async function openSession(url, size, opts = {}) {
   }
   if (!devPort) throw new Error('filmwright: 等不到 DevToolsActivePort；stderr=' + chromeErr);
 
-  const list = await (await fetch(`http://127.0.0.1:${devPort}/json/list`)).json();
+  // 取 DevTools 的 target 列表。**不能用 `fetch`** —— 它按 Fetch 规范拒绝「坏端口」，
+  // 而 Chrome 随机挑的调试端口可能正好落在那个名单里（见 `devtoolsList.mjs`）。
+  // 这里还带重试：端口文件出现 ≠ 端点已经在接受连接。
+  let list = null;
+  try {
+    list = await devtoolsJson(devPort, {shouldStop: () => chrome.exitCode !== null});
+  } catch (e) {
+    throw new Error('filmwright: ' + e.message
+      + (chrome.exitCode !== null ? `；浏览器已退出（exit=${chrome.exitCode}）：` + chromeErr : ''));
+  }
   const target = list.find((t) => t.type === 'page');
   if (!target) throw new Error('filmwright: 没有 page target');
 

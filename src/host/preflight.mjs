@@ -23,9 +23,12 @@ export function checkRuntime() {
     );
   }
   // 逐项再确认一遍，因为「版本够」不等于「这个能力在」（例如某些裁剪构建）
+  // 这里曾有第二项 `fetch`，理由是「读 DevTools 的 /json/list 要用它」。那条已经不成立：
+  // 那个读取改走 `node:http`（Fetch 规范会拒掉「坏端口」，见 `browser/devtoolsList.mjs`），
+  // 而 `src/` 里剩下的 `fetch(` 全在页面侧的求值字符串里（跑在浏览器里，不是 Node）。
+  // 留着一个理由已经不成立的检查，比没有检查更坏 —— 它会让人以为这条路还需要它。
   for (const [name, ok, why] of [
     ['WebSocket', typeof WebSocket === 'function', '驱动浏览器（CDP）要用它'],
-    ['fetch', typeof fetch === 'function', '读 DevTools 的 /json/list 要用它'],
   ]) {
     if (!ok) problems.push(`运行时没有 ${name} —— ${why}。`);
   }

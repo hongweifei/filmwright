@@ -8,6 +8,7 @@ import {tmpdir} from 'node:os';
 import {spawn} from 'node:child_process';
 import {serveProject} from '../src/host/project/server.mjs';
 import {findBrowser} from '../src/host/browser/find.mjs';
+import {devtoolsJson} from '../src/host/browser/devtoolsList.mjs';
 import {loadProject} from '../src/host/project/load.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,7 +32,15 @@ chrome.on('error', (e) => (chromeErr += ' spawn error: ' + e.message));
 const portFile = join(profile, 'DevToolsActivePort');
 let devPort = null;
 for (let i = 0; i < 300; i++) {
-  if (existsSync(portFile)) { devPort = readFileSync(portFile, 'utf8').split('\n')[0].trim(); break; }
+  if (existsSync(portFile)) {
+    try {
+      const txt = readFileSync(portFile, 'utf8').split('\n')[0].trim();
+      // 端口必须是数字：文件可能只写了一半；Windows 上还会 EBUSY（还锁着）—— 那都是"还没就绪"
+      if (/^\d+$/.test(txt)) { devPort = txt; break; }
+    } catch (e) {
+      if (e.code !== 'EBUSY' && e.code !== 'EPERM' && e.code !== 'EACCES') throw e;
+    }
+  }
   if (chrome.exitCode !== null) {
     console.error('浏览器提前退出：' + chromeErr);
     process.exit(1);
@@ -42,7 +51,9 @@ if (!devPort) {
   console.error('等不到 DevToolsActivePort；stderr=' + chromeErr);
   process.exit(1);
 }
-const list = await (await fetch(`http://127.0.0.1:${devPort}/json/list`)).json();
+// 走 `devtoolsJson`（node:http + 重试）：**不能用 fetch** —— Fetch 规范的「坏端口」名单
+// 会让 Chrome 随机挑到的端口直接报 `bad port`（见 `src/host/browser/devtoolsList.mjs`）。
+const list = await devtoolsJson(devPort, {shouldStop: () => chrome.exitCode !== null});
 const ws = new WebSocket(list.find((t) => t.type === 'page').webSocketDebuggerUrl);
 await new Promise((r) => (ws.onopen = r));
 

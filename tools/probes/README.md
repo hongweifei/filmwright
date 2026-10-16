@@ -14,11 +14,16 @@
 ## 怎么用
 
 ```bash
-node tools/probes/<名字>.mjs <仓库根>    # 多数探针的第一个参数是仓库根
+node tools/probes/<名字>.mjs [仓库根]    # 仓库根可省，省了就用探针自己算出来的仓库根
 ```
 
 探针会**自己开浏览器会话**，不依赖正在运行的 filmwright 服务。
 部分探针需要可选依赖（见下），缺了会**优雅跳过**而不是报错。
+
+⚠️ **仓库根可省是修出来的**：原先 16 个探针里有 9 个把兜底写成 `resolve(HERE, '..')`，
+而它们住在 `tools/probes/` 下 ⇒ 兜底指向 `tools/`，**不带参数跑必然
+`ERR_MODULE_NOT_FOUND`**。它们一直只在"显式传仓库根"这一种用法下被跑过，所以没人发现
+（这类缺陷只有真跑才会暴露，见下节第 5 条）。
 
 ## 可用探针
 
@@ -56,8 +61,33 @@ node tools/probes/<名字>.mjs <仓库根>    # 多数探针的第一个参数�
    当"文字已缓存"的等价物，而 `fillText` 只写有笔画的像素 ⇒ 高估了缓存路径的成本。
    其中的「GPU 合成比 CPU 合成快」这个结论仍有效。
 
+4. **`profile-frame.mjs` 有两处早就不成立的东西**（本轮真跑才暴露，已修）：
+   ① 夹具还在传 `shotsRel: null` + `scene: proj.scene`（声明式时代的写法）⇒ 页面 boot
+   直接抛「没有镜头表」，**整个探针从第一节就崩**；
+   ② 「落地」一节喂给 ffmpeg 的是 `Buffer.alloc(..., 200)` **随机字节**，ffmpeg 从
+   `-f image2pipe` 里认不出任何流 ⇒ 报 `Output file does not contain any stream` 退出，
+   node 再往已关闭的管道写就抛未处理的 EPIPE。①掩盖了②：①不修，②永远跑不到。
+
+5. **9 个探针的仓库根兜底是错的**（本轮已修）：`resolve(HERE, '..')` 指向 `tools/`。
+   影响 `probe-render` / `probe-effects` / `probe-encode` / `probe-export-paired` /
+   `probe-2d-gpu` / `probe-gpu-2d` / `probe-gpu-pixels` / `probe-native-canvas` /
+   `profile-frame`。教训：**"改完路径没真跑"等于没改** —— 显式传参那条路一直是好的，
+   缺陷全藏在默认那条路上。
+
+6. **`profile-h264-path.mjs` 的「时不时连不上」真因不在探针**（本轮已修，改的是
+   `src/host/browser/`）：它走 `openSession`，而读 DevTools `/json/list` 用的是 `fetch`。
+   Fetch 规范有一份**坏端口名单**（`6000`/`6667`/`6697`/`10080`…），名单里的端口
+   `fetch()` **一律拒绝**并报 `bad port` —— 而端口本身是好的。浏览器用
+   `--remote-debugging-port=0` 时自己随机挑端口，**挑到名单里的就整个会话连不上**，
+   报出来只有一句 `fetch failed`。实测：16 个探针连跑那一批里出现一次，单独重跑又好了。
+   现在改走 `node:http`（没有那份名单，并且带总时限重试）——
+   判据见 `tests/devtools-list.test.mjs`（夹具**自带负面对照**：先用 `fetch` 证明那个端口
+   真的被拒绝，否则这条判据什么都没证明）。
+
 **共同教训**：对比实验必须先确认**两边跑的是同一个东西**；
 任何"中性设置"都可能系统性偏向某一方。
+第 4~6 条还多一条教训：**探针也要定期真跑一遍**，它们的夹具会随引擎一起过期，
+而过期是静默的（没人 import 探针）。
 
 ## 可选依赖
 
